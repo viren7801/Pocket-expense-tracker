@@ -22,11 +22,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const raw = Buffer.concat(chunks).toString("utf8");
-    const body = JSON.parse(raw || "{}");
-    const { image, mediaType } = body;
+    let body = req.body;
+    if (!body || typeof body === "string") {
+      if (typeof body === "string") {
+        body = JSON.parse(body || "{}");
+      } else {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString("utf8");
+        body = JSON.parse(raw || "{}");
+      }
+    }
+    const { image, mediaType } = body || {};
 
     if (!image || !mediaType) {
       res.status(400).json({ error: "Missing image data" });
