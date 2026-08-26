@@ -41,13 +41,14 @@ export default async function handler(req, res) {
       return;
     }
 
-    const { credential } = verification.registrationInfo;
+    const { credentialID, credentialPublicKey, counter } =
+      verification.registrationInfo;
 
     await supabase.from("webauthn_credential").insert({
-      id: credential.id,
-      public_key: Buffer.from(credential.publicKey).toString("base64"),
-      counter: credential.counter,
-      transports: (credential.transports || []).join(","),
+      id: credentialID,
+      public_key: Buffer.from(credentialPublicKey).toString("base64"),
+      counter,
+      transports: (body.response.transports || []).join(","),
     });
 
     await supabase.from("webauthn_challenge").delete().eq("id", "register");
