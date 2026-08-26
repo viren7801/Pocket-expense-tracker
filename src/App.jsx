@@ -825,7 +825,7 @@ function Dashboard({
   onEdit,
 }) {
   return (
-    <div style={{ padding: "0 32px 32px" }}>
+    <div style={{ padding: "0 32px 32px" }} className="ledger-page">
       <div
         style={{
           display: "grid",
@@ -2319,7 +2319,12 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 @media (max-width: 768px) {
-  .ledger-app { flex-direction: column !important; }
+  .ledger-app {
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
 
   .ledger-sidebar {
     width: 100% !important;
@@ -2364,11 +2369,30 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
     padding: 9px 10px !important;
   }
 
-  .ledger-page { padding: 0 14px 20px !important; }
+  .ledger-page {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  padding: 0 14px 20px !important;
+}
 
   .ledger-grid-3, .ledger-grid-main {
-    grid-template-columns: 1fr !important;
-  }
+  grid-template-columns: 1fr !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+.ledger-grid-3 > *, .ledger-grid-main > * {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+.recharts-responsive-container {
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
 }
 
 @media (max-width: 420px) {
@@ -2410,7 +2434,7 @@ const styles = {
     cursor: "pointer",
     textAlign: "left",
   },
-  main: { flex: 1, minWidth: 0 },
+  main: { flex: 1, minWidth: 0, maxWidth: "100%" },
   topBar: {
     display: "flex",
     justifyContent: "space-between",
@@ -2472,6 +2496,8 @@ const styles = {
     border: "1px solid #22262E",
     borderRadius: 10,
     padding: 20,
+    minWidth: 0,
+    boxSizing: "border-box",
   },
   panelTitle: {
     fontFamily: "'Space Grotesk', sans-serif",
