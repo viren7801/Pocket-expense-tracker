@@ -778,14 +778,14 @@ function TopBar({
           onClick={onImportClick}
           title="Import CSV"
         >
-          <Upload size={14} /> Import
+          <Download size={14} /> Import
         </button>
         <button
           style={styles.secondaryBtn}
           onClick={onExport}
           title="Export CSV"
         >
-          <Download size={14} /> Export
+          <Upload size={14} /> Export
         </button>
         <button
           style={styles.secondaryBtn}
