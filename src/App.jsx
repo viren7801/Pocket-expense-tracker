@@ -1610,6 +1610,9 @@ function TxnModal({
   const [accountId, setAccountId] = useState(
     seed?.accountId || accounts[0]?.id || "",
   );
+  const availableAccounts = accounts.filter((a) =>
+    type === "income" ? a.type !== "card" : true,
+  );
   const [date, setDate] = useState(seed?.date || todayStr());
   const [note, setNote] = useState(seed?.note || "");
 
@@ -1641,6 +1644,11 @@ function TxnModal({
                 setCategory(categories[tp][0]);
                 setIsAddingCategory(false);
               }
+              const stillValid = accounts.filter((a) =>
+                tp === "income" ? a.type !== "card" : true,
+              );
+              if (!stillValid.some((a) => a.id === accountId))
+                setAccountId(stillValid[0]?.id || "");
             }}
             style={{
               ...styles.toggleBtn,
@@ -1728,7 +1736,7 @@ function TxnModal({
           onChange={(e) => setAccountId(e.target.value)}
           style={styles.input}
         >
-          {accounts.map((a) => (
+          {availableAccounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
             </option>
@@ -1955,6 +1963,9 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
   const [category, setCategory] = useState(categories.expense[0]);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
+  const availableAccounts = accounts.filter((a) =>
+    type === "income" ? a.type !== "card" : true,
+  );
   const [frequency, setFrequency] = useState("monthly");
   const [nextDate, setNextDate] = useState(todayStr());
   const cats = categories[type];
@@ -1981,6 +1992,11 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
                 setCategory(categories[tp][0]);
                 setIsAddingCategory(false);
               }
+              const stillValid = accounts.filter((a) =>
+                tp === "income" ? a.type !== "card" : true,
+              );
+              if (!stillValid.some((a) => a.id === accountId))
+                setAccountId(stillValid[0]?.id || "");
             }}
             style={{
               ...styles.toggleBtn,
@@ -2066,7 +2082,7 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
           onChange={(e) => setAccountId(e.target.value)}
           style={styles.input}
         >
-          {accounts.map((a) => (
+          {availableAccounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
             </option>
