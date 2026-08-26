@@ -6,12 +6,17 @@ import {
 import { Fingerprint } from "lucide-react";
 
 const TAB_SESSION_KEY = "ledger_tab_session";
+const DEVICE_REGISTERED_KEY = "ledger_device_registered";
 
 export default function LockScreen({ children }) {
   const [status, setStatus] = useState(null); // { authenticated, hasCredential }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [setupCode, setSetupCode] = useState("");
+
+  const [hasLocalPasskey, setHasLocalPasskey] = useState(
+    () => window.localStorage.getItem(DEVICE_REGISTERED_KEY) === "1",
+  );
 
   const checkStatus = useCallback(async () => {
     try {
@@ -60,6 +65,11 @@ export default function LockScreen({ children }) {
         throw new Error(verifyData.error || "Unlock failed");
 
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
+
+      // This browser/Mac has now created its own passkey.
+      window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
+      setHasLocalPasskey(true);
+
       await checkStatus();
     } catch (e) {
       setError(
@@ -131,14 +141,16 @@ export default function LockScreen({ children }) {
       <>
         {children}
 
-        <button
-          type="button"
-          style={styles.addDeviceButton}
-          onClick={() => handleRegisterDevice(false)}
-          disabled={loading}
-        >
-          {loading ? "Adding device…" : "Add this device"}
-        </button>
+        {!hasLocalPasskey && (
+          <button
+            type="button"
+            style={styles.addDeviceButton}
+            onClick={() => handleRegisterDevice(false)}
+            disabled={loading}
+          >
+            {loading ? "Adding device…" : "Add this device"}
+          </button>
+        )}
 
         <button
           type="button"
