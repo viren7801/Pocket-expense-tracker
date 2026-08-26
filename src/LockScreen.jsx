@@ -5,6 +5,8 @@ import {
 } from "@simplewebauthn/browser";
 import { Fingerprint } from "lucide-react";
 
+const TAB_SESSION_KEY = "ledger_tab_session";
+
 export default function LockScreen({ children }) {
   const [status, setStatus] = useState(null); // { authenticated, hasCredential }
   const [loading, setLoading] = useState(false);
@@ -15,6 +17,18 @@ export default function LockScreen({ children }) {
     try {
       const res = await fetch("/api/auth/status");
       const data = await res.json();
+
+      // A valid server cookie from another/previous tab is not enough.
+      // This app tab must have completed login itself.
+      if (
+        data.authenticated &&
+        !window.sessionStorage.getItem(TAB_SESSION_KEY)
+      ) {
+        await fetch("/api/auth/logout", { method: "POST" });
+        setStatus({ authenticated: false, hasCredential: data.hasCredential });
+        return;
+      }
+
       setStatus(data);
     } catch (e) {
       setStatus({ authenticated: false, hasCredential: false });
@@ -45,6 +59,7 @@ export default function LockScreen({ children }) {
       if (!verifyRes.ok || !verifyData.verified)
         throw new Error(verifyData.error || "Unlock failed");
 
+      window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
       await checkStatus();
     } catch (e) {
       setError(
@@ -81,6 +96,7 @@ export default function LockScreen({ children }) {
       if (!verifyRes.ok || !verifyData.verified)
         throw new Error(verifyData.error || "Setup failed");
 
+      window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
       await checkStatus();
     } catch (e) {
       setError(e.message || "Setup failed");
@@ -88,7 +104,20 @@ export default function LockScreen({ children }) {
       setLoading(false);
     }
   };
+  const handleLogout = async () => {
+    setLoading(true);
+    setError(null);
 
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      window.sessionStorage.removeItem(TAB_SESSION_KEY);
+      await checkStatus();
+    } catch (e) {
+      setError("Could not log out");
+    } finally {
+      setLoading(false);
+    }
+  };
   if (status === null) {
     return (
       <div style={styles.wrap}>
@@ -109,6 +138,15 @@ export default function LockScreen({ children }) {
           disabled={loading}
         >
           {loading ? "Adding device…" : "Add this device"}
+        </button>
+
+        <button
+          type="button"
+          style={styles.logoutButton}
+          onClick={handleLogout}
+          disabled={loading}
+        >
+          {loading ? "Logging out…" : "Log out"}
         </button>
 
         {error && <div style={styles.addDeviceError}>{error}</div>}
@@ -224,6 +262,19 @@ const styles = {
     color: "#D9735C",
     fontSize: 12,
     textAlign: "right",
+  },
+  logoutButton: {
+    position: "fixed",
+    right: 16,
+    bottom: 62,
+    zIndex: 10,
+    background: "transparent",
+    color: "#ECEAE3",
+    border: "1px solid #3A404D",
+    borderRadius: 8,
+    padding: "10px 14px",
+    fontSize: 13,
+    cursor: "pointer",
   },
   input: {
     width: "100%",
