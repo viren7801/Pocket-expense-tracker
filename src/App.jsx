@@ -1611,6 +1611,12 @@ function TxnModal({
   const [category, setCategory] = useState(
     seed?.category || categories.expense[0],
   );
+  const [isAddingCategory, setIsAddingCategory] = useState(
+    !!(
+      seed?.category &&
+      !categories[seed?.type || "expense"].includes(seed.category)
+    ),
+  );
   const [accountId, setAccountId] = useState(
     seed?.accountId || accounts[0]?.id || "",
   );
@@ -1641,8 +1647,10 @@ function TxnModal({
             key={tp}
             onClick={() => {
               setType(tp);
-              if (!categories[tp].includes(category))
+              if (!categories[tp].includes(category)) {
                 setCategory(categories[tp][0]);
+                setIsAddingCategory(false);
+              }
             }}
             style={{
               ...styles.toggleBtn,
@@ -1682,18 +1690,47 @@ function TxnModal({
         />
       </Field>
       <Field label="Category">
-        <input
-          list="cat-list"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          style={styles.input}
-          placeholder="Type or pick a category"
-        />
-        <datalist id="cat-list">
-          {cats.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
+        {isAddingCategory ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={styles.input}
+              placeholder="New category name"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingCategory(false);
+                setCategory(cats[0]);
+              }}
+              style={styles.iconOnlyBtn}
+              title="Cancel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <select
+            value={category}
+            onChange={(e) => {
+              if (e.target.value === "__new__") {
+                setIsAddingCategory(true);
+                setCategory("");
+              } else setCategory(e.target.value);
+            }}
+            style={styles.input}
+          >
+            {cats.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            <option value="__new__">+ Add new category…</option>
+          </select>
+        )}
       </Field>
       <Field label="Account">
         <select
@@ -1926,6 +1963,7 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
   const [type, setType] = useState("expense");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState(categories.expense[0]);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
   const [frequency, setFrequency] = useState("monthly");
   const [nextDate, setNextDate] = useState(todayStr());
@@ -1949,8 +1987,10 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
             key={tp}
             onClick={() => {
               setType(tp);
-              if (!categories[tp].includes(category))
+              if (!categories[tp].includes(category)) {
                 setCategory(categories[tp][0]);
+                setIsAddingCategory(false);
+              }
             }}
             style={{
               ...styles.toggleBtn,
@@ -1988,17 +2028,47 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
         />
       </Field>
       <Field label="Category">
-        <input
-          list="rec-cat-list"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          style={styles.input}
-        />
-        <datalist id="rec-cat-list">
-          {cats.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
+        {isAddingCategory ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={styles.input}
+              placeholder="New category name"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingCategory(false);
+                setCategory(cats[0]);
+              }}
+              style={styles.iconOnlyBtn}
+              title="Cancel"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <select
+            value={category}
+            onChange={(e) => {
+              if (e.target.value === "__new__") {
+                setIsAddingCategory(true);
+                setCategory("");
+              } else setCategory(e.target.value);
+            }}
+            style={styles.input}
+          >
+            {cats.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            <option value="__new__">+ Add new category…</option>
+          </select>
+        )}
       </Field>
       <Field label="Account">
         <select
