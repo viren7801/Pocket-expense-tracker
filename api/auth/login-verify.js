@@ -45,9 +45,9 @@ export default async function handler(req, res) {
       expectedChallenge: challengeRow.challenge,
       expectedOrigin: ORIGIN,
       expectedRPID: RP_ID,
-      credential: {
-        id: credRow.id,
-        publicKey: Buffer.from(credRow.public_key, "base64"),
+      authenticator: {
+        credentialID: credRow.id,
+        credentialPublicKey: Buffer.from(credRow.public_key, "base64"),
         counter: credRow.counter,
         transports: credRow.transports
           ? credRow.transports.split(",")
