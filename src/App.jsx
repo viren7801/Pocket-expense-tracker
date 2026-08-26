@@ -2105,7 +2105,6 @@ function ScanReceiptModal({ onClose, onExtracted, onOpenSettings }) {
           <input
             type="file"
             accept="image/*"
-            capture="environment"
             style={{ display: "none" }}
             onChange={(e) => handleFile(e.target.files[0])}
           />
