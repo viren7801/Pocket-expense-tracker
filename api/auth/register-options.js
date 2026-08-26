@@ -52,13 +52,11 @@ export default async function handler(req, res) {
       },
     });
 
-    await supabase
-      .from("webauthn_challenge")
-      .upsert({
-        id: "register",
-        challenge: options.challenge,
-        updated_at: new Date().toISOString(),
-      });
+    await supabase.from("webauthn_challenge").upsert({
+      id: "register",
+      challenge: options.challenge,
+      updated_at: new Date().toISOString(),
+    });
 
     res.status(200).json(options);
   } catch (e) {
