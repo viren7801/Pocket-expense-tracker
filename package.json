@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^10.0.0",
+    "@simplewebauthn/server": "^10.0.1",
     "@supabase/supabase-js": "^2.112.4",
     "dexie": "^4.0.8",
     "lucide-react": "^0.383.0",

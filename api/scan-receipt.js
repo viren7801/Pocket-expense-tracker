@@ -15,9 +15,15 @@ Extract the following and respond with ONLY raw JSON, no markdown fences, no com
 
 Use the TOTAL / grand total amount, not a subtotal. If the image is not a receipt or the amount cannot be determined, set "amount" to null.`;
 
+import { isAuthenticated } from "./auth/_utils.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+  if (!isAuthenticated(req)) {
+    res.status(401).json({ error: "Not authenticated" });
     return;
   }
 
