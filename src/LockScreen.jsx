@@ -57,14 +57,14 @@ export default function LockScreen({ children }) {
     }
   };
 
-  const handleSetup = async () => {
+  const handleRegisterDevice = async (includeSetupCode = false) => {
     setLoading(true);
     setError(null);
     try {
       const optionsRes = await fetch("/api/auth/register-options", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ setupCode }),
+        body: JSON.stringify(includeSetupCode ? { setupCode } : {}),
       });
       const options = await optionsRes.json();
       if (!optionsRes.ok)
@@ -98,7 +98,22 @@ export default function LockScreen({ children }) {
   }
 
   if (status.authenticated) {
-    return children;
+    return (
+      <>
+        {children}
+
+        <button
+          type="button"
+          style={styles.addDeviceButton}
+          onClick={() => handleRegisterDevice(false)}
+          disabled={loading}
+        >
+          {loading ? "Adding device…" : "Add this device"}
+        </button>
+
+        {error && <div style={styles.addDeviceError}>{error}</div>}
+      </>
+    );
   }
 
   return (
@@ -134,7 +149,7 @@ export default function LockScreen({ children }) {
             />
             <button
               style={styles.button}
-              onClick={handleSetup}
+              onClick={() => handleRegisterDevice(true)}
               disabled={loading || !setupCode}
             >
               {loading ? "Waiting…" : "Set up Face ID / Touch ID"}
@@ -186,6 +201,29 @@ const styles = {
     fontWeight: 600,
     cursor: "pointer",
     marginTop: 6,
+  },
+  addDeviceButton: {
+    position: "fixed",
+    right: 16,
+    bottom: 16,
+    zIndex: 10,
+    background: "#1A1D24",
+    color: "#ECEAE3",
+    border: "1px solid #3A404D",
+    borderRadius: 8,
+    padding: "10px 14px",
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  addDeviceError: {
+    position: "fixed",
+    right: 16,
+    bottom: 62,
+    zIndex: 10,
+    maxWidth: 260,
+    color: "#D9735C",
+    fontSize: 12,
+    textAlign: "right",
   },
   input: {
     width: "100%",
