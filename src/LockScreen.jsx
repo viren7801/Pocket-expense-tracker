@@ -34,7 +34,7 @@ export default function LockScreen({ children }) {
       if (!optionsRes.ok)
         throw new Error(options.error || "Could not start unlock");
 
-      const authResp = await startAuthentication({ optionsJSON: options });
+      const authResp = await startAuthentication(options);
 
       const verifyRes = await fetch("/api/auth/login-verify", {
         method: "POST",
@@ -70,7 +70,7 @@ export default function LockScreen({ children }) {
       if (!optionsRes.ok)
         throw new Error(options.error || "Could not start setup");
 
-      const regResp = await startRegistration({ optionsJSON: options });
+      const regResp = await startRegistration(options);
 
       const verifyRes = await fetch("/api/auth/register-verify", {
         method: "POST",
