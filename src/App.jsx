@@ -499,7 +499,7 @@ export default function LedgerApp() {
   }
 
   return (
-    <div style={styles.app}>
+    <div style={styles.app} className="ledger-app">
       <style>{fontImports}</style>
       <Sidebar tab={tab} setTab={setTab} />
       <main style={styles.main}>
@@ -690,8 +690,8 @@ function Sidebar({ tab, setTab }) {
     { id: "recurring", label: "Recurring", icon: Repeat },
   ];
   return (
-    <aside style={styles.sidebar}>
-      <div style={styles.brand}>
+    <aside style={styles.sidebar} className="ledger-sidebar">
+      <div style={styles.brand} className="brand">
         <Wallet size={20} color="#C9A455" />
         <span style={styles.brandText}>Ledger</span>
       </div>
@@ -702,6 +702,7 @@ function Sidebar({ tab, setTab }) {
           gap: 4,
           marginTop: 24,
         }}
+        className="ledger-nav"
       >
         {items.map(({ id, label, icon: Icon }) => (
           <button
@@ -736,8 +737,11 @@ function TopBar({
   saveError,
 }) {
   return (
-    <div style={styles.topBar}>
-      <div style={{ display: "flex", gap: 32, flexWrap: "wrap" }}>
+    <div style={styles.topBar} className="ledger-topbar">
+      <div
+        style={{ display: "flex", gap: 32, flexWrap: "wrap" }}
+        className="ledger-stats"
+      >
         <Stat label="Net worth" value={fmtINR(netWorth)} color="#ECEAE3" />
         <Stat
           label="Income this month"
@@ -757,6 +761,7 @@ function TopBar({
           gap: 8,
           flexWrap: "wrap",
         }}
+        className="ledger-actions"
       >
         {saveError && (
           <span
@@ -829,6 +834,7 @@ function Dashboard({
           gap: 14,
           marginBottom: 20,
         }}
+        className="ledger-grid-3"
       >
         <InsightCard
           label="Savings rate this month"
@@ -878,6 +884,7 @@ function Dashboard({
 
       <div
         style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20 }}
+        className="ledger-grid-main"
       >
         <div style={styles.panel}>
           <div style={{ ...styles.panelTitle, marginTop: 0 }}>
@@ -1096,7 +1103,7 @@ function TransactionsView({
   );
 
   return (
-    <div style={{ padding: "0 32px 32px" }}>
+    <div style={{ padding: "0 32px 32px" }} className="ledger-page">
       <div style={styles.panel}>
         <div
           style={{
@@ -2225,7 +2232,65 @@ function Field({ label, children }) {
 
 const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
 .spin { animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`;
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+@media (max-width: 768px) {
+  .ledger-app { flex-direction: column !important; }
+
+  .ledger-sidebar {
+    width: 100% !important;
+    border-right: none !important;
+    border-bottom: 1px solid #22262E !important;
+    padding: 12px !important;
+    flex-shrink: 1 !important;
+  }
+  .ledger-sidebar .brand { display: none !important; }
+  .ledger-nav {
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    gap: 2px !important;
+    margin-top: 0 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ledger-nav button {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+    border-left: none !important;
+    border-bottom: 2px solid transparent !important;
+    padding: 8px 10px !important;
+  }
+
+  .ledger-topbar {
+    padding: 16px !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+  }
+  .ledger-stats {
+    gap: 16px !important;
+    justify-content: space-between !important;
+  }
+  .ledger-actions {
+    justify-content: stretch !important;
+  }
+  .ledger-actions button {
+    flex: 1 1 auto !important;
+    justify-content: center !important;
+    font-size: 12px !important;
+    padding: 9px 10px !important;
+  }
+
+  .ledger-page { padding: 0 14px 20px !important; }
+
+  .ledger-grid-3, .ledger-grid-main {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .ledger-stats { gap: 10px 16px !important; }
+}
+`;
 
 const styles = {
   app: {
@@ -2394,9 +2459,10 @@ const styles = {
     border: "1px solid #2A2E37",
     borderRadius: 12,
     padding: 24,
-    width: 340,
+    width: "min(340px, 92vw)",
     maxHeight: "85vh",
     overflowY: "auto",
+    boxSizing: "border-box",
   },
   toggleBtn: {
     flex: 1,
