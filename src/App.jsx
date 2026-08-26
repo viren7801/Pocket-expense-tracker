@@ -42,14 +42,7 @@ import {
 import { scanReceipt } from "./receiptScan";
 
 const SEED_CATEGORIES = {
-  income: [
-    "Salary",
-    "Business",
-    "Freelance",
-    "Investment",
-    "Other Income",
-    "Family",
-  ],
+  income: ["Salary", "Business", "Freelance", "Investment", "Other Income"],
   expense: [
     "Food",
     "Transport",
@@ -57,9 +50,6 @@ const SEED_CATEGORIES = {
     "Bills",
     "Health",
     "Entertainment",
-    "groceries",
-    "Fuel",
-    "Subscription",
     "Other",
   ],
 };
