@@ -1,18 +1,31 @@
-import Dexie from "dexie";
+import { createClient } from "@supabase/supabase-js";
 
-// A single local IndexedDB database — all data lives in the browser,
-// nothing is sent anywhere. Free, offline-capable, no account needed.
-export const db = new Dexie("LedgerDB");
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-db.version(1).stores({
-  kv: "id", // one row: { id: 'main', payload: {...} }
-});
+export const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function loadData() {
-  const row = await db.kv.get("main");
-  return row ? row.payload : null;
+  const { data, error } = await supabase
+    .from("app_data")
+    .select("payload")
+    .eq("id", "main")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase load error:", error);
+    return null;
+  }
+  return data ? data.payload : null;
 }
 
 export async function saveData(payload) {
-  await db.kv.put({ id: "main", payload });
+  const { error } = await supabase
+    .from("app_data")
+    .upsert({ id: "main", payload, updated_at: new Date().toISOString() });
+
+  if (error) {
+    console.error("Supabase save error:", error);
+    throw error;
+  }
 }
