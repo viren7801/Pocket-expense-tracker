@@ -9,11 +9,12 @@ const TAB_SESSION_KEY = "ledger_tab_session";
 const DEVICE_REGISTERED_KEY = "ledger_device_registered";
 
 export default function LockScreen({ children }) {
-  const [status, setStatus] = useState(null); // { authenticated, hasCredential }
+  const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [setupCode, setSetupCode] = useState("");
 
+  // This is only set after this browser/device creates its own passkey.
   const [hasLocalPasskey, setHasLocalPasskey] = useState(
     () => window.localStorage.getItem(DEVICE_REGISTERED_KEY) === "1",
   );
@@ -23,14 +24,17 @@ export default function LockScreen({ children }) {
       const res = await fetch("/api/auth/status");
       const data = await res.json();
 
-      // A valid server cookie from another/previous tab is not enough.
-      // This app tab must have completed login itself.
+      // A cookie from a previously closed tab must not unlock a new tab.
       if (
         data.authenticated &&
         !window.sessionStorage.getItem(TAB_SESSION_KEY)
       ) {
         await fetch("/api/auth/logout", { method: "POST" });
-        setStatus({ authenticated: false, hasCredential: data.hasCredential });
+
+        setStatus({
+          authenticated: false,
+          hasCredential: data.hasCredential,
+        });
         return;
       }
 
@@ -47,11 +51,14 @@ export default function LockScreen({ children }) {
   const handleUnlock = async () => {
     setLoading(true);
     setError(null);
+
     try {
       const optionsRes = await fetch("/api/auth/login-options");
       const options = await optionsRes.json();
-      if (!optionsRes.ok)
+
+      if (!optionsRes.ok) {
         throw new Error(options.error || "Could not start unlock");
+      }
 
       const authResp = await startAuthentication(options);
 
@@ -60,15 +67,16 @@ export default function LockScreen({ children }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(authResp),
       });
+
       const verifyData = await verifyRes.json();
-      if (!verifyRes.ok || !verifyData.verified)
+
+      if (!verifyRes.ok || !verifyData.verified) {
         throw new Error(verifyData.error || "Unlock failed");
+      }
 
+      // QR login or local login: this tab is now authenticated.
+      // Do NOT mark the device as registered here.
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
-
-      // This browser/Mac has now created its own passkey.
-      window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
-      setHasLocalPasskey(true);
 
       await checkStatus();
     } catch (e) {
@@ -85,16 +93,22 @@ export default function LockScreen({ children }) {
   const handleRegisterDevice = async (includeSetupCode = false) => {
     setLoading(true);
     setError(null);
+
     try {
       const optionsRes = await fetch("/api/auth/register-options", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(includeSetupCode ? { setupCode } : {}),
       });
-      const options = await optionsRes.json();
-      if (!optionsRes.ok)
-        throw new Error(options.error || "Could not start setup");
 
+      const options = await optionsRes.json();
+
+      if (!optionsRes.ok) {
+        throw new Error(options.error || "Could not start setup");
+      }
+
+      // Uses the computer's platform authenticator:
+      // Touch ID on Mac, Windows Hello Face/PIN on HP/Windows.
       const regResp = await startRegistration(options);
 
       const verifyRes = await fetch("/api/auth/register-verify", {
@@ -102,11 +116,19 @@ export default function LockScreen({ children }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(regResp),
       });
+
       const verifyData = await verifyRes.json();
-      if (!verifyRes.ok || !verifyData.verified)
+
+      if (!verifyRes.ok || !verifyData.verified) {
         throw new Error(verifyData.error || "Setup failed");
+      }
 
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
+
+      // Only registration means this device has its own passkey.
+      window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
+      setHasLocalPasskey(true);
+
       await checkStatus();
     } catch (e) {
       setError(e.message || "Setup failed");
@@ -114,6 +136,7 @@ export default function LockScreen({ children }) {
       setLoading(false);
     }
   };
+
   const handleLogout = async () => {
     setLoading(true);
     setError(null);
@@ -128,6 +151,7 @@ export default function LockScreen({ children }) {
       setLoading(false);
     }
   };
+
   if (status === null) {
     return (
       <div style={styles.wrap}>
@@ -169,14 +193,17 @@ export default function LockScreen({ children }) {
   return (
     <div style={styles.wrap}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;500&display=swap');`}</style>
+
       <div style={styles.card}>
         <Fingerprint size={40} color="#C9A455" />
         <div style={styles.title}>Ledger</div>
+
         {status.hasCredential ? (
           <>
             <div style={styles.subtitle}>
-              Unlock with your fingerprint or Face ID
+              Unlock with your fingerprint, Face ID, or passkey
             </div>
+
             <button
               style={styles.button}
               onClick={handleUnlock}
@@ -190,6 +217,7 @@ export default function LockScreen({ children }) {
             <div style={styles.subtitle}>
               Set up biometric unlock for this device
             </div>
+
             <input
               type="password"
               placeholder="Setup code"
@@ -197,6 +225,7 @@ export default function LockScreen({ children }) {
               onChange={(e) => setSetupCode(e.target.value)}
               style={styles.input}
             />
+
             <button
               style={styles.button}
               onClick={() => handleRegisterDevice(true)}
@@ -206,6 +235,7 @@ export default function LockScreen({ children }) {
             </button>
           </>
         )}
+
         {error && <div style={styles.error}>{error}</div>}
       </div>
     </div>
@@ -238,8 +268,15 @@ const styles = {
     color: "#ECEAE3",
     fontWeight: 600,
   },
-  subtitle: { fontSize: 13, color: "#8B8F98", textAlign: "center" },
-  text: { color: "#8B8F98", fontSize: 14 },
+  subtitle: {
+    fontSize: 13,
+    color: "#8B8F98",
+    textAlign: "center",
+  },
+  text: {
+    color: "#8B8F98",
+    fontSize: 14,
+  },
   button: {
     width: "100%",
     background: "#C9A455",
@@ -251,6 +288,22 @@ const styles = {
     fontWeight: 600,
     cursor: "pointer",
     marginTop: 6,
+  },
+  input: {
+    width: "100%",
+    background: "#14161B",
+    border: "1px solid #2A2E37",
+    borderRadius: 8,
+    padding: "10px 12px",
+    color: "#ECEAE3",
+    fontSize: 13,
+    boxSizing: "border-box",
+    outline: "none",
+  },
+  error: {
+    color: "#D9735C",
+    fontSize: 12,
+    textAlign: "center",
   },
   addDeviceButton: {
     position: "fixed",
@@ -265,16 +318,6 @@ const styles = {
     fontSize: 13,
     cursor: "pointer",
   },
-  addDeviceError: {
-    position: "fixed",
-    right: 16,
-    bottom: 62,
-    zIndex: 10,
-    maxWidth: 260,
-    color: "#D9735C",
-    fontSize: 12,
-    textAlign: "right",
-  },
   logoutButton: {
     position: "fixed",
     right: 16,
@@ -288,16 +331,14 @@ const styles = {
     fontSize: 13,
     cursor: "pointer",
   },
-  input: {
-    width: "100%",
-    background: "#14161B",
-    border: "1px solid #2A2E37",
-    borderRadius: 8,
-    padding: "10px 12px",
-    color: "#ECEAE3",
-    fontSize: 13,
-    boxSizing: "border-box",
-    outline: "none",
+  addDeviceError: {
+    position: "fixed",
+    right: 16,
+    bottom: 110,
+    zIndex: 10,
+    maxWidth: 260,
+    color: "#D9735C",
+    fontSize: 12,
+    textAlign: "right",
   },
-  error: { color: "#D9735C", fontSize: 12, textAlign: "center" },
 };
