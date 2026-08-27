@@ -14,17 +14,20 @@ export default function LockScreen({ children }) {
   const [error, setError] = useState(null);
   const [setupCode, setSetupCode] = useState("");
 
-  // This is only set after this browser/device creates its own passkey.
+  // True only after this browser/device has created its own passkey.
   const [hasLocalPasskey, setHasLocalPasskey] = useState(
     () => window.localStorage.getItem(DEVICE_REGISTERED_KEY) === "1",
   );
+
+  // Shows only after a QR/phone login on an unregistered device.
+  const [showAddDevice, setShowAddDevice] = useState(false);
 
   const checkStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/status");
       const data = await res.json();
 
-      // A cookie from a previously closed tab must not unlock a new tab.
+      // Do not let a previous browser-tab session unlock a newly opened tab.
       if (
         data.authenticated &&
         !window.sessionStorage.getItem(TAB_SESSION_KEY)
@@ -74,9 +77,13 @@ export default function LockScreen({ children }) {
         throw new Error(verifyData.error || "Unlock failed");
       }
 
-      // QR login or local login: this tab is now authenticated.
-      // Do NOT mark the device as registered here.
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
+
+      // QR/phone passkey login means this device has not used a local
+      // Windows Hello / Touch ID passkey yet.
+      if (authResp.authenticatorAttachment !== "platform" && !hasLocalPasskey) {
+        setShowAddDevice(true);
+      }
 
       await checkStatus();
     } catch (e) {
@@ -107,8 +114,8 @@ export default function LockScreen({ children }) {
         throw new Error(options.error || "Could not start setup");
       }
 
-      // Uses the computer's platform authenticator:
-      // Touch ID on Mac, Windows Hello Face/PIN on HP/Windows.
+      // Requests the local device authenticator:
+      // Touch ID on Mac, Windows Hello Face/PIN on HP.
       const regResp = await startRegistration(options);
 
       const verifyRes = await fetch("/api/auth/register-verify", {
@@ -125,9 +132,10 @@ export default function LockScreen({ children }) {
 
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
 
-      // Only registration means this device has its own passkey.
+      // This device now has its own local passkey.
       window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
       setHasLocalPasskey(true);
+      setShowAddDevice(false);
 
       await checkStatus();
     } catch (e) {
@@ -144,6 +152,7 @@ export default function LockScreen({ children }) {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
       window.sessionStorage.removeItem(TAB_SESSION_KEY);
+      setShowAddDevice(false);
       await checkStatus();
     } catch (e) {
       setError("Could not log out");
@@ -165,7 +174,7 @@ export default function LockScreen({ children }) {
       <>
         {children}
 
-        {!hasLocalPasskey && (
+        {showAddDevice && (
           <button
             type="button"
             style={styles.addDeviceButton}
