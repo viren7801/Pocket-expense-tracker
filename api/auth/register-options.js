@@ -1,4 +1,5 @@
 import { generateRegistrationOptions } from "@simplewebauthn/server";
+
 import {
   getServiceClient,
   isAuthenticated,
@@ -8,7 +9,9 @@ import {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
+    res.status(405).json({
+      error: "Method not allowed",
+    });
     return;
   }
 
@@ -19,16 +22,23 @@ export default async function handler(req, res) {
 
     const authenticated = isAuthenticated(req);
 
-    const { count } = await supabase
-      .from("webauthn_credential")
-      .select("id", { count: "exact", head: true });
+    const { count } = await supabase.from("webauthn_credential").select("id", {
+      count: "exact",
+      head: true,
+    });
 
     const alreadySetUp = (count || 0) > 0;
 
-    // First-ever setup requires the setup code.
-    // Adding another device requires an authenticated session.
+    /*
+     * First-ever setup:
+     * setup code is required.
+     *
+     * Additional devices:
+     * an authenticated Pocket session is required.
+     */
     if (!authenticated) {
       const body = await readJsonBody(req).catch(() => ({}));
+
       const codeOk =
         body.setupCode && body.setupCode === process.env.SETUP_CODE;
 
@@ -36,6 +46,7 @@ export default async function handler(req, res) {
         res.status(403).json({
           error: "Not authorized to register a new device",
         });
+
         return;
       }
     }
@@ -53,13 +64,22 @@ export default async function handler(req, res) {
       rpID: RP_ID,
       userName: "viren",
       userDisplayName: "Viren Patel",
+
       attestationType: "none",
+
       excludeCredentials: (existing || []).map((credential) => ({
         id: credential.id,
       })),
+
       authenticatorSelection: {
-        residentKey: "preferred",
+        /*
+         * REQUIRED means the new credential
+         * must be discoverable.
+         */
+        residentKey: "required",
+
         userVerification: "required",
+
         authenticatorAttachment: "platform",
       },
     });
@@ -78,6 +98,8 @@ export default async function handler(req, res) {
 
     res.status(200).json(options);
   } catch (e) {
+    console.error("register-options:", e);
+
     res.status(500).json({
       error: e.message || "Unknown error",
     });
