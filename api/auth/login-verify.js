@@ -1,4 +1,5 @@
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
+
 import {
   getServiceClient,
   ORIGIN,
@@ -10,12 +11,15 @@ import {
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
+    res.status(405).json({
+      error: "Method not allowed",
+    });
     return;
   }
 
   try {
     const supabase = getServiceClient();
+
     const { data: challengeRow } = await supabase
       .from("webauthn_challenge")
       .select("challenge")
@@ -23,7 +27,9 @@ export default async function handler(req, res) {
       .maybeSingle();
 
     if (!challengeRow) {
-      res.status(400).json({ error: "No pending login challenge" });
+      res.status(400).json({
+        error: "No pending login challenge",
+      });
       return;
     }
 
@@ -36,7 +42,9 @@ export default async function handler(req, res) {
       .maybeSingle();
 
     if (!credRow) {
-      res.status(400).json({ error: "Unknown credential" });
+      res.status(400).json({
+        error: "Unknown credential",
+      });
       return;
     }
 
@@ -56,20 +64,56 @@ export default async function handler(req, res) {
     });
 
     if (!verification.verified) {
-      res.status(400).json({ error: "Verification failed" });
+      res.status(400).json({
+        error: "Verification failed",
+      });
       return;
     }
 
-    await supabase
+    /*
+     * Update the WebAuthn counter and
+     * record exactly when this credential
+     * was last used.
+     */
+    const { error: updateError } = await supabase
       .from("webauthn_credential")
-      .update({ counter: verification.authenticationInfo.newCounter })
+      .update({
+        counter: verification.authenticationInfo.newCounter,
+
+        last_used_at: new Date().toISOString(),
+      })
       .eq("id", credRow.id);
+
+    if (updateError) {
+      throw updateError;
+    }
 
     await supabase.from("webauthn_challenge").delete().eq("id", "login");
 
-    res.setHeader("Set-Cookie", serializeSessionCookie(createSessionToken()));
-    res.status(200).json({ verified: true });
+    /*
+     * Bind the session to the credential
+     * that just authenticated.
+     */
+    const sessionToken = createSessionToken(credRow.id);
+
+    res.setHeader("Set-Cookie", serializeSessionCookie(sessionToken));
+
+    res.status(200).json({
+      verified: true,
+
+      device: {
+        id: credRow.id,
+
+        deviceName: credRow.device_name || "Registered device",
+
+        deviceType: credRow.device_type || "Passkey",
+      },
+    });
   } catch (e) {
-    res.status(500).json({ error: e.message || "Unknown error" });
+    console.error("login-verify:", e);
+
+    res.status(500).json({
+      error: e.message || "Unknown error",
+    });
   }
 }

@@ -12,39 +12,51 @@ export default async function handler(req, res) {
     return;
   }
 
+  res.setHeader("Cache-Control", "no-store");
+
   try {
     const supabase = getServiceClient();
+
+    const authenticated = isAuthenticated(req);
+
     const { count } = await supabase
       .from("webauthn_credential")
       .select("id", { count: "exact", head: true });
 
     const alreadySetUp = (count || 0) > 0;
-    const authenticated = isAuthenticated(req);
 
-    // Bootstrap: first-ever setup requires the setup code.
-    // Adding a second device later requires an existing valid session instead.
+    // First-ever setup requires the setup code.
+    // Adding another device requires an authenticated session.
     if (!authenticated) {
       const body = await readJsonBody(req).catch(() => ({}));
       const codeOk =
         body.setupCode && body.setupCode === process.env.SETUP_CODE;
+
       if (alreadySetUp || !codeOk) {
-        res
-          .status(403)
-          .json({ error: "Not authorized to register a new device" });
+        res.status(403).json({
+          error: "Not authorized to register a new device",
+        });
         return;
       }
     }
 
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from("webauthn_credential")
       .select("id");
 
+    if (existingError) {
+      throw existingError;
+    }
+
     const options = await generateRegistrationOptions({
-      rpName: "Ledger",
+      rpName: "Pocket",
       rpID: RP_ID,
       userName: "viren",
+      userDisplayName: "Viren Patel",
       attestationType: "none",
-      excludeCredentials: (existing || []).map((c) => ({ id: c.id })),
+      excludeCredentials: (existing || []).map((credential) => ({
+        id: credential.id,
+      })),
       authenticatorSelection: {
         residentKey: "preferred",
         userVerification: "required",
@@ -52,14 +64,22 @@ export default async function handler(req, res) {
       },
     });
 
-    await supabase.from("webauthn_challenge").upsert({
-      id: "register",
-      challenge: options.challenge,
-      updated_at: new Date().toISOString(),
-    });
+    const { error: challengeError } = await supabase
+      .from("webauthn_challenge")
+      .upsert({
+        id: "register",
+        challenge: options.challenge,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (challengeError) {
+      throw challengeError;
+    }
 
     res.status(200).json(options);
   } catch (e) {
-    res.status(500).json({ error: e.message || "Unknown error" });
+    res.status(500).json({
+      error: e.message || "Unknown error",
+    });
   }
 }

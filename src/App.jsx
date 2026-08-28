@@ -38,6 +38,17 @@ import {
   ArrowDownRight,
   Camera,
   Loader2,
+  KeyRound,
+  NotebookPen,
+  Settings,
+  Bell,
+  Sun,
+  Command,
+  CalendarDays,
+  BarChart3,
+  ChevronRight,
+  ShieldCheck,
+  SearchCheck,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 
@@ -105,6 +116,7 @@ export default function LedgerApp() {
   const [recurring, setRecurring] = useState([]);
   const [categories, setCategories] = useState(SEED_CATEGORIES);
   const [tab, setTab] = useState("dashboard");
+  const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
   const [showAccountForm, setShowAccountForm] = useState(false);
@@ -473,6 +485,18 @@ export default function LedgerApp() {
 
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || "—";
 
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen(true);
+      }
+      if (e.key === "Escape") setCommandOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   if (!loaded) {
     return (
       <div
@@ -506,6 +530,7 @@ export default function LedgerApp() {
           netWorth={netWorth}
           monthIncome={monthIncome}
           monthExpense={monthExpense}
+          onSearch={() => setCommandOpen(true)}
           onAddTxn={() => {
             setEditingTxn(null);
             setTxnPrefill(null);
@@ -537,6 +562,19 @@ export default function LedgerApp() {
             savingsRate={savingsRate}
             expenseChangePct={expenseChangePct}
             topCategory={topCategory}
+            accounts={accounts}
+            balances={accountBalances}
+            budgets={budgetStatus}
+            goals={goals}
+            monthIncome={monthIncome}
+            monthExpense={monthExpense}
+            onAddTxn={() => {
+              setEditingTxn(null);
+              setTxnPrefill(null);
+              setShowTxnForm(true);
+            }}
+            onViewTransactions={() => setTab("transactions")}
+            onScanClick={() => setShowScanModal(true)}
             onEdit={(t) => {
               setEditingTxn(t);
               setShowTxnForm(true);
@@ -577,6 +615,8 @@ export default function LedgerApp() {
             onDelete={deleteGoal}
           />
         )}
+        {tab === "passwords" && <ModulePlaceholder type="passwords" />}
+        {tab === "notes" && <ModulePlaceholder type="notes" />}
         {tab === "recurring" && (
           <RecurringView
             recurring={recurring}
@@ -586,6 +626,16 @@ export default function LedgerApp() {
           />
         )}
       </main>
+
+      {commandOpen && (
+        <CommandPalette
+          onClose={() => setCommandOpen(false)}
+          onNavigate={(next) => {
+            setTab(next);
+            setCommandOpen(false);
+          }}
+        />
+      )}
 
       {showTxnForm && (
         <TxnModal
@@ -680,133 +730,237 @@ export default function LedgerApp() {
 /* ---------- Layout ---------- */
 
 function Sidebar({ tab, setTab }) {
-  const items = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "transactions", label: "Ledger", icon: Receipt },
-    { id: "accounts", label: "Accounts", icon: Landmark },
-    { id: "budgets", label: "Budgets", icon: Target },
-    { id: "goals", label: "Goals", icon: PiggyBank },
-    { id: "recurring", label: "Recurring", icon: Repeat },
+  const primary = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, key: "D" },
+    { id: "transactions", label: "Pocket", icon: Wallet, key: "P" },
+    { id: "passwords", label: "Passwords", icon: KeyRound, key: "W" },
+    { id: "notes", label: "Notes", icon: NotebookPen, key: "N" },
   ];
+
+  const secondary = [
+    { id: "accounts", label: "Accounts", icon: Landmark, key: "A" },
+    { id: "budgets", label: "Budgets", icon: Target, key: "B" },
+    { id: "goals", label: "Goals", icon: PiggyBank, key: "G" },
+    { id: "recurring", label: "Recurring", icon: Repeat, key: "R" },
+  ];
+
+  const renderItem = ({ id, label, icon: Icon, key }) => (
+    <button
+      key={id}
+      onClick={() => setTab(id)}
+      style={{
+        ...styles.navItem,
+        background: tab === id ? "#20242B" : "transparent",
+        color: tab === id ? "#F4F2EC" : "#8E929B",
+        borderLeft: tab === id ? "2px solid #4FE36B" : "2px solid transparent",
+      }}
+    >
+      <Icon size={17} strokeWidth={1.8} />
+      <span style={{ flex: 1 }}>{label}</span>
+      <kbd style={styles.navKey}>⌘{key}</kbd>
+    </button>
+  );
+
   return (
     <aside style={styles.sidebar} className="ledger-sidebar">
       <div style={styles.brand} className="brand">
-        <Wallet size={20} color="#C9A455" />
-        <span style={styles.brandText}>Ledger</span>
+        <div style={styles.brandMark}>
+          <Wallet size={17} strokeWidth={2.2} />
+        </div>
+        <span style={styles.brandText}>Pocket</span>
       </div>
-      <nav
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          marginTop: 24,
-        }}
-        className="ledger-nav"
-      >
-        {items.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            style={{
-              ...styles.navItem,
-              background: tab === id ? "#1F232B" : "transparent",
-              color: tab === id ? "#ECEAE3" : "#8B8F98",
-              borderLeft:
-                tab === id ? "2px solid #C9A455" : "2px solid transparent",
-            }}
-          >
-            <Icon size={16} />
-            <span>{label}</span>
-          </button>
-        ))}
+
+      <div style={styles.welcomeBlock} className="welcome-block">
+        <div style={styles.welcomeSmall}>Welcome back,</div>
+        <div style={styles.welcomeName}>Viren</div>
+        <div style={styles.welcomeCopy}>
+          Stay focused.{" "}
+          <span style={{ color: "#4FE36B" }}>Get things done.</span>
+        </div>
+      </div>
+
+      <div style={styles.navLabel}>MENU</div>
+      <nav style={styles.nav} className="ledger-nav">
+        {primary.map(renderItem)}
       </nav>
+
+      <div style={styles.navDivider} />
+      <div style={styles.navLabel}>MANAGE</div>
+      <nav style={styles.nav} className="ledger-nav">
+        {secondary.map(renderItem)}
+      </nav>
+
+      <div style={styles.sidebarSpacer} />
+      <button style={styles.profileCard} onClick={() => setTab("accounts")}>
+        <div style={styles.avatar}>V</div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={styles.profileName}>Viren Patel</div>
+          <div style={styles.profilePlan}>Personal space</div>
+        </div>
+        <ChevronRight size={16} color="#777C85" />
+      </button>
     </aside>
   );
 }
 
 function TopBar({
-  netWorth,
-  monthIncome,
-  monthExpense,
+  onSearch,
   onAddTxn,
   onExport,
   onImportClick,
   onScanClick,
-  onSettingsClick,
   saveError,
 }) {
   return (
-    <div style={styles.topBar} className="ledger-topbar">
-      <div
-        style={{ display: "flex", gap: 32, flexWrap: "wrap" }}
-        className="ledger-stats"
+    <header style={styles.topBar} className="ledger-topbar">
+      <button
+        style={styles.globalSearch}
+        onClick={onSearch}
+        aria-label="Search everything"
       >
-        <Stat label="Net worth" value={fmtINR(netWorth)} color="#ECEAE3" />
-        <Stat
-          label="Income this month"
-          value={fmtINR(monthIncome)}
-          color="#4FA98C"
-        />
-        <Stat
-          label="Expense this month"
-          value={fmtINR(monthExpense)}
-          color="#D9735C"
-        />
-      </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-        className="ledger-actions"
-      >
-        {saveError && (
-          <span
-            style={{
-              fontSize: 11,
-              color: "#D9735C",
-              fontFamily: "Inter, sans-serif",
-            }}
-          >
-            Not saved — storage unavailable
-          </span>
-        )}
+        <Search size={18} color="#737883" />
+        <span style={{ flex: 1, textAlign: "left" }}>Search anything...</span>
+        <kbd style={styles.searchKey}>⌘ K</kbd>
+      </button>
+
+      <div style={styles.topActions}>
         <button
-          style={styles.secondaryBtn}
-          onClick={onImportClick}
-          title="Import CSV"
+          style={styles.iconTopBtn}
+          title="Command center"
+          onClick={onSearch}
         >
-          <Download size={14} /> Import
+          <Command size={17} />
         </button>
-        <button
-          style={styles.secondaryBtn}
-          onClick={onExport}
-          title="Export CSV"
-        >
-          <Upload size={14} /> Export
+        <button style={styles.iconTopBtn} title="Appearance">
+          <Sun size={17} />
         </button>
-        <button
-          style={styles.secondaryBtn}
-          onClick={onScanClick}
-          title="Scan a receipt"
-        >
-          <Camera size={14} /> Scan receipt
+        <button style={styles.iconTopBtn} title="Notifications">
+          <Bell size={17} />
         </button>
+        <div style={styles.datePill}>
+          <div style={styles.datePillText}>
+            {new Date().toLocaleDateString("en-IN", {
+              weekday: "long",
+              day: "2-digit",
+              month: "short",
+            })}
+          </div>
+          <div style={styles.datePillSub}>Personal finance</div>
+        </div>
         <button style={styles.primaryBtn} onClick={onAddTxn}>
           <Plus size={15} /> Add entry
         </button>
+      </div>
+
+      <div style={styles.utilityRow} className="ledger-utility-row">
+        {saveError && (
+          <span style={{ fontSize: 11, color: "#D9735C" }}>
+            Not saved — storage unavailable
+          </span>
+        )}
+        <button style={styles.secondaryBtn} onClick={onImportClick}>
+          <Download size={14} /> Import
+        </button>
+        <button style={styles.secondaryBtn} onClick={onExport}>
+          <Upload size={14} /> Export
+        </button>
+        <button style={styles.secondaryBtn} onClick={onScanClick}>
+          <Camera size={14} /> Scan receipt
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function CommandPalette({ onClose, onNavigate }) {
+  const items = [
+    ["dashboard", "Dashboard", LayoutDashboard],
+    ["transactions", "Pocket", Wallet],
+    ["passwords", "Passwords", KeyRound],
+    ["notes", "Notes", NotebookPen],
+    ["accounts", "Accounts", Landmark],
+    ["budgets", "Budgets", Target],
+  ];
+  const [query, setQuery] = useState("");
+  const filtered = items.filter(([, label]) =>
+    label.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <div style={styles.commandOverlay} onMouseDown={onClose}>
+      <div style={styles.commandPanel} onMouseDown={(e) => e.stopPropagation()}>
+        <div style={styles.commandSearchRow}>
+          <Search size={18} color="#777C85" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search Pocket, Passwords & Notes..."
+            style={styles.commandInput}
+          />
+          <kbd style={styles.commandEsc}>ESC</kbd>
+        </div>
+        <div style={styles.commandLabel}>GO TO</div>
+        {filtered.map(([id, label, Icon]) => (
+          <button
+            key={id}
+            style={styles.commandItem}
+            onClick={() => onNavigate(id)}
+          >
+            <span style={styles.commandIcon}>
+              <Icon size={17} />
+            </span>
+            <span style={{ flex: 1 }}>{label}</span>
+            <ChevronRight size={15} color="#666B74" />
+          </button>
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ padding: "24px 12px", color: "#666B74", fontSize: 13 }}>
+            Nothing found.
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function Stat({ label, value, color }) {
+function ModulePlaceholder({ type }) {
+  const passwords = type === "passwords";
   return (
-    <div>
-      <div style={styles.statLabel}>{label}</div>
-      <div style={{ ...styles.statValue, color }}>{value}</div>
+    <div style={styles.modulePage} className="modulePage">
+      <div style={styles.moduleHero}>
+        <div style={styles.moduleIcon}>
+          <>{passwords ? <KeyRound size={25} /> : <NotebookPen size={25} />}</>
+        </div>
+        <div>
+          <div style={styles.moduleEyebrow}>
+            {passwords ? "SECURE VAULT" : "PERSONAL NOTES"}
+          </div>
+          <h1 style={styles.moduleTitle}>
+            {passwords ? "Passwords" : "Notes"}
+          </h1>
+          <p style={styles.moduleCopy}>
+            {passwords
+              ? "Your secure identity space is ready for the next build."
+              : "Capture ideas, lists and everything worth remembering."}
+          </p>
+        </div>
+      </div>
+      <div style={styles.placeholderGrid}>
+        <div style={styles.placeholderCard}>
+          <ShieldCheck size={18} />
+          <strong>{passwords ? "Vault protected" : "Private by design"}</strong>
+          <span>
+            {passwords
+              ? "Encryption and vault unlock will live here."
+              : "Your notes will stay in your personal space."}
+          </span>
+        </div>
+        <div style={styles.placeholderCard}>
+          <SearchCheck size={18} />
+          <strong>Fast search</strong>
+          <span>⌘ K will search across your Pocket workspace.</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -822,227 +976,361 @@ function Dashboard({
   savingsRate,
   expenseChangePct,
   topCategory,
+  accounts,
+  balances,
+  budgets,
+  goals,
+  monthIncome,
+  monthExpense,
+  onAddTxn,
+  onViewTransactions,
+  onScanClick,
   onEdit,
 }) {
-  return (
-    <div style={{ padding: "0 32px 32px" }} className="ledger-page">
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 14,
-          marginBottom: 20,
-        }}
-        className="ledger-grid-3"
-      >
-        <InsightCard
-          label="Savings rate this month"
-          value={savingsRate === null ? "—" : `${savingsRate}%`}
-          hint={
-            savingsRate === null
-              ? "No income logged yet"
-              : savingsRate >= 0
-                ? "of income kept"
-                : "spent beyond income"
-          }
-          tone={
-            savingsRate === null ? "neutral" : savingsRate >= 0 ? "good" : "bad"
-          }
-        />
-        <InsightCard
-          label="Spending vs last month"
-          value={
-            expenseChangePct === null
-              ? "—"
-              : `${expenseChangePct > 0 ? "+" : ""}${expenseChangePct}%`
-          }
-          hint={
-            expenseChangePct === null
-              ? "Not enough history"
-              : expenseChangePct > 0
-                ? "higher than last month"
-                : "lower than last month"
-          }
-          tone={
-            expenseChangePct === null
-              ? "neutral"
-              : expenseChangePct > 0
-                ? "bad"
-                : "good"
-          }
-        />
-        <InsightCard
-          label="Top category this month"
-          value={topCategory ? topCategory[0] : "—"}
-          hint={
-            topCategory ? fmtINR(topCategory[1]) + " spent" : "No expenses yet"
-          }
-          tone="neutral"
-        />
-      </div>
+  const totalBudget = budgets.reduce((s, b) => s + Number(b.limit || 0), 0);
+  const totalSpent = budgets.reduce((s, b) => s + Number(b.spent || 0), 0);
+  const budgetPct =
+    totalBudget > 0
+      ? Math.min(100, Math.round((totalSpent / totalBudget) * 100))
+      : 0;
+  const maxCategory = categoryBreakdown[0]?.amount || 1;
 
-      <div
-        style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 20 }}
-        className="ledger-grid-main"
-      >
-        <div style={styles.panel}>
-          <div style={{ ...styles.panelTitle, marginTop: 0 }}>
-            Cash flow, last 6 months
+  return (
+    <div style={styles.dashboardPage} className="ledger-page">
+      <section style={styles.heroGrid} className="hero-grid">
+        <div style={styles.netWorthCard}>
+          <div style={styles.cardEyebrow}>NET WORTH</div>
+          <div style={styles.netWorthValue}>
+            {fmtINR(Object.values(balances).reduce((a, b) => a + b, 0))}
           </div>
-          <ResponsiveContainer width="100%" height={190}>
+          <div style={styles.netWorthTrend}>
+            <ArrowUpRight size={14} />{" "}
+            {savingsRate !== null
+              ? `${Math.max(0, savingsRate)}% saved this month`
+              : "Start tracking to see your trend"}
+          </div>
+          <div style={styles.sparkline}>
+            {netWorthTrend.length > 1 ? (
+              netWorthTrend.map((p, i) => {
+                const min = Math.min(...netWorthTrend.map((x) => x.value));
+                const max = Math.max(...netWorthTrend.map((x) => x.value));
+                const x = (i / (netWorthTrend.length - 1)) * 100;
+                const y =
+                  max === min ? 45 : 86 - ((p.value - min) / (max - min)) * 65;
+                return (
+                  <div
+                    key={i}
+                    style={{ ...styles.sparkDot, left: `${x}%`, top: `${y}%` }}
+                  />
+                );
+              })
+            ) : (
+              <div style={styles.sparkEmpty}>
+                Add more entries to build your trend.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={styles.monthCard}>
+          <div style={styles.cardHeader}>
+            <div>
+              <div style={styles.cardEyebrow}>THIS MONTH</div>
+              <div style={styles.monthTitle}>Cash flow</div>
+            </div>
+            <CalendarDays size={18} color="#777C85" />
+          </div>
+          <div style={styles.metricRows}>
+            <div>
+              <span>Income</span>
+              <strong style={{ color: "#4FE36B" }}>
+                {fmtINR(monthIncome)}
+              </strong>
+            </div>
+            <div>
+              <span>Expenses</span>
+              <strong style={{ color: "#FF8067" }}>
+                {fmtINR(monthExpense)}
+              </strong>
+            </div>
+            <div>
+              <span>Saved</span>
+              <strong>{fmtINR(Math.max(0, monthIncome - monthExpense))}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style={styles.widgetGrid} className="widget-grid">
+        <div
+          style={{ ...styles.widget, gridColumn: "span 2" }}
+          className="widget-span-2"
+        >
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Cash flow</div>
+              <div style={styles.widgetSub}>
+                Income vs expenses · last 6 months
+              </div>
+            </div>
+            <BarChart3 size={18} color="#707580" />
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
             <LineChart data={trendData}>
-              <CartesianGrid stroke="#232730" vertical={false} />
+              <CartesianGrid stroke="#252932" vertical={false} />
               <XAxis
                 dataKey="label"
-                stroke="#8B8F98"
-                fontSize={12}
+                stroke="#777C85"
+                fontSize={11}
                 tickLine={false}
-                axisLine={{ stroke: "#232730" }}
+                axisLine={false}
               />
               <YAxis
-                stroke="#8B8F98"
-                fontSize={11}
+                stroke="#777C85"
+                fontSize={10}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v) => `₹${Math.round(v / 1000)}k`}
               />
               <Tooltip
                 contentStyle={{
-                  background: "#1C1F26",
-                  border: "1px solid #2A2E37",
-                  borderRadius: 8,
+                  background: "#171A1F",
+                  border: "1px solid #30343D",
+                  borderRadius: 10,
                   fontSize: 12,
                 }}
                 labelStyle={{ color: "#ECEAE3" }}
                 formatter={(v, k) => [
                   fmtINR(v),
-                  k === "income" ? "Income" : "Expense",
+                  k === "income" ? "Income" : "Expenses",
                 ]}
               />
               <Line
                 type="monotone"
                 dataKey="income"
-                stroke="#4FA98C"
-                strokeWidth={2}
+                stroke="#4FE36B"
+                strokeWidth={3}
                 dot={false}
               />
               <Line
                 type="monotone"
                 dataKey="expense"
-                stroke="#D9735C"
-                strokeWidth={2}
+                stroke="#FF8067"
+                strokeWidth={3}
                 dot={false}
               />
             </LineChart>
           </ResponsiveContainer>
-
-          <div style={styles.panelTitle}>Net worth trend</div>
-          <ResponsiveContainer width="100%" height={140}>
-            <LineChart data={netWorthTrend}>
-              <CartesianGrid stroke="#232730" vertical={false} />
-              <XAxis
-                dataKey="label"
-                stroke="#8B8F98"
-                fontSize={12}
-                tickLine={false}
-                axisLine={{ stroke: "#232730" }}
-              />
-              <YAxis
-                stroke="#8B8F98"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `₹${Math.round(v / 1000)}k`}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "#1C1F26",
-                  border: "1px solid #2A2E37",
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "#ECEAE3" }}
-                formatter={(v) => [fmtINR(v), "Net worth"]}
-              />
-              <Line
-                type="monotone"
-                dataKey="value"
-                stroke="#C9A455"
-                strokeWidth={2}
-                dot={{ r: 3, fill: "#C9A455" }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-
-          <div style={styles.panelTitle}>Recent entries</div>
-          <div>
-            {transactions.length === 0 && (
-              <EmptyRow text="No entries yet. Add your first one." />
-            )}
-            {transactions.map((t) => (
-              <LedgerRow
-                key={t.id}
-                t={t}
-                accountLabel={accountName(t.accountId)}
-                onEdit={() => onEdit(t)}
-              />
-            ))}
-          </div>
         </div>
 
-        <div style={styles.panel}>
-          <div style={{ ...styles.panelTitle, marginTop: 0 }}>
-            Spending by category — this month
+        <div style={styles.widget}>
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Spending</div>
+              <div style={styles.widgetSub}>This month by category</div>
+            </div>
+            <span style={styles.widgetMore}>•••</span>
           </div>
-          {categoryBreakdown.length === 0 && (
-            <EmptyRow text="No expenses logged this month." />
+          {categoryBreakdown.length === 0 ? (
+            <EmptyRow text="No expenses this month." />
+          ) : (
+            categoryBreakdown.slice(0, 5).map((x, i) => (
+              <div key={x.category} style={styles.categoryRow}>
+                <div style={styles.categoryName}>
+                  <span
+                    style={{
+                      ...styles.categoryDot,
+                      background: PALETTE[i % PALETTE.length],
+                    }}
+                  />
+                  {x.category}
+                </div>
+                <div style={styles.categoryBarTrack}>
+                  <div
+                    style={{
+                      ...styles.categoryBar,
+                      width: `${Math.max(8, (x.amount / maxCategory) * 100)}%`,
+                      background: PALETTE[i % PALETTE.length],
+                    }}
+                  />
+                </div>
+                <div style={styles.categoryAmount}>{fmtINR(x.amount)}</div>
+              </div>
+            ))
           )}
-          {categoryBreakdown.length > 0 && (
-            <ResponsiveContainer
-              width="100%"
-              height={Math.max(160, categoryBreakdown.length * 34)}
+        </div>
+
+        <div style={styles.widget}>
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Recent transactions</div>
+              <div style={styles.widgetSub}>Your latest activity</div>
+            </div>
+            <button style={styles.linkBtn} onClick={onViewTransactions}>
+              View all
+            </button>
+          </div>
+          {transactions.length === 0 ? (
+            <EmptyRow text="No entries yet." />
+          ) : (
+            transactions
+              .slice(0, 5)
+              .map((t) => (
+                <LedgerRow
+                  key={t.id}
+                  t={t}
+                  accountLabel={accountName(t.accountId)}
+                  onEdit={() => onEdit(t)}
+                />
+              ))
+          )}
+        </div>
+
+        <div style={styles.widget}>
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Budget</div>
+              <div style={styles.widgetSub}>
+                {totalBudget
+                  ? `${fmtINR(totalSpent)} of ${fmtINR(totalBudget)}`
+                  : "Set a budget to start"}
+              </div>
+            </div>
+            <Target size={18} color="#707580" />
+          </div>
+          <div style={styles.budgetRingWrap}>
+            <div
+              style={{
+                ...styles.budgetRing,
+                background: `conic-gradient(#4FE36B ${budgetPct * 3.6}deg, #292D35 0deg)`,
+              }}
             >
-              <BarChart
-                data={categoryBreakdown}
-                layout="vertical"
-                margin={{ left: 8, right: 24 }}
-              >
-                <XAxis type="number" hide />
-                <YAxis
-                  type="category"
-                  dataKey="category"
-                  width={90}
-                  stroke="#8B8F98"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "#1C1F26",
-                    border: "1px solid #2A2E37",
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                  formatter={(v) => fmtINR(v)}
-                />
-                <Bar dataKey="amount" radius={[0, 4, 4, 0]} barSize={14}>
-                  {categoryBreakdown.map((_, i) => (
-                    <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+              <div style={styles.budgetRingInner}>
+                {budgetPct}
+                <span style={{ fontSize: 10 }}>%</span>
+              </div>
+            </div>
+            <div>
+              <div style={styles.budgetBig}>
+                {fmtINR(Math.max(0, totalBudget - totalSpent))}
+              </div>
+              <div style={styles.widgetSub}>remaining</div>
+            </div>
+          </div>
+          {budgets.slice(0, 3).map((b) => (
+            <div key={b.id} style={styles.miniBudget}>
+              <span>{b.category}</span>
+              <span>{Math.round(b.pct)}%</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={styles.widget}>
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Accounts</div>
+              <div style={styles.widgetSub}>
+                {accounts.length} active accounts
+              </div>
+            </div>
+            <Landmark size={18} color="#707580" />
+          </div>
+          {accounts.slice(0, 4).map((a) => (
+            <div key={a.id} style={styles.accountRow}>
+              <span
+                style={{
+                  ...styles.accountDot,
+                  background: a.color || PALETTE[0],
+                }}
+              />
+              <span style={{ flex: 1 }}>{a.name}</span>
+              <strong>{fmtINR(balances[a.id] || 0)}</strong>
+            </div>
+          ))}
+          {accounts.length === 0 && (
+            <EmptyRow text="Add an account to see it here." />
           )}
         </div>
-      </div>
+
+        <div style={styles.widget}>
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Goals</div>
+              <div style={styles.widgetSub}>Savings progress</div>
+            </div>
+            <PiggyBank size={18} color="#707580" />
+          </div>
+          {goals.slice(0, 3).map((g) => {
+            const pct =
+              g.target > 0
+                ? Math.min(100, Math.round((g.saved / g.target) * 100))
+                : 0;
+            return (
+              <div key={g.id} style={styles.goalRow}>
+                <div style={styles.goalLine}>
+                  <span>{g.name}</span>
+                  <span>{pct}%</span>
+                </div>
+                <div style={styles.progressTrack}>
+                  <div
+                    style={{
+                      ...styles.progressFill,
+                      width: `${pct}%`,
+                      background: "#7C93C9",
+                    }}
+                  />
+                </div>
+                <div style={styles.widgetSub}>
+                  {fmtINR(g.saved)} of {fmtINR(g.target)}
+                </div>
+              </div>
+            );
+          })}
+          {goals.length === 0 && (
+            <EmptyRow text="Create your first savings goal." />
+          )}
+        </div>
+      </section>
+
+      <section style={styles.quickRow} className="quickRow">
+        <button style={styles.quickCard} onClick={onAddTxn}>
+          <div style={styles.quickIcon}>
+            <Plus size={19} />
+          </div>
+          <div>
+            <strong>Add transaction</strong>
+            <span>Record income or expense</span>
+          </div>
+          <ChevronRight size={16} />
+        </button>
+        <button style={styles.quickCard} onClick={onScanClick}>
+          <div style={styles.quickIcon}>
+            <Receipt size={19} />
+          </div>
+          <div>
+            <strong>Scan receipt</strong>
+            <span>Turn a receipt into an entry</span>
+          </div>
+          <ChevronRight size={16} />
+        </button>
+        <button style={styles.quickCard} onClick={() => onViewTransactions()}>
+          <div style={styles.quickIcon}>
+            <Settings size={19} />
+          </div>
+          <div>
+            <strong>Manage Pocket</strong>
+            <span>Accounts, budgets and goals</span>
+          </div>
+          <ChevronRight size={16} />
+        </button>
+      </section>
     </div>
   );
 }
 
 function InsightCard({ label, value, hint, tone }) {
   const color =
-    tone === "good" ? "#4FA98C" : tone === "bad" ? "#D9735C" : "#ECEAE3";
+    tone === "good" ? "#4FE36B" : tone === "bad" ? "#FF8067" : "#ECEAE3";
   return (
     <div style={{ ...styles.panel, padding: 16 }}>
       <div style={styles.statLabel}>{label}</div>
@@ -2318,6 +2606,13 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+@media (max-width: 980px) {
+  .ledger-sidebar { width: 205px !important; }
+  .hero-grid { grid-template-columns: 1fr !important; }
+  .widget-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+  .widget-span-2 { grid-column: span 2 !important; }
+}
+
 @media (max-width: 768px) {
   .ledger-app {
     flex-direction: column !important;
@@ -2398,73 +2693,215 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
 @media (max-width: 420px) {
   .ledger-stats { gap: 10px 16px !important; }
 }
+@media (max-width: 600px) {
+  .ledger-sidebar { width: 100% !important; padding: 14px !important; }
+  .welcome-block { padding: 20px 10px !important; }
+  .ledger-nav { display: grid !important; grid-template-columns: repeat(2,1fr) !important; }
+  .ledger-sidebar .brand { display: flex !important; }
+  .ledger-topbar { display: flex !important; flex-direction: column !important; align-items: stretch !important; padding: 14px !important; }
+  .ledger-topbar .global-search { width: 100% !important; }
+  .topActions { flex-wrap: wrap !important; }
+  .ledger-utility-row { justify-content: stretch !important; flex-wrap: wrap !important; }
+  .ledger-utility-row button { flex: 1 1 30% !important; justify-content: center !important; }
+  .ledger-page, .modulePage { padding: 12px 14px 28px !important; }
+  .widget-grid { grid-template-columns: 1fr !important; }
+  .widget-span-2 { grid-column: span 1 !important; }
+  .quickRow { grid-template-columns: 1fr !important; }
+  .placeholderGrid { grid-template-columns: 1fr !important; }
+}
+
 `;
 
 const styles = {
   app: {
     display: "flex",
     minHeight: "100vh",
-    background: "#14161B",
+    background: "#0E1013",
+    color: "#ECEAE3",
     fontFamily: "Inter, sans-serif",
   },
   sidebar: {
-    width: 200,
+    width: 252,
     borderRight: "1px solid #22262E",
-    padding: "24px 12px",
+    padding: "28px 16px 18px",
     flexShrink: 0,
+    boxSizing: "border-box",
+    display: "flex",
+    flexDirection: "column",
+    background: "#0D0F12",
   },
-  brand: { display: "flex", alignItems: "center", gap: 8, padding: "0 12px" },
-  brandText: {
-    fontFamily: "'Space Grotesk', sans-serif",
-    fontSize: 16,
-    fontWeight: 600,
-    color: "#ECEAE3",
-    letterSpacing: 0.2,
-  },
-  navItem: {
+  brand: { display: "flex", alignItems: "center", gap: 10, padding: "0 10px" },
+  brandMark: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     display: "flex",
     alignItems: "center",
-    gap: 10,
-    padding: "9px 12px",
-    borderRadius: 6,
+    justifyContent: "center",
+    background: "#17321D",
+    color: "#4FE36B",
+    border: "1px solid #285C35",
+  },
+  brandText: {
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontSize: 21,
+    fontWeight: 700,
+    letterSpacing: -0.5,
+    color: "#F4F2EC",
+  },
+  welcomeBlock: { padding: "54px 12px 30px" },
+  welcomeSmall: { color: "#7D828C", fontSize: 14, marginBottom: 3 },
+  welcomeName: {
+    color: "#F4F2EC",
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontSize: 30,
+    fontWeight: 600,
+    letterSpacing: -1,
+  },
+  welcomeCopy: {
+    color: "#7D828C",
+    fontSize: 12,
+    marginTop: 7,
+    lineHeight: 1.5,
+  },
+  navLabel: {
+    fontSize: 9,
+    letterSpacing: "0.16em",
+    color: "#535862",
+    fontWeight: 600,
+    padding: "0 12px 8px",
+  },
+  nav: { display: "flex", flexDirection: "column", gap: 3 },
+  navItem: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 11,
+    padding: "10px 11px",
+    borderRadius: 9,
     border: "none",
-    background: "transparent",
     fontSize: 13,
     fontFamily: "Inter, sans-serif",
     cursor: "pointer",
     textAlign: "left",
+    transition: "all .18s ease",
   },
+  navKey: {
+    fontSize: 9,
+    color: "#555A64",
+    background: "#171A1F",
+    border: "1px solid #272B33",
+    borderRadius: 5,
+    padding: "2px 5px",
+    fontFamily: "Inter, sans-serif",
+  },
+  navDivider: { height: 1, background: "#22262E", margin: "20px 10px 18px" },
+  sidebarSpacer: { flex: 1 },
+  profileCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    width: "100%",
+    padding: 10,
+    borderRadius: 13,
+    border: "1px solid #242830",
+    background: "#15181D",
+    color: "#ECEAE3",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: "50%",
+    background: "#313640",
+    color: "#F4F2EC",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontWeight: 700,
+    fontSize: 13,
+  },
+  profileName: { fontSize: 12, fontWeight: 600 },
+  profilePlan: { fontSize: 10, color: "#69707A", marginTop: 2 },
   main: { flex: 1, minWidth: 0, maxWidth: "100%" },
   topBar: {
-    display: "flex",
-    justifyContent: "space-between",
+    display: "grid",
+    gridTemplateColumns: "minmax(280px, 1fr) auto",
     alignItems: "center",
-    padding: "28px 32px",
-    flexWrap: "wrap",
-    gap: 16,
+    gap: 14,
+    padding: "24px 32px 12px",
+    position: "sticky",
+    top: 0,
+    zIndex: 5,
+    background: "rgba(14,16,19,.92)",
+    backdropFilter: "blur(16px)",
   },
-  statLabel: {
-    fontSize: 11,
-    color: "#8B8F98",
-    letterSpacing: 0.3,
-    marginBottom: 4,
+  globalSearch: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    height: 46,
+    padding: "0 10px 0 15px",
+    borderRadius: 14,
+    border: "1px solid #292D35",
+    background: "#14171B",
+    color: "#777C85",
+    fontSize: 13,
+    cursor: "pointer",
+    minWidth: 0,
   },
-  statValue: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 20,
-    fontWeight: 500,
+  searchKey: {
+    color: "#8A8F98",
+    background: "#20242A",
+    border: "1px solid #2F343D",
+    borderRadius: 7,
+    padding: "5px 8px",
+    fontSize: 10,
+    fontFamily: "Inter, sans-serif",
+  },
+  topActions: { display: "flex", alignItems: "center", gap: 8 },
+  iconTopBtn: {
+    width: 42,
+    height: 42,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    border: "1px solid #292D35",
+    background: "#14171B",
+    color: "#858A94",
+    cursor: "pointer",
+  },
+  datePill: {
+    padding: "8px 13px",
+    borderRadius: 12,
+    border: "1px solid #292D35",
+    background: "#14171B",
+    minWidth: 150,
+  },
+  datePillText: { fontSize: 11, color: "#E7E5DF" },
+  datePillSub: { fontSize: 9, color: "#616771", marginTop: 2 },
+  utilityRow: {
+    gridColumn: "1 / -1",
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 30,
   },
   primaryBtn: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    background: "#C9A455",
-    color: "#14161B",
+    justifyContent: "center",
+    gap: 7,
+    background: "#4FE36B",
+    color: "#08120B",
     border: "none",
-    borderRadius: 6,
-    padding: "9px 16px",
-    fontSize: 13,
-    fontWeight: 600,
+    borderRadius: 10,
+    padding: "10px 15px",
+    fontSize: 12,
+    fontWeight: 700,
     fontFamily: "Inter, sans-serif",
     cursor: "pointer",
   },
@@ -2472,29 +2909,413 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: 6,
-    background: "transparent",
-    color: "#C9A455",
-    border: "1px solid #3A3423",
-    borderRadius: 6,
-    padding: "7px 12px",
-    fontSize: 12,
-    fontFamily: "Inter, sans-serif",
-    cursor: "pointer",
-  },
-  chipBtn: {
-    background: "#1C1F26",
-    color: "#8B8F98",
-    border: "1px solid #2A2E37",
-    borderRadius: 5,
-    padding: "5px 8px",
+    background: "#14171B",
+    color: "#C4A55C",
+    border: "1px solid #3A3425",
+    borderRadius: 9,
+    padding: "8px 11px",
     fontSize: 11,
     fontFamily: "Inter, sans-serif",
     cursor: "pointer",
   },
-  panel: {
-    background: "#1A1D24",
-    border: "1px solid #22262E",
+  dashboardPage: {
+    padding: "16px 32px 42px",
+    maxWidth: 1500,
+    margin: "0 auto",
+  },
+  heroGrid: {
+    display: "grid",
+    gridTemplateColumns: "1.35fr 1fr",
+    gap: 14,
+    marginBottom: 14,
+  },
+  netWorthCard: {
+    minHeight: 245,
+    borderRadius: 18,
+    border: "1px solid #292D35",
+    background: "linear-gradient(145deg,#191D22,#121519)",
+    padding: 24,
+    position: "relative",
+    overflow: "hidden",
+  },
+  cardEyebrow: {
+    fontSize: 9,
+    letterSpacing: "0.15em",
+    color: "#777C85",
+    fontWeight: 700,
+  },
+  netWorthValue: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 48,
+    lineHeight: 1,
+    marginTop: 12,
+    letterSpacing: -2,
+    color: "#F4F2EC",
+  },
+  netWorthTrend: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 13,
+    color: "#4FE36B",
+    fontSize: 11,
+  },
+  sparkline: {
+    position: "absolute",
+    left: 24,
+    right: 24,
+    bottom: 24,
+    height: 65,
+    borderBottom: "1px solid #242830",
+    background: "linear-gradient(180deg,transparent,#121519)",
+  },
+  sparkDot: {
+    position: "absolute",
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "#4FE36B",
+    boxShadow: "0 0 0 4px rgba(79,227,107,.10)",
+    transform: "translate(-50%,-50%)",
+  },
+  sparkEmpty: {
+    position: "absolute",
+    bottom: 5,
+    left: 0,
+    color: "#4D535D",
+    fontSize: 10,
+  },
+  monthCard: {
+    minHeight: 245,
+    borderRadius: 18,
+    border: "1px solid #292D35",
+    background: "#171A1F",
+    padding: 24,
+  },
+  cardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  monthTitle: {
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontSize: 23,
+    fontWeight: 600,
+    marginTop: 7,
+  },
+  metricRows: { marginTop: 34, display: "grid", gap: 16 },
+  widgetGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+    gap: 14,
+  },
+  widget: {
+    border: "1px solid #292D35",
+    borderRadius: 17,
+    background: "#171A1F",
+    padding: 18,
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  widgetHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 14,
+  },
+  widgetTitle: {
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#F0EEE8",
+  },
+  widgetSub: { fontSize: 10, color: "#626872", marginTop: 4 },
+  widgetMore: { color: "#646A74", fontSize: 12, letterSpacing: 2 },
+  linkBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#8A909A",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+  categoryRow: {
+    display: "grid",
+    gridTemplateColumns: "90px 1fr 62px",
+    gap: 8,
+    alignItems: "center",
+    margin: "13px 0",
+  },
+  categoryName: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    fontSize: 11,
+    color: "#A8ACB4",
+    minWidth: 0,
+  },
+  categoryDot: { width: 7, height: 7, borderRadius: "50%", flexShrink: 0 },
+  categoryBarTrack: {
+    height: 7,
+    background: "#292D35",
     borderRadius: 10,
+    overflow: "hidden",
+  },
+  categoryBar: { height: "100%", borderRadius: 10 },
+  categoryAmount: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 10,
+    color: "#D8D5CE",
+    textAlign: "right",
+  },
+  ledgerRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    padding: "10px 0",
+    borderBottom: "1px solid #23272F",
+  },
+  ledgerCategory: {
+    color: "#E8E5DE",
+    fontSize: 11,
+    fontFamily: "Inter, sans-serif",
+  },
+  ledgerMeta: {
+    color: "#5F656F",
+    fontSize: 9,
+    fontFamily: "Inter, sans-serif",
+    marginTop: 2,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  ledgerAmount: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 10,
+    fontWeight: 500,
+    whiteSpace: "nowrap",
+  },
+  iconBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#5F656F",
+    cursor: "pointer",
+    padding: 4,
+    display: "flex",
+  },
+  budgetRingWrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: 20,
+    padding: "14px 0 18px",
+  },
+  budgetRing: {
+    width: 92,
+    height: 92,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  budgetRingInner: {
+    width: 68,
+    height: 68,
+    borderRadius: "50%",
+    background: "#171A1F",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 20,
+  },
+  budgetRingInnerSpan: { fontSize: 10 },
+  budgetBig: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 22,
+    color: "#F0EEE8",
+  },
+  miniBudget: {
+    display: "flex",
+    justifyContent: "space-between",
+    padding: "9px 0",
+    borderTop: "1px solid #242830",
+    color: "#9297A0",
+    fontSize: 10,
+  },
+  accountRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 0",
+    borderBottom: "1px solid #242830",
+    color: "#B0B4BC",
+    fontSize: 11,
+  },
+  accountRowStrong: { fontFamily: "'IBM Plex Mono', monospace" },
+  accountDot: { width: 7, height: 7, borderRadius: "50%" },
+  goalRow: { padding: "10px 0", borderBottom: "1px solid #242830" },
+  goalLine: {
+    display: "flex",
+    justifyContent: "space-between",
+    color: "#A8ACB4",
+    fontSize: 10,
+    marginBottom: 7,
+  },
+  progressTrack: {
+    height: 5,
+    background: "#242830",
+    borderRadius: 5,
+    overflow: "hidden",
+  },
+  progressFill: { height: "100%", borderRadius: 5 },
+  quickRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3,1fr)",
+    gap: 14,
+    marginTop: 14,
+  },
+  quickCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    border: "1px solid #292D35",
+    background: "#13161A",
+    color: "#ECEAE3",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  quickIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    background: "#18231B",
+    color: "#4FE36B",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickCardStrong: { fontSize: 11 },
+  modulePage: { padding: "46px 32px", maxWidth: 1100, margin: "0 auto" },
+  moduleHero: {
+    display: "flex",
+    gap: 18,
+    alignItems: "center",
+    padding: 26,
+    borderRadius: 18,
+    border: "1px solid #292D35",
+    background: "#171A1F",
+  },
+  moduleIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    background: "#18231B",
+    color: "#4FE36B",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  moduleEyebrow: { color: "#656B75", fontSize: 9, letterSpacing: "0.15em" },
+  moduleTitle: {
+    margin: "7px 0 4px",
+    fontFamily: "'Space Grotesk', sans-serif",
+    fontSize: 36,
+    letterSpacing: -1,
+  },
+  moduleCopy: { color: "#747A84", fontSize: 12, margin: 0 },
+  placeholderGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2,1fr)",
+    gap: 14,
+    marginTop: 14,
+  },
+  placeholderCard: {
+    display: "grid",
+    gridTemplateColumns: "24px 1fr",
+    columnGap: 10,
+    rowGap: 5,
+    padding: 18,
+    borderRadius: 15,
+    border: "1px solid #292D35",
+    background: "#14171B",
+    color: "#8D929B",
+  },
+  commandOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 100,
+    background: "rgba(4,6,8,.72)",
+    backdropFilter: "blur(15px)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "flex-start",
+    paddingTop: "10vh",
+  },
+  commandPanel: {
+    width: "min(620px, calc(100vw - 28px))",
+    background: "#171A1F",
+    border: "1px solid #343944",
+    borderRadius: 16,
+    boxShadow: "0 30px 90px rgba(0,0,0,.5)",
+    overflow: "hidden",
+  },
+  commandSearchRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 11,
+    padding: 15,
+    borderBottom: "1px solid #292D35",
+  },
+  commandInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#F0EEE8",
+    fontSize: 14,
+  },
+  commandEsc: {
+    fontSize: 9,
+    color: "#666C76",
+    border: "1px solid #30353E",
+    borderRadius: 5,
+    padding: "4px 6px",
+  },
+  commandLabel: {
+    color: "#555B65",
+    fontSize: 9,
+    letterSpacing: "0.16em",
+    padding: "13px 15px 7px",
+  },
+  commandItem: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "11px 15px",
+    border: "none",
+    background: "transparent",
+    color: "#ECEAE3",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  commandIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    background: "#20242B",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#8D929B",
+  },
+  panel: {
+    background: "#171A1F",
+    border: "1px solid #292D35",
+    borderRadius: 12,
     padding: 20,
     minWidth: 0,
     boxSizing: "border-box",
@@ -2507,40 +3328,16 @@ const styles = {
     marginBottom: 14,
     marginTop: 22,
   },
-  ledgerRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "10px 0",
-    borderBottom: "1px solid #20242C",
-  },
-  ledgerCategory: {
-    color: "#ECEAE3",
-    fontSize: 13,
-    fontFamily: "Inter, sans-serif",
-  },
-  ledgerMeta: {
-    color: "#585C66",
+  statLabel: {
     fontSize: 11,
-    fontFamily: "Inter, sans-serif",
-    marginTop: 2,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
+    color: "#8B8F98",
+    letterSpacing: 0.3,
+    marginBottom: 4,
   },
-  ledgerAmount: {
+  statValue: {
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 13,
+    fontSize: 20,
     fontWeight: 500,
-    whiteSpace: "nowrap",
-  },
-  iconBtn: {
-    background: "transparent",
-    border: "none",
-    color: "#585C66",
-    cursor: "pointer",
-    padding: 4,
-    display: "flex",
   },
   accountCard: {
     background: "#1C1F26",
@@ -2548,17 +3345,10 @@ const styles = {
     borderRadius: 8,
     padding: 16,
   },
-  progressTrack: {
-    height: 5,
-    background: "#20242C",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressFill: { height: "100%", borderRadius: 4 },
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(10,11,14,0.6)",
+    background: "rgba(10,11,14,.6)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -2569,7 +3359,7 @@ const styles = {
     border: "1px solid #2A2E37",
     borderRadius: 12,
     padding: 24,
-    width: "min(340px, 92vw)",
+    width: "min(340px,92vw)",
     maxHeight: "85vh",
     overflowY: "auto",
     boxSizing: "border-box",
