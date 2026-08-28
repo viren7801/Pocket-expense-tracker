@@ -140,6 +140,38 @@ export default function LockScreen({ children }) {
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok || !verifyData.verified) {
+        /*
+         * The authenticator may still contain a passkey
+         * that Pocket has already revoked/deleted.
+         *
+         * Tell supported authenticators that this
+         * credential is no longer accepted.
+         */
+        if (
+          verifyRes.status === 404 &&
+          verifyData.code === "CREDENTIAL_NOT_REGISTERED" &&
+          window.PublicKeyCredential?.signalUnknownCredential &&
+          authResp?.id
+        ) {
+          try {
+            await window.PublicKeyCredential.signalUnknownCredential({
+              rpId: "pocket.patelviren.com",
+              credentialId: authResp.id,
+            });
+          } catch (signalError) {
+            /*
+             * Signaling support varies by browser/platform.
+             * A failure here should never turn into a
+             * successful login.
+             */
+            console.debug("Could not signal revoked credential:", signalError);
+          }
+
+          throw new Error(
+            "This passkey was revoked. Use another Pocket device to register this device again.",
+          );
+        }
+
         throw new Error(verifyData.error || "Unlock failed");
       }
 

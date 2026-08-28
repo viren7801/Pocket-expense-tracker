@@ -17,17 +17,24 @@ export default async function handler(req, res) {
     return;
   }
 
+  res.setHeader("Cache-Control", "no-store");
+
   try {
     const supabase = getServiceClient();
 
-    const { data: challengeRow } = await supabase
+    const { data: challengeRow, error: challengeError } = await supabase
       .from("webauthn_challenge")
       .select("challenge")
       .eq("id", "login")
       .maybeSingle();
 
-    if (!challengeRow) {
+    if (challengeError) {
+      throw challengeError;
+    }
+
+    if (!challengeRow?.challenge) {
       res.status(400).json({
+        code: "NO_LOGIN_CHALLENGE",
         error: "No pending login challenge",
       });
       return;
@@ -35,15 +42,44 @@ export default async function handler(req, res) {
 
     const body = await readJsonBody(req);
 
-    const { data: credRow } = await supabase
+    const credentialId = typeof body.id === "string" ? body.id.trim() : "";
+
+    if (!credentialId) {
+      res.status(400).json({
+        code: "INVALID_CREDENTIAL",
+        error: "Invalid passkey",
+      });
+      return;
+    }
+
+    /*
+     * Look up the credential in our database.
+     *
+     * If it isn't there, it may be a passkey that was
+     * revoked/deleted on the server but still exists
+     * in the phone's/password manager's local store.
+     */
+    const { data: credRow, error: credentialLookupError } = await supabase
       .from("webauthn_credential")
       .select("*")
-      .eq("id", body.id)
+      .eq("id", credentialId)
       .maybeSingle();
 
+    if (credentialLookupError) {
+      throw credentialLookupError;
+    }
+
     if (!credRow) {
-      res.status(400).json({
-        error: "Unknown credential",
+      /*
+       * Do not reveal whether this credential ever existed.
+       *
+       * The client can use this generic server-side state
+       * to tell the authenticator that the selected credential
+       * is no longer accepted by Pocket.
+       */
+      res.status(404).json({
+        code: "CREDENTIAL_NOT_REGISTERED",
+        error: "This passkey is no longer registered with Pocket.",
       });
       return;
     }
@@ -53,33 +89,36 @@ export default async function handler(req, res) {
       expectedChallenge: challengeRow.challenge,
       expectedOrigin: ORIGIN,
       expectedRPID: RP_ID,
+
       authenticator: {
         credentialID: credRow.id,
+
         credentialPublicKey: Buffer.from(credRow.public_key, "base64"),
+
         counter: credRow.counter,
+
         transports: credRow.transports
           ? credRow.transports.split(",")
           : undefined,
       },
+
+      requireUserVerification: true,
     });
 
     if (!verification.verified) {
       res.status(400).json({
-        error: "Verification failed",
+        code: "VERIFICATION_FAILED",
+        error: "Passkey verification failed",
       });
       return;
     }
 
-    /*
-     * Update the WebAuthn counter and
-     * record exactly when this credential
-     * was last used.
-     */
+    const newCounter = verification.authenticationInfo.newCounter;
+
     const { error: updateError } = await supabase
       .from("webauthn_credential")
       .update({
-        counter: verification.authenticationInfo.newCounter,
-
+        counter: newCounter,
         last_used_at: new Date().toISOString(),
       })
       .eq("id", credRow.id);
@@ -90,10 +129,6 @@ export default async function handler(req, res) {
 
     await supabase.from("webauthn_challenge").delete().eq("id", "login");
 
-    /*
-     * Bind the session to the credential
-     * that just authenticated.
-     */
     const sessionToken = createSessionToken(credRow.id);
 
     res.setHeader("Set-Cookie", serializeSessionCookie(sessionToken));
@@ -113,6 +148,7 @@ export default async function handler(req, res) {
     console.error("login-verify:", e);
 
     res.status(500).json({
+      code: "LOGIN_ERROR",
       error: e.message || "Unknown error",
     });
   }
