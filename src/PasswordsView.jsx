@@ -1,9 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import {
-  startRegistration,
-  startAuthentication,
-  base64URLStringToBuffer,
-} from "@simplewebauthn/browser";
+import { startRegistration } from "@simplewebauthn/browser";
 import {
   Plus,
   Search,
@@ -572,7 +568,10 @@ export default function PasswordsView({ vault, onVaultChange }) {
 
   async function passkeyRecoveryAuthentication({ setupSalt, wrappers = [] }) {
     const payload = setupSalt
-      ? { mode: "setup", prfSalt: setupSalt }
+      ? {
+          mode: "setup",
+          prfSalt: setupSalt,
+        }
       : {
           mode: "reset",
           wrappers: wrappers.map((item) => ({
@@ -585,42 +584,208 @@ export default function PasswordsView({ vault, onVaultChange }) {
       "/api/auth/pair?action=vault-recovery-options",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(payload),
       },
     );
 
     const options = await optionsRes.json();
+
     if (!optionsRes.ok) {
       throw new Error(options.error || "Could not start passkey recovery");
     }
 
-    const authResp = await startAuthentication(options);
+    if (!options || typeof options.challenge !== "string") {
+      throw new Error("The server returned invalid WebAuthn options.");
+    }
+
+    /*
+     * Use the native WebAuthn API for the recovery ceremony.
+     *
+     * This avoids SimpleWebAuthn's JSON conversion layer for the
+     * nested PRF `evalByCredential` values. The WebAuthn API
+     * requires these values to be ArrayBuffer/ArrayBufferView.
+     */
+
+    const toArrayBuffer = (value) => {
+      const bytes = base64UrlToBytes(value);
+
+      return bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      );
+    };
+
+    const publicKey = {
+      ...options,
+
+      challenge: toArrayBuffer(options.challenge),
+
+      allowCredentials: (options.allowCredentials || []).map((credential) => {
+        if (!credential || typeof credential.id !== "string") {
+          throw new Error("The server returned an invalid passkey credential.");
+        }
+
+        return {
+          ...credential,
+          id: toArrayBuffer(credential.id),
+        };
+      }),
+
+      extensions: {
+        ...(options.extensions || {}),
+      },
+    };
+
+    const evalByCredential = options.extensions?.prf?.evalByCredential;
+
+    if (evalByCredential && typeof evalByCredential === "object") {
+      const converted = {};
+
+      for (const [credentialId, values] of Object.entries(evalByCredential)) {
+        if (
+          typeof credentialId !== "string" ||
+          !values ||
+          typeof values !== "object"
+        ) {
+          continue;
+        }
+
+        const convertedValues = {};
+
+        if (typeof values.first === "string" && values.first.length > 0) {
+          convertedValues.first = toArrayBuffer(values.first);
+        }
+
+        if (typeof values.second === "string" && values.second.length > 0) {
+          convertedValues.second = toArrayBuffer(values.second);
+        }
+
+        if (Object.keys(convertedValues).length > 0) {
+          converted[credentialId] = convertedValues;
+        }
+      }
+
+      if (Object.keys(converted).length > 0) {
+        publicKey.extensions = {
+          ...publicKey.extensions,
+          prf: {
+            ...(publicKey.extensions?.prf || {}),
+            evalByCredential: converted,
+          },
+        };
+      } else {
+        /*
+         * Never send a malformed PRF extension.
+         */
+        const { prf: _ignoredPrf, ...safeExtensions } =
+          publicKey.extensions || {};
+
+        publicKey.extensions = safeExtensions;
+      }
+    }
+
+    let credential;
+
+    try {
+      credential = await navigator.credentials.get({
+        publicKey,
+      });
+    } catch (error) {
+      console.error("Pocket vault recovery WebAuthn error:", error);
+
+      throw new Error(error?.message || "Passkey authentication failed.");
+    }
+
+    if (!credential) {
+      throw new Error("Passkey authentication was not completed.");
+    }
+
+    const response = credential.response;
+
+    const authResp = {
+      id: credential.id,
+
+      rawId: bytesToBase64Url(
+        new Uint8Array(response.rawId || credential.rawId),
+      ),
+
+      response: {
+        authenticatorData: bytesToBase64Url(
+          new Uint8Array(response.authenticatorData),
+        ),
+
+        clientDataJSON: bytesToBase64Url(
+          new Uint8Array(response.clientDataJSON),
+        ),
+
+        signature: bytesToBase64Url(new Uint8Array(response.signature)),
+
+        userHandle: response.userHandle
+          ? bytesToBase64Url(new Uint8Array(response.userHandle))
+          : undefined,
+      },
+
+      type: credential.type,
+
+      authenticatorAttachment: credential.authenticatorAttachment || undefined,
+
+      clientExtensionResults: credential.getClientExtensionResults(),
+    };
 
     const verifyRes = await fetch(
       "/api/auth/pair?action=vault-recovery-verify",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response: authResp }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          response: authResp,
+        }),
       },
     );
 
     const verifyData = await verifyRes.json();
+
     if (!verifyRes.ok || !verifyData.verified) {
-      throw new Error(verifyData.error || "Passkey verification failed");
+      throw new Error(verifyData.error || "Passkey verification failed.");
     }
 
-    const prfOutputB64 = authResp?.clientExtensionResults?.prf?.results?.first;
-    if (!prfOutputB64) {
+    const prfOutputRaw = authResp?.clientExtensionResults?.prf?.results?.first;
+
+    if (prfOutputRaw === undefined || prfOutputRaw === null) {
       throw new Error(
-        "This passkey or browser does not support WebAuthn PRF. Use another supported passkey.",
+        "This passkey or browser did not return a PRF result. The passkey may not support PRF.",
       );
+    }
+
+    let prfOutput;
+
+    if (prfOutputRaw instanceof ArrayBuffer) {
+      prfOutput = new Uint8Array(prfOutputRaw);
+    } else if (ArrayBuffer.isView(prfOutputRaw)) {
+      prfOutput = new Uint8Array(
+        prfOutputRaw.buffer,
+        prfOutputRaw.byteOffset,
+        prfOutputRaw.byteLength,
+      );
+    } else if (typeof prfOutputRaw === "string") {
+      prfOutput = base64UrlToBytes(prfOutputRaw);
+    } else {
+      throw new Error("The authenticator returned an unsupported PRF result.");
+    }
+
+    if (prfOutput.length === 0) {
+      throw new Error("The authenticator returned an empty PRF result.");
     }
 
     return {
       credentialId: verifyData.credentialId,
-      prfOutput: base64UrlToBytes(prfOutputB64),
+
+      prfOutput,
     };
   }
 
