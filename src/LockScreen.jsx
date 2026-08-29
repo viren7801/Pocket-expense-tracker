@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+
 import {
   startRegistration,
   startAuthentication,
 } from "@simplewebauthn/browser";
+
 import {
   Fingerprint,
   LogOut,
@@ -15,17 +17,85 @@ import {
   KeyRound,
   Trash2,
   ChevronRight,
+  Link2,
+  Copy,
+  Check,
+  RefreshCw,
 } from "lucide-react";
 
+/*
+ * ============================================================
+ * STORAGE KEYS
+ * ============================================================
+ */
+
 const TAB_SESSION_KEY = "ledger_tab_session";
+
 const DEVICE_REGISTERED_KEY = "ledger_device_registered";
+
 const CURRENT_DEVICE_KEY = "ledger_current_device";
+
+/*
+ * ============================================================
+ * HELPERS
+ * ============================================================
+ */
+
+function formatDate(value) {
+  if (!value) {
+    return "unknown";
+  }
+
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(value));
+  } catch {
+    return "unknown";
+  }
+}
+
+function formatTimeRemaining(value) {
+  if (!value) {
+    return "";
+  }
+
+  const remaining = new Date(value).getTime() - Date.now();
+
+  if (remaining <= 0) {
+    return "Expired";
+  }
+
+  const totalSeconds = Math.floor(remaining / 1000);
+
+  const minutes = Math.floor(totalSeconds / 60);
+
+  const seconds = totalSeconds % 60;
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/*
+ * ============================================================
+ * COMPONENT
+ * ============================================================
+ */
 
 export default function LockScreen({ children }) {
   const isDevelopment = import.meta.env.DEV;
 
+  /*
+   * ==========================================================
+   * GENERAL AUTH STATE
+   * ==========================================================
+   */
+
   const [status, setStatus] = useState(null);
+
   const [loading, setLoading] = useState(false);
+
   const [error, setError] = useState(null);
 
   const [setupCode, setSetupCode] = useState("");
@@ -33,6 +103,12 @@ export default function LockScreen({ children }) {
   const [hasLocalPasskey, setHasLocalPasskey] = useState(
     () => window.localStorage.getItem(DEVICE_REGISTERED_KEY) === "1",
   );
+
+  /*
+   * ==========================================================
+   * ACCOUNT / DEVICE MANAGEMENT
+   * ==========================================================
+   */
 
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
@@ -56,6 +132,41 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
+   * PAIRING STATE
+   * ==========================================================
+   */
+
+  const [showPairMenu, setShowPairMenu] = useState(false);
+
+  const [pairMode, setPairMode] = useState(null);
+  /*
+   * null
+   * "trusted"
+   * "new"
+   */
+
+  const [pairDeviceName, setPairDeviceName] = useState("");
+
+  const [pairDeviceType, setPairDeviceType] = useState("Fingerprint / Face ID");
+
+  const [pairingId, setPairingId] = useState("");
+
+  const [pairingCode, setPairingCode] = useState("");
+
+  const [pairingSecret, setPairingSecret] = useState("");
+
+  const [pairingExpiresAt, setPairingExpiresAt] = useState(null);
+
+  const [pairingStatus, setPairingStatus] = useState("");
+
+  const [pairingError, setPairingError] = useState(null);
+
+  const [copiedPairingCode, setCopiedPairingCode] = useState(false);
+
+  const pairingPollRef = useRef(null);
+
+  /*
+   * ==========================================================
    * AUTH STATUS
    * ==========================================================
    */
@@ -63,8 +174,13 @@ export default function LockScreen({ children }) {
   const checkStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/auth/status");
+
       const data = await res.json();
 
+      /*
+       * Don't let an existing cookie
+       * automatically unlock a new tab.
+       */
       if (
         data.authenticated &&
         !window.sessionStorage.getItem(TAB_SESSION_KEY)
@@ -92,9 +208,11 @@ export default function LockScreen({ children }) {
 
   useEffect(() => {
     /*
-     * Localhost intentionally skips WebAuthn.
-     * This lets you work on the Pocket UI without
-     * production RP-ID restrictions.
+     * Localhost is a UI development
+     * environment.
+     *
+     * Real WebAuthn is only used in
+     * production.
      */
     if (isDevelopment) {
       setStatus({
@@ -139,48 +257,53 @@ export default function LockScreen({ children }) {
 
       const verifyData = await verifyRes.json();
 
+      /*
+       * Handle a passkey that has
+       * been revoked on the server
+       * but still exists locally.
+       */
       if (!verifyRes.ok || !verifyData.verified) {
-        /*
-         * The authenticator may still contain a passkey
-         * that Pocket has already revoked/deleted.
-         *
-         * Tell supported authenticators that this
-         * credential is no longer accepted.
-         */
         if (
           verifyRes.status === 404 &&
-          verifyData.code === "CREDENTIAL_NOT_REGISTERED" &&
-          window.PublicKeyCredential?.signalUnknownCredential &&
-          authResp?.id
+          verifyData.code === "CREDENTIAL_NOT_REGISTERED"
         ) {
-          try {
-            await window.PublicKeyCredential.signalUnknownCredential({
-              rpId: "pocket.patelviren.com",
-              credentialId: authResp.id,
-            });
-          } catch (signalError) {
-            /*
-             * Signaling support varies by browser/platform.
-             * A failure here should never turn into a
-             * successful login.
-             */
-            console.debug("Could not signal revoked credential:", signalError);
+          /*
+           * Tell supported authenticators
+           * that this credential is no longer
+           * accepted by Pocket.
+           */
+          if (window.PublicKeyCredential?.signalUnknownCredential) {
+            try {
+              await window.PublicKeyCredential.signalUnknownCredential({
+                rpId: "pocket.patelviren.com",
+                credentialId: authResp.id,
+              });
+            } catch {
+              /*
+               * Signal support varies by platform.
+               * This must never prevent the
+               * server from rejecting the credential.
+               */
+            }
           }
 
           throw new Error(
-            "This passkey was revoked. Use another Pocket device to register this device again.",
+            "This passkey was revoked. Use another trusted device to register this device again.",
           );
         }
 
         throw new Error(verifyData.error || "Unlock failed");
       }
 
+      /*
+       * Mark this browser tab as
+       * authenticated.
+       */
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
 
       /*
-       * Remember which credential authenticated
-       * this browser. This is used only for UI
-       * identification of the current device.
+       * Remember the credential that
+       * authenticated the session.
        */
       if (verifyData.device?.id) {
         window.localStorage.setItem(CURRENT_DEVICE_KEY, verifyData.device.id);
@@ -189,11 +312,13 @@ export default function LockScreen({ children }) {
       }
 
       /*
-       * A QR/phone authentication may mean that
-       * this device doesn't yet have its own
-       * platform passkey.
+       * QR/phone cross-device authentication
+       * may not mean that the current device
+       * has a platform passkey yet.
        */
       if (authResp.authenticatorAttachment !== "platform" && !hasLocalPasskey) {
+        setPairDeviceName("");
+        setPairingError(null);
         setShowAddDevice(true);
       }
 
@@ -218,19 +343,16 @@ export default function LockScreen({ children }) {
   const handleRegisterDevice = async (includeSetupCode = false) => {
     if (!deviceName.trim()) {
       setDeviceError("Enter a name for this device.");
+
       return;
     }
 
     /*
-     * Localhost is only a UI preview.
-     *
-     * Real registration must happen on the
-     * production RP ID:
-     *
-     * pocket.patelviren.com
+     * Localhost is UI-only.
      */
     if (isDevelopment) {
       setDeviceError("Device registration will work on pocket.patelviren.com.");
+
       return;
     }
 
@@ -258,15 +380,8 @@ export default function LockScreen({ children }) {
         throw new Error(options.error || "Could not start setup");
       }
 
-      /*
-       * Trigger Touch ID / Face ID / passkey.
-       */
       const regResp = await startRegistration(options);
 
-      /*
-       * Send our friendly device metadata
-       * alongside the WebAuthn response.
-       */
       const verifyRes = await fetch("/api/auth/register-verify", {
         method: "POST",
         headers: {
@@ -388,7 +503,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * LOG OUT
+   * LOGOUT
    * ==========================================================
    */
 
@@ -403,15 +518,15 @@ export default function LockScreen({ children }) {
 
       window.sessionStorage.removeItem(TAB_SESSION_KEY);
 
+      window.localStorage.removeItem(CURRENT_DEVICE_KEY);
+
       setShowLogoutConfirm(false);
       setShowAccountMenu(false);
       setShowDevices(false);
       setShowAddDevice(false);
 
       /*
-       * On localhost, reload the dashboard
-       * because authentication is intentionally
-       * bypassed for development.
+       * Development is UI-only.
        */
       if (isDevelopment) {
         window.location.reload();
@@ -424,6 +539,525 @@ export default function LockScreen({ children }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  /*
+   * ==========================================================
+   * START PAIRING — TRUSTED DEVICE
+   * ==========================================================
+   */
+
+  const startPairing = async () => {
+    if (!pairDeviceName.trim()) {
+      setPairingError("Enter a name for the new device.");
+
+      return;
+    }
+
+    if (isDevelopment) {
+      setPairingError("Device pairing is available on pocket.patelviren.com.");
+
+      return;
+    }
+
+    setPairingError(null);
+    setPairingStatus("creating");
+
+    try {
+      const res = await fetch("/api/auth/pair-start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          deviceName: pairDeviceName.trim(),
+          deviceType: pairDeviceType,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Could not start device pairing");
+      }
+
+      setPairingId(data.pairingId);
+
+      setPairingCode(data.code);
+
+      /*
+       * The new-device secret is generated
+       * after the new device claims the code.
+       *
+       * Trusted device keeps the pairing
+       * information only in memory.
+       */
+      setPairingSecret(data.secret || "");
+
+      setPairingExpiresAt(data.expiresAt);
+
+      setPairingStatus("waiting");
+    } catch (e) {
+      setPairingError(e.message || "Could not start pairing");
+
+      setPairingStatus("");
+    }
+  };
+
+  /*
+   * ==========================================================
+   * POLL PAIRING — TRUSTED DEVICE
+   * ==========================================================
+   */
+
+  const pollPairingStatus = useCallback(async () => {
+    if (!pairingId) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/pair-status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pairingId,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return;
+      }
+
+      if (data.status === "pending_approval") {
+        setPairingStatus("pending_approval");
+      }
+
+      if (data.status === "approved") {
+        setPairingStatus("approved");
+      }
+
+      if (data.status === "completed") {
+        setPairingStatus("completed");
+
+        if (pairingPollRef.current) {
+          clearInterval(pairingPollRef.current);
+
+          pairingPollRef.current = null;
+        }
+      }
+    } catch {
+      /*
+       * Polling failures are transient.
+       */
+    }
+  }, [pairingId]);
+
+  useEffect(() => {
+    if (
+      pairMode !== "trusted" ||
+      !pairingId ||
+      !pairingStatus ||
+      pairingStatus === "completed"
+    ) {
+      return;
+    }
+
+    pairingPollRef.current = setInterval(pollPairingStatus, 1500);
+
+    pollPairingStatus();
+
+    return () => {
+      if (pairingPollRef.current) {
+        clearInterval(pairingPollRef.current);
+
+        pairingPollRef.current = null;
+      }
+    };
+  }, [pairMode, pairingId, pairingStatus, pollPairingStatus]);
+
+  /*
+   * ==========================================================
+   * APPROVE PAIRING — TRUSTED DEVICE
+   * ==========================================================
+   */
+
+  const approvePairing = async () => {
+    if (!pairingId) {
+      return;
+    }
+
+    setPairingError(null);
+    setPairingStatus("approving");
+
+    try {
+      const res = await fetch("/api/auth/pair-approve", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pairingId,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Could not approve device");
+      }
+
+      setPairingStatus("approved");
+    } catch (e) {
+      setPairingError(e.message || "Could not approve device");
+
+      setPairingStatus("pending_approval");
+    }
+  };
+
+  /*
+   * ==========================================================
+   * CLAIM PAIRING — NEW DEVICE
+   * ==========================================================
+   */
+
+  const requestPairing = async () => {
+    if (!pairingCode.trim()) {
+      setPairingError("Enter the pairing code.");
+
+      return;
+    }
+
+    if (!pairDeviceName.trim()) {
+      setPairingError("Enter a name for this device.");
+
+      return;
+    }
+
+    setPairingError(null);
+    setPairingStatus("claiming");
+
+    try {
+      const res = await fetch("/api/auth/pair-request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code: pairingCode.trim().replace(/\s/g, "").toUpperCase(),
+
+          deviceName: pairDeviceName.trim(),
+
+          deviceType: pairDeviceType,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Invalid pairing code");
+      }
+
+      setPairingId(data.pairingId);
+
+      setPairingSecret(data.secret);
+
+      setPairingExpiresAt(data.expiresAt);
+
+      setPairingStatus("waiting_for_approval");
+    } catch (e) {
+      setPairingError(e.message || "Could not pair device");
+
+      setPairingStatus("");
+    }
+  };
+
+  /*
+   * ==========================================================
+   * POLL PAIRING — NEW DEVICE
+   * ==========================================================
+   */
+
+  const pollNewDeviceApproval = useCallback(async () => {
+    if (!pairingId || !pairingSecret) {
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/pair-status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pairingId,
+          secret: pairingSecret,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return;
+      }
+
+      if (data.status === "approved") {
+        setPairingStatus("approved");
+
+        return;
+      }
+
+      if (data.status === "completed") {
+        setPairingStatus("completed");
+      }
+    } catch {
+      /*
+       * Polling errors are transient.
+       */
+    }
+  }, [pairingId, pairingSecret]);
+
+  useEffect(() => {
+    if (
+      pairMode !== "new" ||
+      pairingStatus !== "waiting_for_approval" ||
+      !pairingId ||
+      !pairingSecret
+    ) {
+      return;
+    }
+
+    const interval = setInterval(pollNewDeviceApproval, 1500);
+
+    pollNewDeviceApproval();
+
+    return () => clearInterval(interval);
+  }, [
+    pairMode,
+    pairingStatus,
+    pairingId,
+    pairingSecret,
+    pollNewDeviceApproval,
+  ]);
+
+  /*
+   * ==========================================================
+   * CREATE PASSKEY — NEW DEVICE
+   * ==========================================================
+   */
+
+  const completePairing = async () => {
+    if (!pairingId || !pairingSecret) {
+      setPairingError("Pairing information is missing.");
+
+      return;
+    }
+
+    setPairingError(null);
+    setPairingStatus("authenticating");
+
+    try {
+      const optionsRes = await fetch("/api/auth/pair-options", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pairingId,
+          secret: pairingSecret,
+        }),
+      });
+
+      const options = await optionsRes.json();
+
+      if (!optionsRes.ok) {
+        throw new Error(
+          options.error || "Could not start passkey registration",
+        );
+      }
+
+      /*
+       * Create the actual passkey
+       * on THIS device.
+       *
+       * On Fold 7 this will normally
+       * invoke the platform biometric /
+       * passkey UI.
+       */
+      const regResp = await startRegistration(options);
+
+      setPairingStatus("verifying");
+
+      const verifyRes = await fetch("/api/auth/pair-complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pairingId,
+
+          secret: pairingSecret,
+
+          deviceName: pairDeviceName.trim(),
+
+          deviceType: pairDeviceType,
+
+          registration: regResp,
+        }),
+      });
+
+      const data = await verifyRes.json();
+
+      if (!verifyRes.ok || !data.verified) {
+        throw new Error(data.error || "Device registration failed");
+      }
+
+      /*
+       * The new device is now
+       * authenticated.
+       */
+      window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
+
+      window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
+
+      if (data.device?.id) {
+        window.localStorage.setItem(CURRENT_DEVICE_KEY, data.device.id);
+      }
+
+      setHasLocalPasskey(true);
+
+      setPairingStatus("completed");
+    } catch (e) {
+      setPairingError(e.message || "Could not complete device pairing");
+
+      setPairingStatus("approved");
+    }
+  };
+
+  /*
+   * ==========================================================
+   * COPY PAIRING CODE
+   * ==========================================================
+   */
+
+  const copyPairingCode = async () => {
+    if (!pairingCode) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(pairingCode);
+
+      setCopiedPairingCode(true);
+
+      setTimeout(() => {
+        setCopiedPairingCode(false);
+      }, 1500);
+    } catch {
+      /*
+       * Clipboard permission can be
+       * unavailable on some browsers.
+       */
+    }
+  };
+
+  /*
+   * ==========================================================
+   * RESET PAIRING
+   * ==========================================================
+   */
+
+  const resetPairing = () => {
+    if (pairingPollRef.current) {
+      clearInterval(pairingPollRef.current);
+
+      pairingPollRef.current = null;
+    }
+
+    setPairMode(null);
+
+    setShowPairMenu(false);
+
+    setPairDeviceName("");
+
+    setPairingId("");
+
+    setPairingCode("");
+
+    setPairingSecret("");
+
+    setPairingExpiresAt(null);
+
+    setPairingStatus("");
+
+    setPairingError(null);
+
+    setCopiedPairingCode(false);
+  };
+
+  /*
+   * ==========================================================
+   * OPEN PAIRING — TRUSTED DEVICE
+   * ==========================================================
+   */
+
+  const openTrustedPairing = () => {
+    setShowAccountMenu(false);
+
+    setShowDevices(false);
+
+    setShowAddDevice(false);
+
+    setPairMode("trusted");
+
+    setPairDeviceName("");
+
+    setPairDeviceType("Fingerprint / Face ID");
+
+    setPairingError(null);
+
+    setPairingStatus("");
+
+    setPairingCode("");
+
+    setPairingId("");
+
+    setPairingSecret("");
+
+    setPairingExpiresAt(null);
+  };
+
+  /*
+   * ==========================================================
+   * OPEN PAIRING — NEW DEVICE
+   * ==========================================================
+   */
+
+  const openNewDevicePairing = () => {
+    setError(null);
+
+    setShowPairMenu(false);
+
+    setPairMode("new");
+
+    setPairDeviceName("");
+
+    setPairDeviceType("Fingerprint / Face ID");
+
+    setPairingCode("");
+
+    setPairingId("");
+
+    setPairingSecret("");
+
+    setPairingExpiresAt(null);
+
+    setPairingStatus("");
+
+    setPairingError(null);
   };
 
   /*
@@ -461,8 +1095,14 @@ export default function LockScreen({ children }) {
             style={styles.menuItem}
             onClick={() => {
               setShowAccountMenu(false);
+
               setShowAddDevice(true);
+
               setDeviceError(null);
+
+              setDeviceName("");
+
+              setDeviceType("Touch ID / Face ID");
             }}
           >
             <div style={styles.menuIcon}>
@@ -472,8 +1112,26 @@ export default function LockScreen({ children }) {
             <div style={styles.menuText}>
               <div style={styles.menuTitle}>Add new device</div>
 
+              <div style={styles.menuDescription}>Register on this device</div>
+            </div>
+
+            <ChevronRight size={15} color="#5F646D" />
+          </button>
+
+          <button
+            type="button"
+            style={styles.menuItem}
+            onClick={openTrustedPairing}
+          >
+            <div style={styles.menuIcon}>
+              <Link2 size={16} />
+            </div>
+
+            <div style={styles.menuText}>
+              <div style={styles.menuTitle}>Pair a new device</div>
+
               <div style={styles.menuDescription}>
-                Register Touch ID or Face ID
+                Add another phone or computer
               </div>
             </div>
 
@@ -556,6 +1214,7 @@ export default function LockScreen({ children }) {
           style={styles.modalClose}
           onClick={() => {
             setShowAddDevice(false);
+
             setDeviceError(null);
           }}
         >
@@ -569,7 +1228,7 @@ export default function LockScreen({ children }) {
         <div style={styles.modalTitle}>Add new device</div>
 
         <div style={styles.modalDescription}>
-          Give this device a name so you can recognize it later.
+          Register a passkey on this device.
         </div>
 
         <label style={styles.label}>Device name</label>
@@ -591,6 +1250,10 @@ export default function LockScreen({ children }) {
         >
           <option>Touch ID / Face ID</option>
 
+          <option>Fingerprint</option>
+
+          <option>Face ID</option>
+
           <option>Windows Hello</option>
 
           <option>Passkey</option>
@@ -607,7 +1270,7 @@ export default function LockScreen({ children }) {
             <ShieldCheck size={16} />
 
             <span>
-              You're on localhost. Registration will work on
+              You're on localhost. Real registration works on
               <strong> pocket.patelviren.com</strong>.
             </span>
           </div>
@@ -626,13 +1289,26 @@ export default function LockScreen({ children }) {
         >
           {loading ? "Waiting for authentication…" : "Continue"}
         </button>
+
+        <button
+          type="button"
+          style={styles.linkButton}
+          onClick={() => {
+            setShowAddDevice(false);
+
+            openTrustedPairing();
+          }}
+        >
+          <Link2 size={14} />
+          Pair another device instead
+        </button>
       </div>
     </div>
   );
 
   /*
    * ==========================================================
-   * MANAGE DEVICES MODAL
+   * MANAGE DEVICES
    * ==========================================================
    */
 
@@ -641,7 +1317,7 @@ export default function LockScreen({ children }) {
       <div
         style={{
           ...styles.modal,
-          width: "min(520px, calc(100vw - 40px))",
+          width: "min(560px, calc(100vw - 40px))",
         }}
       >
         <button
@@ -649,6 +1325,7 @@ export default function LockScreen({ children }) {
           style={styles.modalClose}
           onClick={() => {
             setShowDevices(false);
+
             setDeviceError(null);
           }}
         >
@@ -679,15 +1356,15 @@ export default function LockScreen({ children }) {
 
               const isCurrent = currentDevice === device.id;
 
+              const isPhone =
+                device.deviceType?.toLowerCase().includes("face") ||
+                device.deviceType?.toLowerCase().includes("phone") ||
+                device.deviceType?.toLowerCase().includes("fingerprint");
+
               return (
                 <div key={device.id} style={styles.deviceCard}>
                   <div style={styles.deviceIcon}>
-                    {device.deviceType?.toLowerCase().includes("face") ||
-                    device.deviceType?.toLowerCase().includes("phone") ? (
-                      <Smartphone size={19} />
-                    ) : (
-                      <Monitor size={19} />
-                    )}
+                    {isPhone ? <Smartphone size={19} /> : <Monitor size={19} />}
                   </div>
 
                   <div style={styles.deviceInfo}>
@@ -726,24 +1403,431 @@ export default function LockScreen({ children }) {
           </div>
         )}
 
-        <button
-          type="button"
-          style={styles.secondaryButton}
-          onClick={() => {
-            setShowDevices(false);
-            setShowAddDevice(true);
-          }}
-        >
-          <Plus size={16} />
-          Add another device
-        </button>
+        <div style={styles.deviceActions}>
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={() => {
+              setShowDevices(false);
+
+              openTrustedPairing();
+            }}
+          >
+            <Link2 size={16} />
+            Pair a new device
+          </button>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={loadDevices}
+          >
+            <RefreshCw size={15} />
+            Refresh
+          </button>
+        </div>
       </div>
     </div>
   );
 
   /*
    * ==========================================================
-   * REVOKE CONFIRMATION
+   * TRUSTED DEVICE PAIRING MODAL
+   * ==========================================================
+   */
+
+  const trustedPairingModal = pairMode === "trusted" && (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <button type="button" style={styles.modalClose} onClick={resetPairing}>
+          <X size={18} />
+        </button>
+
+        <div style={styles.modalIcon}>
+          <Link2 size={28} />
+        </div>
+
+        <div style={styles.modalTitle}>Pair a new device</div>
+
+        {pairingStatus === "" ? (
+          <>
+            <div style={styles.modalDescription}>
+              Create a secure, one-time pairing code for another phone or
+              computer.
+            </div>
+
+            <label style={styles.label}>New device name</label>
+
+            <input
+              value={pairDeviceName}
+              onChange={(e) => setPairDeviceName(e.target.value)}
+              placeholder="Galaxy Fold 7"
+              style={styles.input}
+              autoFocus
+            />
+
+            <label style={styles.label}>Authentication</label>
+
+            <select
+              value={pairDeviceType}
+              onChange={(e) => setPairDeviceType(e.target.value)}
+              style={styles.select}
+            >
+              <option>Fingerprint / Face ID</option>
+
+              <option>Fingerprint</option>
+
+              <option>Face ID</option>
+
+              <option>Windows Hello</option>
+
+              <option>Passkey</option>
+            </select>
+
+            {isDevelopment && (
+              <div style={styles.localNotice}>
+                <ShieldCheck size={16} />
+
+                <span>Real pairing requires pocket.patelviren.com.</span>
+              </div>
+            )}
+
+            {pairingError && (
+              <div style={styles.modalError}>{pairingError}</div>
+            )}
+
+            <button
+              type="button"
+              style={{
+                ...styles.primaryButton,
+                opacity: !pairDeviceName.trim() || isDevelopment ? 0.5 : 1,
+              }}
+              disabled={!pairDeviceName.trim() || isDevelopment}
+              onClick={startPairing}
+            >
+              Create pairing code
+            </button>
+          </>
+        ) : pairingStatus === "creating" ? (
+          <div style={styles.centerState}>
+            <RefreshCw size={25} className="spin" />
+
+            <div style={styles.stateTitle}>Creating secure pairing…</div>
+          </div>
+        ) : (
+          <>
+            <div style={styles.modalDescription}>
+              On the new device, open Pocket and choose
+              <strong> Pair this device</strong>, then enter this code.
+            </div>
+
+            <div style={styles.pairCodeCard}>
+              <div style={styles.pairCodeLabel}>ONE-TIME PAIRING CODE</div>
+
+              <div style={styles.pairCode}>
+                {pairingCode.match(/.{1,5}/g)?.join(" ") || pairingCode}
+              </div>
+
+              <button
+                type="button"
+                style={styles.copyButton}
+                onClick={copyPairingCode}
+              >
+                {copiedPairingCode ? (
+                  <>
+                    <Check size={14} />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy size={14} />
+                    Copy
+                  </>
+                )}
+              </button>
+
+              {pairingExpiresAt && (
+                <div style={styles.codeExpiry}>
+                  Expires in {formatTimeRemaining(pairingExpiresAt)}
+                </div>
+              )}
+            </div>
+
+            <div style={styles.pairStatusCard}>
+              <div style={styles.statusDot} />
+
+              <div>
+                <div style={styles.statusTitle}>
+                  {pairingStatus === "pending_approval"
+                    ? "New device is waiting for approval"
+                    : pairingStatus === "approving"
+                      ? "Approving device…"
+                      : pairingStatus === "approved"
+                        ? "Device approved"
+                        : pairingStatus === "completed"
+                          ? "Device successfully added"
+                          : "Waiting for new device…"}
+                </div>
+
+                <div style={styles.statusDescription}>
+                  {pairingStatus === "pending_approval"
+                    ? "Review the device and approve it below."
+                    : pairingStatus === "approved"
+                      ? "The new device can now create its Pocket passkey."
+                      : pairingStatus === "completed"
+                        ? "You can close this window."
+                        : "Keep this window open while the other device connects."}
+                </div>
+              </div>
+            </div>
+
+            {pairingStatus === "pending_approval" && (
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={approvePairing}
+              >
+                Approve this device
+              </button>
+            )}
+
+            {pairingStatus === "completed" && (
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={resetPairing}
+              >
+                Done
+              </button>
+            )}
+
+            {pairingError && (
+              <div style={styles.modalError}>{pairingError}</div>
+            )}
+
+            <button
+              type="button"
+              style={styles.linkButton}
+              onClick={resetPairing}
+            >
+              Cancel pairing
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  /*
+   * ==========================================================
+   * NEW DEVICE PAIRING MODAL
+   * ==========================================================
+   */
+
+  const newDevicePairingModal = pairMode === "new" && (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <button type="button" style={styles.modalClose} onClick={resetPairing}>
+          <X size={18} />
+        </button>
+
+        <div style={styles.modalIcon}>
+          <Link2 size={28} />
+        </div>
+
+        <div style={styles.modalTitle}>Pair this device</div>
+
+        {pairingStatus === "" ? (
+          <>
+            <div style={styles.modalDescription}>
+              Use a device that is already trusted by Pocket to authorize this
+              device.
+            </div>
+
+            <label style={styles.label}>Device name</label>
+
+            <input
+              value={pairDeviceName}
+              onChange={(e) => setPairDeviceName(e.target.value)}
+              placeholder="Galaxy Fold 7"
+              style={styles.input}
+              autoFocus
+            />
+
+            <label style={styles.label}>Authentication</label>
+
+            <select
+              value={pairDeviceType}
+              onChange={(e) => setPairDeviceType(e.target.value)}
+              style={styles.select}
+            >
+              <option>Fingerprint / Face ID</option>
+
+              <option>Fingerprint</option>
+
+              <option>Face ID</option>
+
+              <option>Windows Hello</option>
+
+              <option>Passkey</option>
+            </select>
+
+            <label style={styles.label}>Pairing code</label>
+
+            <input
+              value={pairingCode}
+              onChange={(e) => setPairingCode(e.target.value)}
+              placeholder="7A39C21F5B"
+              style={{
+                ...styles.input,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+              autoCapitalize="characters"
+            />
+
+            {pairingError && (
+              <div style={styles.modalError}>{pairingError}</div>
+            )}
+
+            <button
+              type="button"
+              style={{
+                ...styles.primaryButton,
+                opacity:
+                  !pairDeviceName.trim() || !pairingCode.trim() ? 0.5 : 1,
+              }}
+              disabled={!pairDeviceName.trim() || !pairingCode.trim()}
+              onClick={requestPairing}
+            >
+              Continue
+            </button>
+
+            <button
+              type="button"
+              style={styles.linkButton}
+              onClick={() => setPairMode(null)}
+            >
+              Back
+            </button>
+          </>
+        ) : pairingStatus === "claiming" ? (
+          <div style={styles.centerState}>
+            <RefreshCw size={25} className="spin" />
+
+            <div style={styles.stateTitle}>Connecting…</div>
+
+            <div style={styles.stateDescription}>
+              Contacting your trusted device.
+            </div>
+          </div>
+        ) : pairingStatus === "waiting_for_approval" ? (
+          <div style={styles.centerState}>
+            <div style={styles.waitingIcon}>
+              <Link2 size={25} />
+            </div>
+
+            <div style={styles.stateTitle}>Waiting for approval</div>
+
+            <div style={styles.stateDescription}>
+              Approve this device on your already trusted Pocket device.
+            </div>
+
+            {pairingExpiresAt && (
+              <div style={styles.codeExpiry}>
+                Expires in {formatTimeRemaining(pairingExpiresAt)}
+              </div>
+            )}
+          </div>
+        ) : pairingStatus === "approved" ? (
+          <div style={styles.centerState}>
+            <div style={styles.successIcon}>
+              <Check size={25} />
+            </div>
+
+            <div style={styles.stateTitle}>Device approved</div>
+
+            <div style={styles.stateDescription}>
+              Now create a new Pocket passkey on this device.
+            </div>
+
+            {pairingError && (
+              <div style={styles.modalError}>{pairingError}</div>
+            )}
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={completePairing}
+            >
+              Create passkey
+            </button>
+          </div>
+        ) : pairingStatus === "authenticating" ||
+          pairingStatus === "verifying" ? (
+          <div style={styles.centerState}>
+            <Fingerprint size={35} color="#C9A455" />
+
+            <div style={styles.stateTitle}>
+              {pairingStatus === "authenticating"
+                ? "Create your passkey"
+                : "Verifying device…"}
+            </div>
+
+            <div style={styles.stateDescription}>
+              Follow the biometric prompt on this device.
+            </div>
+          </div>
+        ) : pairingStatus === "completed" ? (
+          <div style={styles.centerState}>
+            <div style={styles.successIcon}>
+              <Check size={25} />
+            </div>
+
+            <div style={styles.stateTitle}>Device added</div>
+
+            <div style={styles.stateDescription}>
+              This device can now unlock Pocket.
+            </div>
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={() => {
+                resetPairing();
+
+                window.location.reload();
+              }}
+            >
+              Continue to Pocket
+            </button>
+          </div>
+        ) : (
+          <div style={styles.centerState}>
+            <div style={styles.errorIcon}>!</div>
+
+            <div style={styles.stateTitle}>Pairing failed</div>
+
+            <div style={styles.stateDescription}>
+              {pairingError || "Something went wrong."}
+            </div>
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={resetPairing}
+            >
+              Close
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  /*
+   * ==========================================================
+   * REVOKE MODAL
    * ==========================================================
    */
 
@@ -785,7 +1869,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * LOGOUT CONFIRMATION
+   * LOGOUT MODAL
    * ==========================================================
    */
 
@@ -838,9 +1922,18 @@ export default function LockScreen({ children }) {
         {accountMenu}
 
         {addDeviceModal}
+
         {devicesModal}
+
+        {trustedPairingModal}
+
+        {newDevicePairingModal}
+
         {revokeModal}
+
         {logoutModal}
+
+        {error && <div style={styles.toast}>{error}</div>}
       </>
     );
   }
@@ -873,9 +1966,18 @@ export default function LockScreen({ children }) {
         {accountMenu}
 
         {addDeviceModal}
+
         {devicesModal}
+
+        {trustedPairingModal}
+
+        {newDevicePairingModal}
+
         {revokeModal}
+
         {logoutModal}
+
+        {error && <div style={styles.toast}>{error}</div>}
       </>
     );
   }
@@ -888,6 +1990,26 @@ export default function LockScreen({ children }) {
 
   return (
     <div style={styles.lockWrap}>
+      <style>{`
+        @import url(
+          'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;500&display=swap'
+        );
+
+        .spin {
+          animation: pocketSpin 1s linear infinite;
+        }
+
+        @keyframes pocketSpin {
+          from {
+            transform: rotate(0deg);
+          }
+
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
+
       <div style={styles.lockCard}>
         <Fingerprint size={42} color="#C9A455" />
 
@@ -906,6 +2028,15 @@ export default function LockScreen({ children }) {
               disabled={loading}
             >
               {loading ? "Waiting…" : "Unlock"}
+            </button>
+
+            <button
+              type="button"
+              style={styles.lockSecondaryButton}
+              onClick={openNewDevicePairing}
+            >
+              <Link2 size={15} />
+              Pair this device
             </button>
           </>
         ) : (
@@ -928,41 +2059,33 @@ export default function LockScreen({ children }) {
               onClick={() => {
                 setDeviceName("");
                 setDeviceError(null);
-                handleRegisterDevice(true);
+
+                setShowAddDevice(true);
               }}
               disabled={loading || !setupCode}
             >
-              {loading ? "Waiting…" : "Set up Face ID / Touch ID"}
+              Set up Face ID / Touch ID
+            </button>
+
+            <button
+              type="button"
+              style={styles.lockSecondaryButton}
+              onClick={openNewDevicePairing}
+            >
+              <Link2 size={15} />
+              Pair this device
             </button>
           </>
         )}
 
         {error && <div style={styles.modalError}>{error}</div>}
       </div>
+
+      {trustedPairingModal}
+
+      {newDevicePairingModal}
     </div>
   );
-}
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
-
-function formatDate(value) {
-  if (!value) {
-    return "unknown";
-  }
-
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }).format(new Date(value));
-  } catch {
-    return "unknown";
-  }
 }
 
 /*
@@ -974,68 +2097,119 @@ function formatDate(value) {
 const styles = {
   lockWrap: {
     minHeight: "100vh",
+
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+
     background: "#14161B",
+
     fontFamily: "Inter, sans-serif",
+
+    position: "relative",
   },
 
   lockCard: {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
+
     gap: 14,
+
     background: "#1A1D24",
+
     border: "1px solid #2A2E37",
+
     borderRadius: 16,
+
     padding: "38px 34px",
+
     width: 320,
+
     boxSizing: "border-box",
   },
 
   lockTitle: {
     fontFamily: "'Space Grotesk', sans-serif",
+
     fontSize: 22,
+
     fontWeight: 600,
+
     color: "#ECEAE3",
   },
 
   lockSubtitle: {
     color: "#858A93",
+
     fontSize: 13,
+
     lineHeight: 1.5,
+
     textAlign: "center",
+  },
+
+  lockSecondaryButton: {
+    width: "100%",
+
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+
+    gap: 7,
+
+    background: "transparent",
+
+    color: "#858A93",
+
+    border: "1px solid #30343D",
+
+    borderRadius: 8,
+
+    padding: "10px 14px",
+
+    fontSize: 12,
+
+    fontWeight: 500,
+
+    cursor: "pointer",
   },
 
   loadingText: {
     color: "#858A93",
+
     fontSize: 13,
+
     textAlign: "center",
+
     padding: 20,
   },
 
   /*
-   * ACCOUNT BUTTON
+   * ACCOUNT
    */
 
   accountButton: {
     position: "fixed",
+
     left: 18,
     bottom: 18,
+
     zIndex: 1000,
 
     display: "flex",
     alignItems: "center",
+
     gap: 10,
 
     minWidth: 190,
 
     padding: "9px 11px",
 
-    background: "rgba(24, 27, 33, 0.96)",
+    background: "rgba(24,27,33,0.96)",
 
     border: "1px solid #2C3038",
+
     borderRadius: 12,
 
     color: "#ECEAE3",
@@ -1052,6 +2226,7 @@ const styles = {
   accountButtonAvatar: {
     width: 34,
     height: 34,
+
     borderRadius: "50%",
 
     display: "flex",
@@ -1059,30 +2234,37 @@ const styles = {
     justifyContent: "center",
 
     background: "#C9A455",
+
     color: "#14161B",
 
     fontSize: 13,
+
     fontWeight: 700,
   },
 
   accountButtonText: {
     flex: 1,
+
     minWidth: 0,
   },
 
   accountButtonName: {
     fontSize: 12,
+
     fontWeight: 600,
   },
 
   accountButtonSubtitle: {
     marginTop: 3,
+
     fontSize: 10,
+
     color: "#777C85",
   },
 
   accountButtonChevron: {
     color: "#777C85",
+
     fontSize: 14,
   },
 
@@ -1092,15 +2274,18 @@ const styles = {
 
   accountMenu: {
     position: "fixed",
+
     left: 18,
     bottom: 70,
+
     zIndex: 1001,
 
-    width: 300,
+    width: 310,
 
-    background: "rgba(24, 27, 33, 0.98)",
+    background: "rgba(24,27,33,0.98)",
 
     border: "1px solid #30343D",
+
     borderRadius: 15,
 
     padding: 10,
@@ -1113,13 +2298,16 @@ const styles = {
   accountHeader: {
     display: "flex",
     alignItems: "center",
+
     gap: 10,
+
     padding: "8px 7px",
   },
 
   avatar: {
     width: 38,
     height: 38,
+
     borderRadius: "50%",
 
     display: "flex",
@@ -1127,21 +2315,27 @@ const styles = {
     justifyContent: "center",
 
     background: "#C9A455",
+
     color: "#14161B",
 
     fontWeight: 700,
+
     fontSize: 14,
   },
 
   accountName: {
     color: "#ECEAE3",
+
     fontSize: 13,
+
     fontWeight: 600,
   },
 
   accountSubtitle: {
     marginTop: 3,
+
     color: "#6F747D",
+
     fontSize: 10,
   },
 
@@ -1156,8 +2350,11 @@ const styles = {
     justifyContent: "center",
 
     border: "1px solid #30343D",
+
     background: "#191C22",
+
     color: "#777C85",
+
     borderRadius: 7,
 
     cursor: "pointer",
@@ -1165,7 +2362,9 @@ const styles = {
 
   divider: {
     height: 1,
+
     background: "#292D35",
+
     margin: "7px 0",
   },
 
@@ -1174,12 +2373,15 @@ const styles = {
 
     display: "flex",
     alignItems: "center",
+
     gap: 11,
 
     padding: "11px 8px",
 
     background: "transparent",
+
     border: "none",
+
     borderRadius: 9,
 
     color: "#ECEAE3",
@@ -1204,6 +2406,7 @@ const styles = {
     borderRadius: 8,
 
     background: "#20242B",
+
     color: "#C9A455",
   },
 
@@ -1217,23 +2420,29 @@ const styles = {
 
   menuTitle: {
     fontSize: 12,
+
     fontWeight: 500,
+
     color: "#ECEAE3",
   },
 
   menuDescription: {
     marginTop: 3,
+
     fontSize: 10,
+
     color: "#686D76",
   },
 
   /*
-   * MODAL
+   * MODALS
    */
 
   overlay: {
     position: "fixed",
+
     inset: 0,
+
     zIndex: 2000,
 
     display: "flex",
@@ -1242,7 +2451,7 @@ const styles = {
 
     padding: 20,
 
-    background: "rgba(7, 9, 11, 0.74)",
+    background: "rgba(7,9,11,0.74)",
 
     backdropFilter: "blur(12px)",
   },
@@ -1250,7 +2459,7 @@ const styles = {
   modal: {
     position: "relative",
 
-    width: "min(430px, calc(100vw - 40px))",
+    width: "min(450px, calc(100vw - 40px))",
 
     maxHeight: "calc(100vh - 40px)",
 
@@ -1259,6 +2468,7 @@ const styles = {
     background: "#1A1D24",
 
     border: "1px solid #30343D",
+
     borderRadius: 17,
 
     padding: 28,
@@ -1276,6 +2486,7 @@ const styles = {
     background: "#1A1D24",
 
     border: "1px solid #30343D",
+
     borderRadius: 16,
 
     padding: 26,
@@ -1287,6 +2498,7 @@ const styles = {
 
   modalClose: {
     position: "absolute",
+
     top: 13,
     right: 13,
 
@@ -1298,8 +2510,11 @@ const styles = {
     justifyContent: "center",
 
     border: "1px solid #30343D",
+
     background: "#15181D",
+
     color: "#777C85",
+
     borderRadius: 7,
 
     cursor: "pointer",
@@ -1316,6 +2531,7 @@ const styles = {
     borderRadius: 13,
 
     background: "#20241D",
+
     color: "#C9A455",
 
     marginBottom: 18,
@@ -1325,6 +2541,7 @@ const styles = {
     fontFamily: "'Space Grotesk', sans-serif",
 
     fontSize: 22,
+
     fontWeight: 600,
 
     marginBottom: 9,
@@ -1332,16 +2549,23 @@ const styles = {
 
   modalDescription: {
     color: "#858A93",
+
     fontSize: 13,
+
     lineHeight: 1.55,
+
     marginBottom: 18,
   },
 
   label: {
     display: "block",
+
     color: "#9A9EA6",
+
     fontSize: 11,
+
     fontWeight: 500,
+
     marginBottom: 7,
   },
 
@@ -1392,6 +2616,7 @@ const styles = {
   securityNotice: {
     display: "flex",
     alignItems: "flex-start",
+
     gap: 9,
 
     padding: 12,
@@ -1414,6 +2639,7 @@ const styles = {
   localNotice: {
     display: "flex",
     alignItems: "flex-start",
+
     gap: 9,
 
     padding: 12,
@@ -1437,6 +2663,7 @@ const styles = {
     width: "100%",
 
     background: "#C9A455",
+
     color: "#14161B",
 
     border: "none",
@@ -1446,17 +2673,18 @@ const styles = {
     padding: "12px 14px",
 
     fontSize: 13,
+
     fontWeight: 600,
 
     cursor: "pointer",
   },
 
   secondaryButton: {
-    width: "100%",
-
     display: "flex",
+
     alignItems: "center",
     justifyContent: "center",
+
     gap: 7,
 
     background: "#20242B",
@@ -1470,11 +2698,42 @@ const styles = {
     padding: "11px 14px",
 
     fontSize: 12,
+
     fontWeight: 500,
 
     cursor: "pointer",
 
+    flex: 1,
+  },
+
+  deviceActions: {
+    display: "flex",
+
+    gap: 9,
+
     marginTop: 16,
+  },
+
+  linkButton: {
+    width: "100%",
+
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+
+    gap: 6,
+
+    border: "none",
+
+    background: "transparent",
+
+    color: "#777C85",
+
+    padding: "10px",
+
+    fontSize: 11,
+
+    cursor: "pointer",
   },
 
   dangerButton: {
@@ -1489,6 +2748,7 @@ const styles = {
     padding: "11px 15px",
 
     fontSize: 12,
+
     fontWeight: 600,
 
     cursor: "pointer",
@@ -1498,7 +2758,9 @@ const styles = {
 
   confirmRow: {
     display: "flex",
+
     gap: 9,
+
     marginTop: 20,
   },
 
@@ -1513,6 +2775,7 @@ const styles = {
     borderRadius: 12,
 
     background: "#33201E",
+
     color: "#D9735C",
 
     marginBottom: 16,
@@ -1529,6 +2792,7 @@ const styles = {
     borderRadius: 12,
 
     background: "#29251D",
+
     color: "#C9A455",
 
     marginBottom: 16,
@@ -1536,6 +2800,7 @@ const styles = {
 
   modalError: {
     color: "#D9735C",
+
     background: "rgba(217,115,92,0.08)",
 
     border: "1px solid rgba(217,115,92,0.18)",
@@ -1552,12 +2817,14 @@ const styles = {
   },
 
   /*
-   * DEVICES
+   * DEVICE LIST
    */
 
   deviceList: {
     display: "flex",
+
     flexDirection: "column",
+
     gap: 8,
 
     marginTop: 4,
@@ -1565,7 +2832,9 @@ const styles = {
 
   deviceCard: {
     display: "flex",
+
     alignItems: "center",
+
     gap: 11,
 
     padding: 12,
@@ -1590,22 +2859,27 @@ const styles = {
     borderRadius: 9,
 
     background: "#20242B",
+
     color: "#C9A455",
   },
 
   deviceInfo: {
     flex: 1,
+
     minWidth: 0,
   },
 
   deviceName: {
     display: "flex",
+
     alignItems: "center",
+
     gap: 7,
 
     color: "#ECEAE3",
 
     fontSize: 12,
+
     fontWeight: 600,
 
     lineHeight: 1.3,
@@ -1629,6 +2903,7 @@ const styles = {
 
   currentBadge: {
     display: "inline-flex",
+
     alignItems: "center",
 
     padding: "2px 6px",
@@ -1642,6 +2917,7 @@ const styles = {
     borderRadius: 5,
 
     fontSize: 8,
+
     fontWeight: 600,
 
     whiteSpace: "nowrap",
@@ -1649,7 +2925,9 @@ const styles = {
 
   revokeButton: {
     display: "flex",
+
     alignItems: "center",
+
     gap: 5,
 
     flexShrink: 0,
@@ -1680,12 +2958,252 @@ const styles = {
   },
 
   /*
-   * ERRORS
+   * PAIRING
    */
 
-  error: {
-    color: "#D9735C",
-    fontSize: 12,
+  pairCodeCard: {
     textAlign: "center",
+
+    padding: "22px 15px",
+
+    background: "#15181D",
+
+    border: "1px solid #30343D",
+
+    borderRadius: 13,
+
+    marginBottom: 12,
+  },
+
+  pairCodeLabel: {
+    color: "#656A73",
+
+    fontSize: 9,
+
+    letterSpacing: "0.12em",
+
+    fontWeight: 600,
+
+    marginBottom: 13,
+  },
+
+  pairCode: {
+    fontFamily: "'Space Grotesk', sans-serif",
+
+    color: "#ECEAE3",
+
+    fontSize: 27,
+
+    fontWeight: 600,
+
+    letterSpacing: "0.12em",
+
+    marginBottom: 13,
+  },
+
+  copyButton: {
+    display: "inline-flex",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    gap: 6,
+
+    background: "#20242B",
+
+    color: "#A5A9B0",
+
+    border: "1px solid #30343D",
+
+    borderRadius: 7,
+
+    padding: "7px 11px",
+
+    fontSize: 10,
+
+    cursor: "pointer",
+  },
+
+  codeExpiry: {
+    color: "#666B74",
+
+    fontSize: 10,
+
+    marginTop: 12,
+
+    textAlign: "center",
+  },
+
+  pairStatusCard: {
+    display: "flex",
+
+    alignItems: "flex-start",
+
+    gap: 10,
+
+    padding: 12,
+
+    background: "#15181D",
+
+    border: "1px solid #2A2E37",
+
+    borderRadius: 9,
+
+    marginBottom: 14,
+  },
+
+  statusDot: {
+    width: 8,
+    height: 8,
+
+    marginTop: 4,
+
+    flexShrink: 0,
+
+    borderRadius: "50%",
+
+    background: "#C9A455",
+
+    boxShadow: "0 0 0 4px rgba(201,164,85,0.08)",
+  },
+
+  statusTitle: {
+    color: "#ECEAE3",
+
+    fontSize: 11,
+
+    fontWeight: 600,
+  },
+
+  statusDescription: {
+    color: "#70757E",
+
+    fontSize: 10,
+
+    lineHeight: 1.45,
+
+    marginTop: 3,
+  },
+
+  centerState: {
+    minHeight: 220,
+
+    display: "flex",
+
+    flexDirection: "column",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    textAlign: "center",
+
+    gap: 12,
+  },
+
+  stateTitle: {
+    color: "#ECEAE3",
+
+    fontSize: 14,
+
+    fontWeight: 600,
+  },
+
+  stateDescription: {
+    color: "#777C85",
+
+    fontSize: 11,
+
+    lineHeight: 1.5,
+
+    maxWidth: 290,
+  },
+
+  waitingIcon: {
+    width: 52,
+    height: 52,
+
+    display: "flex",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    borderRadius: "50%",
+
+    background: "#25251F",
+
+    color: "#C9A455",
+  },
+
+  successIcon: {
+    width: 52,
+    height: 52,
+
+    display: "flex",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    borderRadius: "50%",
+
+    background: "#203126",
+
+    border: "1px solid #2D4937",
+
+    color: "#70B884",
+  },
+
+  errorIcon: {
+    width: 52,
+    height: 52,
+
+    display: "flex",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    borderRadius: "50%",
+
+    background: "#33201E",
+
+    color: "#D9735C",
+
+    fontSize: 23,
+
+    fontWeight: 700,
+  },
+
+  /*
+   * TOAST
+   */
+
+  toast: {
+    position: "fixed",
+
+    left: "50%",
+
+    bottom: 22,
+
+    transform: "translateX(-50%)",
+
+    zIndex: 3000,
+
+    background: "#1A1D24",
+
+    border: "1px solid #3A3030",
+
+    borderRadius: 9,
+
+    padding: "10px 14px",
+
+    color: "#D9735C",
+
+    fontSize: 11,
+
+    boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
   },
 };
