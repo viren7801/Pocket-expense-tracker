@@ -1432,13 +1432,6 @@ export default function NotesView({ vault, onVaultChange }) {
             </button>
           )}
 
-          {recoveryEnabled && (
-            <div style={styles.recoveryEnabledBadge}>
-              <Fingerprint size={13} />
-              Recovery enabled
-            </div>
-          )}
-
           <button
             type="button"
             style={styles.secondaryButton}
@@ -2044,19 +2037,6 @@ const styles = {
     color: "#C9CCD1",
     fontSize: 11,
     cursor: "pointer",
-  },
-
-  recoveryEnabledBadge: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    border: "1px solid #27352D",
-    borderRadius: 7,
-    padding: "9px 10px",
-    background: "#151A17",
-    color: "#7E9B88",
-    fontSize: 10,
-    whiteSpace: "nowrap",
   },
 
   recoveryDivider: {
