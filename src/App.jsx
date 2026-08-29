@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
+import NotesView from "./NotesView";
 
 const SEED_CATEGORIES = {
   income: ["Salary", "Business", "Freelance", "Investment", "Other Income"],
@@ -117,6 +118,7 @@ export default function LedgerApp() {
   const [recurring, setRecurring] = useState([]);
   const [categories, setCategories] = useState(SEED_CATEGORIES);
   const [passwordVault, setPasswordVault] = useState(null);
+  const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
@@ -143,6 +145,7 @@ export default function LedgerApp() {
           setRecurring(data.recurring || []);
           setCategories(data.categories || SEED_CATEGORIES);
           setPasswordVault(data.passwordVault || null);
+          setNotesVault(data.notesVault || null);
         } else {
           setAccounts([
             {
@@ -213,6 +216,7 @@ export default function LedgerApp() {
           recurring,
           categories,
           passwordVault,
+          notesVault,
         });
         setSaveError(false);
       } catch (e) {
@@ -227,6 +231,7 @@ export default function LedgerApp() {
     recurring,
     categories,
     passwordVault,
+    notesVault,
     loaded,
   ]);
 
@@ -634,7 +639,9 @@ export default function LedgerApp() {
             onVaultChange={setPasswordVault}
           />
         )}
-        {tab === "notes" && <ModulePlaceholder type="notes" />}
+        {tab === "notes" && (
+          <NotesView vault={notesVault} onVaultChange={setNotesVault} />
+        )}
         {tab === "recurring" && (
           <RecurringView
             recurring={recurring}
