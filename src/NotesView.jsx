@@ -16,6 +16,15 @@ import {
   EyeOff,
   Fingerprint,
   ChevronRight,
+  Bold,
+  Italic,
+  Heading2,
+  List,
+  ListChecks,
+  Quote,
+  Code2,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -357,6 +366,12 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const recoveredDataKeyRef = useRef(null);
 
+  const contentInputRef = useRef(null);
+
+  const autosaveTimerRef = useRef(null);
+
+  const [editorStatus, setEditorStatus] = useState("Saved");
+
   const [form, setForm] = useState({
     title: "",
     content: "",
@@ -365,6 +380,20 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
   );
+
+  React.useEffect(() => {
+    if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
+      return undefined;
+    }
+
+    window.clearTimeout(autosaveTimerRef.current);
+
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveExistingNote(form.content);
+    }, 1200);
+
+    return () => window.clearTimeout(autosaveTimerRef.current);
+  }, [form.content, form.title, editing?.id, showForm, editorStatus]);
 
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -524,6 +553,137 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function updateNoteContent(value) {
+    setForm((current) => ({
+      ...current,
+      content: value,
+    }));
+    setEditorStatus("Unsaved changes");
+  }
+
+  function insertAtCursor(before, after = "", placeholder = "text") {
+    const textarea = contentInputRef.current;
+    if (!textarea) return;
+
+    const current = form.content || "";
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? start;
+    const selected = current.slice(start, end) || placeholder;
+
+    const next =
+      current.slice(0, start) + before + selected + after + current.slice(end);
+
+    updateNoteContent(next);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const selectionStart = start + before.length;
+      const selectionEnd = selectionStart + selected.length;
+      textarea.setSelectionRange(selectionStart, selectionEnd);
+    });
+  }
+
+  function insertLinePrefix(prefix) {
+    const textarea = contentInputRef.current;
+    if (!textarea) return;
+
+    const current = form.content || "";
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? start;
+
+    const lineStart = current.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const foundLineEnd = current.indexOf("\n", end);
+    const lineEnd = foundLineEnd === -1 ? current.length : foundLineEnd;
+
+    const block = current.slice(lineStart, lineEnd);
+    const nextBlock = block
+      .split("\n")
+      .map((line) => (line.startsWith(prefix) ? line : prefix + line))
+      .join("\n");
+
+    const next =
+      current.slice(0, lineStart) + nextBlock + current.slice(lineEnd);
+
+    updateNoteContent(next);
+
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(
+        lineStart + prefix.length,
+        lineStart + nextBlock.length,
+      );
+    });
+  }
+
+  function handleEditorKeyDown(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      insertAtCursor("**", "**", "bold text");
+      return;
+    }
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+      e.preventDefault();
+      insertAtCursor("_", "_", "italic text");
+      return;
+    }
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      insertAtCursor("  ", "", "");
+    }
+  }
+
+  async function autosaveExistingNote(nextContent) {
+    if (!editing?.id || !sessionPasswordRef.current) {
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+
+    const nextNotes = notes.map((note) =>
+      note.id === editing.id
+        ? {
+            ...note,
+            title: form.title.trim() || note.title,
+            content: nextContent,
+            updatedAt,
+          }
+        : note,
+    );
+
+    try {
+      setEditorStatus("Saving…");
+
+      if (vault?.version === 2) {
+        const dataKey = await unwrapDataKeyWithPassword(
+          vault.passwordWrap,
+          sessionPasswordRef.current,
+        );
+
+        const data = await encryptNotesWithDataKey(nextNotes, dataKey);
+
+        onVaultChange({
+          ...vault,
+          data,
+        });
+      } else {
+        const envelope = await encryptLegacyNotes(
+          nextNotes,
+          sessionPasswordRef.current,
+          vault?.salt,
+        );
+
+        onVaultChange(envelope);
+      }
+
+      setNotes(nextNotes);
+      setEditorStatus("Saved");
+    } catch {
+      setEditorStatus("Save failed");
+    }
+  }
+
   async function saveNote() {
     if (!form.title.trim()) {
       setError("A note title is required.");
@@ -571,6 +731,8 @@ export default function NotesView({ vault, onVaultChange }) {
     });
 
     await persistNotes(next);
+
+    setEditorStatus("Saved");
   }
 
   function openNew() {
@@ -582,6 +744,7 @@ export default function NotesView({ vault, onVaultChange }) {
       content: "",
     });
 
+    setEditorStatus("New note");
     setShowForm(true);
   }
 
@@ -594,6 +757,7 @@ export default function NotesView({ vault, onVaultChange }) {
       content: note.content || "",
     });
 
+    setEditorStatus("Saved");
     setShowForm(true);
   }
 
@@ -1844,20 +2008,133 @@ export default function NotesView({ vault, onVaultChange }) {
               autoFocus
             />
 
-            <label style={styles.label}>Note</label>
+            <div style={styles.editorHeader}>
+              <label
+                style={{
+                  ...styles.label,
+                  marginBottom: 0,
+                }}
+              >
+                Note
+              </label>
 
-            <textarea
-              value={form.content}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  content: e.target.value,
-                })
-              }
-              placeholder="Write your note…"
-              style={styles.textareaLarge}
-              rows={12}
-            />
+              <span style={styles.editorStatus}>{editorStatus}</span>
+            </div>
+
+            <div style={styles.editorShell}>
+              <div style={styles.editorToolbar}>
+                <button
+                  type="button"
+                  title="Bold"
+                  style={styles.editorTool}
+                  onClick={() => insertAtCursor("**", "**", "bold text")}
+                >
+                  <Bold size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Italic"
+                  style={styles.editorTool}
+                  onClick={() => insertAtCursor("_", "_", "italic text")}
+                >
+                  <Italic size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Heading"
+                  style={styles.editorTool}
+                  onClick={() => insertLinePrefix("## ")}
+                >
+                  <Heading2 size={14} />
+                </button>
+
+                <span style={styles.editorToolbarDivider} />
+
+                <button
+                  type="button"
+                  title="Bullet list"
+                  style={styles.editorTool}
+                  onClick={() => insertLinePrefix("• ")}
+                >
+                  <List size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Checklist"
+                  style={styles.editorTool}
+                  onClick={() => insertLinePrefix("☐ ")}
+                >
+                  <ListChecks size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Quote"
+                  style={styles.editorTool}
+                  onClick={() => insertLinePrefix("> ")}
+                >
+                  <Quote size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Code"
+                  style={styles.editorTool}
+                  onClick={() => insertAtCursor("`", "`", "code")}
+                >
+                  <Code2 size={14} />
+                </button>
+
+                <span style={styles.editorToolbarDivider} />
+
+                <button
+                  type="button"
+                  title="Undo"
+                  style={styles.editorTool}
+                  onClick={() => document.execCommand("undo")}
+                >
+                  <Undo2 size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  title="Redo"
+                  style={styles.editorTool}
+                  onClick={() => document.execCommand("redo")}
+                >
+                  <Redo2 size={14} />
+                </button>
+              </div>
+
+              <textarea
+                ref={contentInputRef}
+                value={form.content}
+                onChange={(e) => updateNoteContent(e.target.value)}
+                onKeyDown={handleEditorKeyDown}
+                placeholder="Write your note…"
+                style={styles.editorTextarea}
+                rows={14}
+                spellCheck
+              />
+
+              <div style={styles.editorFooter}>
+                <span>{form.content.length} characters</span>
+
+                <span>
+                  {form.content
+                    ? form.content.trim().split(/\s+/).filter(Boolean).length
+                    : 0}{" "}
+                  words
+                </span>
+
+                <span style={{ flex: 1 }} />
+
+                <span>⌘/Ctrl+B bold · ⌘/Ctrl+I italic</span>
+              </div>
+            </div>
 
             {error && <div style={styles.error}>{error}</div>}
 
@@ -1980,6 +2257,81 @@ const styles = {
     color: "#ECEAE3",
     outline: "none",
     fontSize: 12,
+  },
+
+  editorHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 7,
+  },
+
+  editorStatus: {
+    color: "#626A73",
+    fontSize: 9,
+  },
+
+  editorShell: {
+    border: "1px solid #2A2E37",
+    borderRadius: 9,
+    background: "#14161B",
+    overflow: "hidden",
+    marginBottom: 14,
+  },
+
+  editorToolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 3,
+    padding: 7,
+    borderBottom: "1px solid #292D35",
+    background: "#171A1F",
+    flexWrap: "wrap",
+  },
+
+  editorTool: {
+    width: 29,
+    height: 28,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid transparent",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#858B95",
+    cursor: "pointer",
+  },
+
+  editorToolbarDivider: {
+    width: 1,
+    height: 18,
+    margin: "0 4px",
+    background: "#2A2E37",
+  },
+
+  editorTextarea: {
+    width: "100%",
+    boxSizing: "border-box",
+    resize: "vertical",
+    minHeight: 320,
+    border: "none",
+    outline: "none",
+    padding: "13px 14px 10px",
+    background: "transparent",
+    color: "#ECEAE3",
+    fontSize: 12,
+    lineHeight: 1.75,
+    fontFamily: "Inter, sans-serif",
+  },
+
+  editorFooter: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "7px 10px",
+    borderTop: "1px solid #242830",
+    color: "#555C66",
+    fontSize: 9,
   },
 
   textareaLarge: {
