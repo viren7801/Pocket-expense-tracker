@@ -581,6 +581,10 @@ export default function PasswordsView({ vault, onVaultChange }) {
           })),
         };
 
+    /*
+     * Ask our server for the WebAuthn
+     * authentication options.
+     */
     const optionsRes = await fetch(
       "/api/auth/pair?action=vault-recovery-options",
       {
@@ -598,59 +602,127 @@ export default function PasswordsView({ vault, onVaultChange }) {
       throw new Error(options.error || "Could not start passkey recovery");
     }
 
+    if (!options?.challenge) {
+      throw new Error("Server returned an invalid WebAuthn challenge.");
+    }
+
     /*
-     * SimpleWebAuthn server sends the PRF inputs
-     * as base64url strings so they can travel through JSON.
-     *
-     * WebAuthn itself requires BufferSource values.
-     *
-     * Convert:
-     *
-     *   extensions.prf.evalByCredential[id].first
-     *
-     * from base64url -> Uint8Array.
+     * Convert the JSON WebAuthn options
+     * into the native browser format.
      */
-    const browserOptions = {
+    const publicKey = {
       ...options,
+
+      challenge: base64UrlToBytes(options.challenge),
+
+      allowCredentials: (options.allowCredentials || []).map((credential) => ({
+        ...credential,
+
+        id: base64UrlToBytes(credential.id),
+      })),
 
       extensions: {
         ...(options.extensions || {}),
-        prf: {
-          ...(options.extensions?.prf || {}),
-          evalByCredential: Object.fromEntries(
-            Object.entries(options.extensions?.prf?.evalByCredential || {}).map(
-              ([credentialId, values]) => ({
-                credentialId,
-                values: {
-                  ...values,
-
-                  ...(values?.first
-                    ? {
-                        first: base64UrlToBytes(values.first),
-                      }
-                    : {}),
-
-                  ...(values?.second
-                    ? {
-                        second: base64UrlToBytes(values.second),
-                      }
-                    : {}),
-                },
-              }),
-            ),
-          ),
-        },
       },
     };
 
     /*
-     * Use the current SimpleWebAuthn API shape:
-     * startAuthentication({ optionsJSON })
+     * ----------------------------------------------------------
+     * PRF
+     * ----------------------------------------------------------
+     *
+     * The browser requires PRF values to be
+     * ArrayBuffer / ArrayBufferView.
+     *
+     * Server JSON gives us base64url strings.
      */
-    const authResp = await startAuthentication({
-      optionsJSON: browserOptions,
-    });
+    if (options.extensions?.prf?.evalByCredential) {
+      const evalByCredential = {};
 
+      for (const [credentialId, values] of Object.entries(
+        options.extensions.prf.evalByCredential,
+      )) {
+        evalByCredential[credentialId] = {
+          ...(values?.first
+            ? {
+                first: base64UrlToBytes(values.first),
+              }
+            : {}),
+
+          ...(values?.second
+            ? {
+                second: base64UrlToBytes(values.second),
+              }
+            : {}),
+        };
+      }
+
+      publicKey.extensions = {
+        ...(publicKey.extensions || {}),
+        prf: {
+          ...(publicKey.extensions?.prf || {}),
+          evalByCredential,
+        },
+      };
+    }
+
+    /*
+     * ----------------------------------------------------------
+     * Native WebAuthn
+     * ----------------------------------------------------------
+     */
+    let credential;
+
+    try {
+      credential = await navigator.credentials.get({
+        publicKey,
+      });
+    } catch (error) {
+      throw new Error(error?.message || "Passkey authentication failed.");
+    }
+
+    if (!credential) {
+      throw new Error("Passkey authentication was not completed.");
+    }
+
+    const response = credential.response;
+
+    /*
+     * Convert the native ArrayBuffers
+     * into base64url strings for JSON.
+     */
+    const authResp = {
+      id: credential.id,
+
+      rawId: bytesToBase64Url(new Uint8Array(credential.rawId)),
+
+      response: {
+        authenticatorData: bytesToBase64Url(
+          new Uint8Array(response.authenticatorData),
+        ),
+
+        clientDataJSON: bytesToBase64Url(
+          new Uint8Array(response.clientDataJSON),
+        ),
+
+        signature: bytesToBase64Url(new Uint8Array(response.signature)),
+
+        userHandle: response.userHandle
+          ? bytesToBase64Url(new Uint8Array(response.userHandle))
+          : undefined,
+      },
+
+      type: credential.type,
+
+      authenticatorAttachment: credential.authenticatorAttachment || undefined,
+
+      clientExtensionResults: credential.getClientExtensionResults(),
+    };
+
+    /*
+     * Send the native WebAuthn
+     * authentication response to our server.
+     */
     const verifyRes = await fetch(
       "/api/auth/pair?action=vault-recovery-verify",
       {
@@ -667,21 +739,34 @@ export default function PasswordsView({ vault, onVaultChange }) {
     const verifyData = await verifyRes.json();
 
     if (!verifyRes.ok || !verifyData.verified) {
-      throw new Error(verifyData.error || "Passkey verification failed");
+      throw new Error(verifyData.error || "Passkey verification failed.");
     }
 
-    const prfOutputB64 = authResp?.clientExtensionResults?.prf?.results?.first;
+    /*
+     * Get the PRF result returned by
+     * the authenticator.
+     */
+    const prfOutput = authResp?.clientExtensionResults?.prf?.results?.first;
 
-    if (!prfOutputB64) {
+    if (!prfOutput) {
       throw new Error(
-        "This passkey or browser does not support WebAuthn PRF. Use another supported passkey.",
+        "This passkey or device does not support WebAuthn PRF recovery.",
       );
     }
 
+    /*
+     * Browser PRF output is an ArrayBuffer.
+     * Convert it into our Uint8Array format.
+     */
     return {
       credentialId: verifyData.credentialId,
 
-      prfOutput: base64UrlToBytes(prfOutputB64),
+      prfOutput:
+        prfOutput instanceof ArrayBuffer
+          ? new Uint8Array(prfOutput)
+          : prfOutput instanceof Uint8Array
+            ? prfOutput
+            : base64UrlToBytes(prfOutput),
     };
   }
 
