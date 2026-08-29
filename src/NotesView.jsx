@@ -108,6 +108,20 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function dateTimeLocalToISOString(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
 async function deriveVaultKey(password, salt) {
   const material = await crypto.subtle.importKey(
     "raw",
@@ -438,12 +452,6 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
   );
-
-  React.useEffect(() => {
-    if (phase === "unlocked") {
-      checkTelegramConnection();
-    }
-  }, [phase]);
 
   React.useEffect(() => {
     if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
@@ -963,8 +971,8 @@ export default function NotesView({ vault, onVaultChange }) {
             title: form.title.trim() || note.title,
             content: nextContent,
             tags: [...formTags],
-            reminderAt: formReminder || null,
-            notifyTelegram: Boolean(formReminder && formNotifyTelegram),
+            reminderAt: normalizedReminderAt,
+            notifyTelegram: Boolean(normalizedReminderAt && formNotifyTelegram),
             updatedAt,
           }
         : note,
@@ -1110,7 +1118,8 @@ export default function NotesView({ vault, onVaultChange }) {
           body: JSON.stringify({
             noteId: note.id,
             title: note.title,
-            reminderAt: note.reminderAt,
+            reminderAt:
+              dateTimeLocalToISOString(note.reminderAt) || note.reminderAt,
           }),
         });
 
@@ -1150,11 +1159,6 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    /*
-     * Always refresh the real server-side Telegram
-     * connection before deciding whether this note
-     * should use Telegram delivery.
-     */
     let telegramIsReady = telegramConnected;
 
     if (formNotifyTelegram) {
@@ -1168,10 +1172,30 @@ export default function NotesView({ vault, onVaultChange }) {
       }
     }
 
+    const normalizedReminderAt = dateTimeLocalToISOString(formReminder);
+
+    if (formReminder && !normalizedReminderAt) {
+      setError("The reminder date/time is invalid.");
+      return;
+    }
+
+    if (formNotifyTelegram && !normalizedReminderAt) {
+      setError("Choose a reminder date and time for the Telegram reminder.");
+      return;
+    }
+
+    if (
+      normalizedReminderAt &&
+      new Date(normalizedReminderAt).getTime() <= Date.now()
+    ) {
+      setError("Choose a future reminder time.");
+      return;
+    }
+
     const now = new Date().toISOString();
 
     const telegramReminderEnabled = Boolean(
-      formReminder && formNotifyTelegram && telegramIsReady,
+      normalizedReminderAt && formNotifyTelegram && telegramIsReady,
     );
 
     const next = editing
@@ -1182,7 +1206,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 title: form.title.trim(),
                 content: form.content,
                 tags: [...formTags],
-                reminderAt: formReminder || null,
+                reminderAt: normalizedReminderAt,
                 notifyTelegram: telegramReminderEnabled,
                 updatedAt: now,
               }
@@ -1194,7 +1218,7 @@ export default function NotesView({ vault, onVaultChange }) {
             title: form.title.trim(),
             content: form.content,
             tags: [...formTags],
-            reminderAt: formReminder || null,
+            reminderAt: normalizedReminderAt,
             notifyTelegram: telegramReminderEnabled,
             pinned: false,
             folderId:
@@ -1209,22 +1233,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
     const savedNoteId = editing?.id || next[0]?.id || null;
 
-    setSelectedId(savedNoteId);
+    await persistNotes(next);
 
-    /*
-     * Persist first. Keep the editor state available
-     * until the server scheduling request completes.
-     */
-    const saved = await persistNotes(next);
-
-    /*
-     * persistNotes currently reports errors through
-     * state but does not return a boolean. Only schedule
-     * after the local encrypted save has been attempted.
-     */
     const savedNote = next.find((note) => note.id === savedNoteId);
 
     await syncTelegramReminder(savedNote);
+
+    setSelectedId(savedNoteId);
 
     setShowForm(false);
     setEditing(null);
@@ -1289,7 +1304,25 @@ export default function NotesView({ vault, onVaultChange }) {
     setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
 
     setFormReminder(
-      note.reminderAt ? String(note.reminderAt).slice(0, 16) : "",
+      note.reminderAt
+        ? (() => {
+            const date = new Date(note.reminderAt);
+
+            if (Number.isNaN(date.getTime())) {
+              return "";
+            }
+
+            const pad = (value) => String(value).padStart(2, "0");
+
+            return (
+              `${date.getFullYear()}-` +
+              `${pad(date.getMonth() + 1)}-` +
+              `${pad(date.getDate())}T` +
+              `${pad(date.getHours())}:` +
+              `${pad(date.getMinutes())}`
+            );
+          })()
+        : "",
     );
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
@@ -3005,7 +3038,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   {formNotifyTelegram
                     ? telegramConnected
                       ? "This reminder will be sent only to Telegram."
-                      : "Telegram is selected. Connect Telegram before saving."
+                      : "Telegram is not connected yet. Connect it before saving this reminder."
                     : "Leave unchecked to use browser notifications."}
                 </span>
               </span>
@@ -3017,6 +3050,8 @@ export default function NotesView({ vault, onVaultChange }) {
                 : notificationsEnabled
                   ? "Browser notifications are enabled on this device."
                   : "Enable notifications to receive reminders while Pocket is open."}
+              Reminder time uses your device timezone; Telegram scheduling is
+              stored in UTC.
             </div>
 
             <div style={styles.editorHeader}>
