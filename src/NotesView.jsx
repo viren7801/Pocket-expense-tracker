@@ -589,6 +589,56 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  /*
+   * Telegram connection is stored on the server, so the UI must
+   * restore its status after a page refresh. Retry briefly because
+   * the Pocket authentication/session can still be initializing
+   * immediately after the vault is unlocked.
+   */
+  React.useEffect(() => {
+    if (phase !== "unlocked") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let retryTimer = null;
+    let attempt = 0;
+
+    const refreshTelegramStatus = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      const connected = await checkTelegramConnection();
+
+      if (!connected && !cancelled && attempt < 3) {
+        attempt += 1;
+        retryTimer = window.setTimeout(refreshTelegramStatus, 1200);
+      }
+    };
+
+    refreshTelegramStatus();
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        attempt = 0;
+        refreshTelegramStatus();
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+      }
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [phase]);
+
   async function connectTelegram() {
     setError("");
 
