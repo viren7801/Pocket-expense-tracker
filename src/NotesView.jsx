@@ -25,6 +25,11 @@ import {
   Code2,
   Undo2,
   Redo2,
+  Bell,
+  Folder,
+  FolderPlus,
+  CalendarDays,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -328,6 +333,59 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [notes, setNotes] = useState([]);
 
+  const [selectedFolder, setSelectedFolder] = useState("all");
+
+  const [selectedTag, setSelectedTag] = useState("all");
+
+  const [sortMode, setSortMode] = useState("updated");
+
+  const [showSortMenu, setShowSortMenu] = useState(false);
+
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    typeof window !== "undefined" &&
+      "Notification" in window &&
+      Notification.permission === "granted",
+  );
+
+  const notificationTimerRef = useRef(null);
+
+  const notifiedReminderIdsRef = useRef(new Set());
+
+  const [folders, setFolders] = useState(() => [
+    {
+      id: "personal",
+      name: "Personal",
+    },
+    {
+      id: "work",
+      name: "Work",
+    },
+    {
+      id: "ideas",
+      name: "Ideas",
+    },
+  ]);
+
+  const [showFolderForm, setShowFolderForm] = useState(false);
+
+  const [newFolderName, setNewFolderName] = useState("");
+
+  const [tagInput, setTagInput] = useState("");
+
+  const [formTags, setFormTags] = useState([]);
+
+  const [formReminder, setFormReminder] = useState("");
+
+  const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
+
+  const [telegramConnected, setTelegramConnected] = useState(false);
+
+  const [telegramUsername, setTelegramUsername] = useState("");
+
+  const [showTelegramConnect, setShowTelegramConnect] = useState(false);
+
+  const [telegramConnectUrl, setTelegramConnectUrl] = useState("");
+
   const [query, setQuery] = useState("");
 
   const [selectedId, setSelectedId] = useState(null);
@@ -395,13 +453,66 @@ export default function NotesView({ vault, onVaultChange }) {
     return () => window.clearTimeout(autosaveTimerRef.current);
   }, [form.content, form.title, editing?.id, showForm, editorStatus]);
 
+  const availableTags = useMemo(() => {
+    const all = new Set();
+
+    notes.forEach((note) => {
+      (Array.isArray(note.tags) ? note.tags : []).forEach((tag) => {
+        if (tag) all.add(tag);
+      });
+    });
+
+    return Array.from(all).sort((a, b) => a.localeCompare(b));
+  }, [notes]);
+
+  const upcomingReminderCount = useMemo(() => {
+    const now = Date.now();
+    const sevenDays = now + 7 * 24 * 60 * 60 * 1000;
+
+    return notes.filter((note) => {
+      if (!note.reminderAt) return false;
+      const time = new Date(note.reminderAt).getTime();
+
+      return !Number.isNaN(time) && time >= now && time <= sevenDays;
+    }).length;
+  }, [notes]);
+
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
 
     const result = notes.filter((note) => {
-      if (!q) return true;
+      const inFolder =
+        selectedFolder === "all"
+          ? true
+          : selectedFolder === "pinned"
+            ? Boolean(note.pinned)
+            : note.folderId === selectedFolder;
 
-      return [note.title, note.content].join(" ").toLowerCase().includes(q);
+      if (!inFolder) {
+        return false;
+      }
+
+      const inTag =
+        selectedTag === "all"
+          ? true
+          : Array.isArray(note.tags) && note.tags.includes(selectedTag);
+
+      if (!inTag) {
+        return false;
+      }
+
+      if (!q) {
+        return true;
+      }
+
+      return [
+        note.title,
+        note.content,
+        ...(Array.isArray(note.tags) ? note.tags : []),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
     });
 
     return result.sort((a, b) => {
@@ -409,14 +520,239 @@ export default function NotesView({ vault, onVaultChange }) {
         return b.pinned ? 1 : -1;
       }
 
+      if (sortMode === "title") {
+        return String(a.title || "").localeCompare(String(b.title || ""));
+      }
+
+      if (sortMode === "created") {
+        return (
+          new Date(b.createdAt || 0).getTime() -
+          new Date(a.createdAt || 0).getTime()
+        );
+      }
+
+      if (sortMode === "reminder") {
+        const aTime = a.reminderAt
+          ? new Date(a.reminderAt).getTime()
+          : Infinity;
+        const bTime = b.reminderAt
+          ? new Date(b.reminderAt).getTime()
+          : Infinity;
+
+        return aTime - bTime;
+      }
+
       return (
         new Date(b.updatedAt || b.createdAt || 0).getTime() -
         new Date(a.updatedAt || a.createdAt || 0).getTime()
       );
     });
-  }, [notes, query]);
+  }, [notes, query, selectedFolder, selectedTag, sortMode]);
 
   const selected = notes.find((note) => note.id === selectedId) || null;
+
+  async function checkTelegramConnection() {
+    try {
+      const response = await fetch("/api/telegram?action=status");
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setTelegramConnected(false);
+        setTelegramUsername("");
+        return false;
+      }
+
+      setTelegramConnected(Boolean(data.connected));
+
+      setTelegramUsername(data.username || data.firstName || "");
+
+      return Boolean(data.connected);
+    } catch {
+      setTelegramConnected(false);
+      setTelegramUsername("");
+      return false;
+    }
+  }
+
+  async function connectTelegram() {
+    setError("");
+
+    try {
+      const response = await fetch("/api/telegram?action=connect", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not start Telegram connection.");
+      }
+
+      setTelegramConnectUrl(data.url || "");
+      setShowTelegramConnect(true);
+
+      if (data.url) {
+        window.open(data.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      setError(e.message || "Could not connect Telegram.");
+    }
+  }
+
+  async function disconnectTelegram() {
+    try {
+      const response = await fetch("/api/telegram?action=disconnect", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not disconnect Telegram.");
+      }
+
+      setTelegramConnected(false);
+      setTelegramUsername("");
+      setTelegramConnectUrl("");
+      setShowTelegramConnect(false);
+      setError("");
+    } catch (e) {
+      setError(e.message || "Could not disconnect Telegram.");
+    }
+  }
+
+  async function enableNotifications() {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setError("This browser does not support notifications.");
+      return false;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+
+      if (permission === "granted") {
+        setNotificationsEnabled(true);
+        setError("");
+        return true;
+      }
+
+      setNotificationsEnabled(false);
+      setError(
+        "Notifications were not enabled. Allow them in your browser settings.",
+      );
+      return false;
+    } catch {
+      setError("Could not request notification permission.");
+      return false;
+    }
+  }
+
+  async function showReminderNotification(note) {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (notifiedReminderIdsRef.current.has(note.id)) {
+      return;
+    }
+
+    notifiedReminderIdsRef.current.add(note.id);
+
+    /*
+     * A Telegram-selected reminder is NEVER
+     * also sent as a browser notification.
+     *
+     * The bot token must stay on the server.
+     */
+    if (note.notifyTelegram) {
+      try {
+        const response = await fetch("/api/telegram/send-reminder", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            noteId: note.id,
+            title: note.title,
+            reminderAt: note.reminderAt,
+          }),
+        });
+
+        if (!response.ok) {
+          /*
+           * The reminder was selected for Telegram,
+           * so do not silently fall back to browser
+           * notifications. The selected channel is respected.
+           */
+          console.error("Telegram reminder failed", await response.text());
+        }
+      } catch (error) {
+        console.error("Telegram reminder request failed", error);
+      }
+
+      return;
+    }
+
+    /*
+     * No Telegram selection = browser notification.
+     */
+    if (!("Notification" in window) || Notification.permission !== "granted") {
+      return;
+    }
+
+    try {
+      const notification = new Notification("Pocket Notes", {
+        body: `Reminder: ${note.title}`,
+        tag: `pocket-note-${note.id}`,
+      });
+
+      notification.onclick = () => {
+        window.focus();
+        setSelectedId(note.id);
+        setSelectedFolder("all");
+        setSelectedTag("all");
+        notification.close();
+      };
+    } catch {
+      // Browser notification unavailable.
+    }
+  }
+
+  React.useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !("Notification" in window) ||
+      Notification.permission !== "granted"
+    ) {
+      return undefined;
+    }
+
+    const checkReminders = () => {
+      const now = Date.now();
+
+      notes.forEach((note) => {
+        if (!note.reminderAt) return;
+
+        const reminderTime = new Date(note.reminderAt).getTime();
+
+        if (!Number.isNaN(reminderTime) && reminderTime <= now) {
+          showReminderNotification(note);
+        }
+      });
+    };
+
+    checkReminders();
+
+    window.clearInterval(notificationTimerRef.current);
+
+    notificationTimerRef.current = window.setInterval(
+      checkReminders,
+      30 * 1000,
+    );
+
+    return () => window.clearInterval(notificationTimerRef.current);
+  }, [notes]);
 
   async function createVault() {
     setError("");
@@ -445,6 +781,7 @@ export default function NotesView({ vault, onVaultChange }) {
         data,
         passwordWrap,
         passkeyWraps: [],
+        folders,
       });
 
       sessionPasswordRef.current = password;
@@ -487,6 +824,15 @@ export default function NotesView({ vault, onVaultChange }) {
       sessionPasswordRef.current = password;
 
       setNotes(decrypted);
+      setFolders(
+        Array.isArray(vault?.folders)
+          ? vault.folders
+          : [
+              { id: "personal", name: "Personal" },
+              { id: "work", name: "Work" },
+              { id: "ideas", name: "Ideas" },
+            ],
+      );
       setPassword("");
       setPhase("unlocked");
 
@@ -534,6 +880,7 @@ export default function NotesView({ vault, onVaultChange }) {
         onVaultChange({
           ...vault,
           data,
+          folders,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -647,6 +994,11 @@ export default function NotesView({ vault, onVaultChange }) {
             ...note,
             title: form.title.trim() || note.title,
             content: nextContent,
+            tags: [...formTags],
+            reminderAt: formReminder || null,
+            notifyTelegram: Boolean(
+              formReminder && formNotifyTelegram && telegramConnected,
+            ),
             updatedAt,
           }
         : note,
@@ -666,6 +1018,7 @@ export default function NotesView({ vault, onVaultChange }) {
         onVaultChange({
           ...vault,
           data,
+          folders,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -684,6 +1037,93 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  async function persistFolderChange(nextFolders, nextNotes = notes) {
+    const activePassword = sessionPasswordRef.current;
+
+    if (!activePassword) {
+      setError("Unlock the notes vault before changing folders.");
+      return;
+    }
+
+    try {
+      if (vault?.version === 2) {
+        const dataKey = await unwrapDataKeyWithPassword(
+          vault.passwordWrap,
+          activePassword,
+        );
+
+        const data = await encryptNotesWithDataKey(nextNotes, dataKey);
+
+        onVaultChange({
+          ...vault,
+          data,
+          folders: nextFolders,
+        });
+      } else {
+        const envelope = await encryptLegacyNotes(
+          nextNotes.map((note) => ({
+            ...note,
+            folderId: note.folderId || null,
+          })),
+          activePassword,
+          vault?.salt,
+        );
+
+        onVaultChange(envelope);
+      }
+
+      setFolders(nextFolders);
+      setNotes(nextNotes);
+      setError("");
+    } catch {
+      setError("Could not save folder changes.");
+    }
+  }
+
+  async function createFolder() {
+    const name = newFolderName.trim();
+
+    if (!name) {
+      setError("Enter a folder name.");
+      return;
+    }
+
+    if (
+      folders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())
+    ) {
+      setError("A folder with that name already exists.");
+      return;
+    }
+
+    const folder = {
+      id: makeId(),
+      name,
+    };
+
+    await persistFolderChange([...folders, folder]);
+
+    setSelectedFolder(folder.id);
+
+    setNewFolderName("");
+    setShowFolderForm(false);
+  }
+
+  async function moveSelectedNote(folderId) {
+    if (!selected) return;
+
+    const nextNotes = notes.map((note) =>
+      note.id === selected.id
+        ? {
+            ...note,
+            folderId: folderId === "all" ? null : folderId,
+            updatedAt: new Date().toISOString(),
+          }
+        : note,
+    );
+
+    await persistFolderChange(folders, nextNotes);
+  }
+
   async function saveNote() {
     if (!form.title.trim()) {
       setError("A note title is required.");
@@ -692,6 +1132,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
     if (!form.content.trim()) {
       setError("Write something in the note.");
+      return;
+    }
+
+    if (formNotifyTelegram && !telegramConnected) {
+      setError(
+        "Connect Telegram before saving a reminder with Telegram notifications.",
+      );
       return;
     }
 
@@ -704,6 +1151,11 @@ export default function NotesView({ vault, onVaultChange }) {
                 ...note,
                 title: form.title.trim(),
                 content: form.content,
+                tags: [...formTags],
+                reminderAt: formReminder || null,
+                notifyTelegram: Boolean(
+                  formReminder && formNotifyTelegram && telegramConnected,
+                ),
                 updatedAt: now,
               }
             : note,
@@ -713,7 +1165,16 @@ export default function NotesView({ vault, onVaultChange }) {
             id: makeId(),
             title: form.title.trim(),
             content: form.content,
+            tags: [...formTags],
+            reminderAt: formReminder || null,
+            notifyTelegram: Boolean(
+              formReminder && formNotifyTelegram && telegramConnected,
+            ),
             pinned: false,
+            folderId:
+              selectedFolder === "all" || selectedFolder === "pinned"
+                ? null
+                : selectedFolder,
             createdAt: now,
             updatedAt: now,
           },
@@ -735,6 +1196,26 @@ export default function NotesView({ vault, onVaultChange }) {
     setEditorStatus("Saved");
   }
 
+  function addTag() {
+    const tag = tagInput.trim().replace(/^#/, "").replace(/\s+/g, " ");
+
+    if (!tag) return;
+
+    const exists = formTags.some(
+      (item) => item.toLowerCase() === tag.toLowerCase(),
+    );
+
+    if (!exists) {
+      setFormTags([...formTags, tag]);
+    }
+
+    setTagInput("");
+  }
+
+  function removeTag(tag) {
+    setFormTags(formTags.filter((item) => item !== tag));
+  }
+
   function openNew() {
     setError("");
     setEditing(null);
@@ -744,6 +1225,9 @@ export default function NotesView({ vault, onVaultChange }) {
       content: "",
     });
 
+    setFormTags([]);
+    setFormReminder("");
+    setTagInput("");
     setEditorStatus("New note");
     setShowForm(true);
   }
@@ -756,6 +1240,14 @@ export default function NotesView({ vault, onVaultChange }) {
       title: note.title || "",
       content: note.content || "",
     });
+
+    setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
+
+    setFormReminder(
+      note.reminderAt ? String(note.reminderAt).slice(0, 16) : "",
+    );
+
+    setFormNotifyTelegram(Boolean(note.notifyTelegram));
 
     setEditorStatus("Saved");
     setShowForm(true);
@@ -1329,6 +1821,148 @@ export default function NotesView({ vault, onVaultChange }) {
             style={styles.input}
           />
 
+          <div style={styles.filterToolbar}>
+            <div style={styles.tagFilterScroll}>
+              {availableTags.length > 0 && (
+                <>
+                  <span style={styles.filterLabel}>Tags</span>
+
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.folderChip,
+                      ...(selectedTag === "all" ? styles.folderChipActive : {}),
+                    }}
+                    onClick={() => setSelectedTag("all")}
+                  >
+                    All
+                  </button>
+
+                  {availableTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      style={{
+                        ...styles.folderChip,
+                        ...(selectedTag === tag ? styles.folderChipActive : {}),
+                      }}
+                      onClick={() => setSelectedTag(tag)}
+                    >
+                      #{tag}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+
+            <div style={styles.sortWrap}>
+              <button
+                type="button"
+                style={styles.sortButton}
+                onClick={() => setShowSortMenu((value) => !value)}
+              >
+                <SlidersHorizontal size={14} />
+                Sort
+              </button>
+
+              {showSortMenu && (
+                <div style={styles.sortMenu}>
+                  {[
+                    ["updated", "Recently updated"],
+                    ["created", "Recently created"],
+                    ["title", "Title"],
+                    ["reminder", "Reminder"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      style={{
+                        ...styles.sortMenuItem,
+                        ...(sortMode === value
+                          ? styles.sortMenuItemActive
+                          : {}),
+                      }}
+                      onClick={() => {
+                        setSortMode(value);
+                        setShowSortMenu(false);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {upcomingReminderCount > 0 && (
+            <div style={styles.reminderSummary}>
+              <CalendarDays size={13} />
+              {upcomingReminderCount} upcoming reminder
+              {upcomingReminderCount === 1 ? "" : "s"}
+            </div>
+          )}
+
+          <div style={styles.folderBar}>
+            <div style={styles.folderScroll}>
+              <button
+                type="button"
+                style={{
+                  ...styles.folderChip,
+                  ...(selectedFolder === "all" ? styles.folderChipActive : {}),
+                }}
+                onClick={() => setSelectedFolder("all")}
+              >
+                <FileText size={13} />
+                All Notes
+              </button>
+
+              <button
+                type="button"
+                style={{
+                  ...styles.folderChip,
+                  ...(selectedFolder === "pinned"
+                    ? styles.folderChipActive
+                    : {}),
+                }}
+                onClick={() => setSelectedFolder("pinned")}
+              >
+                <Pin size={13} />
+                Pinned
+              </button>
+
+              {folders.map((folder) => (
+                <button
+                  key={folder.id}
+                  type="button"
+                  style={{
+                    ...styles.folderChip,
+                    ...(selectedFolder === folder.id
+                      ? styles.folderChipActive
+                      : {}),
+                  }}
+                  onClick={() => setSelectedFolder(folder.id)}
+                >
+                  <Folder size={13} />
+                  {folder.name}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                style={styles.folderAddButton}
+                onClick={() => {
+                  setNewFolderName("");
+                  setError("");
+                  setShowFolderForm(true);
+                }}
+                title="New folder"
+              >
+                <FolderPlus size={14} />
+              </button>
+            </div>
+          </div>
+
           {error && <div style={styles.error}>{error}</div>}
 
           <button
@@ -1599,6 +2233,28 @@ export default function NotesView({ vault, onVaultChange }) {
           <button
             type="button"
             style={styles.secondaryButton}
+            onClick={
+              telegramConnected
+                ? () => setShowTelegramConnect(true)
+                : connectTelegram
+            }
+          >
+            <Bell size={14} />
+            {telegramConnected ? "Telegram connected" : "Connect Telegram"}
+          </button>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={enableNotifications}
+          >
+            <Bell size={14} />
+            {notificationsEnabled ? "Notifications on" : "Enable notifications"}
+          </button>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
             onClick={openChangePassword}
           >
             <ShieldCheck size={14} />
@@ -1703,6 +2359,33 @@ export default function NotesView({ vault, onVaultChange }) {
                   <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
 
                   <h2 style={styles.detailTitle}>{selected.title}</h2>
+
+                  <div style={styles.metadataRow}>
+                    {(Array.isArray(selected.tags) ? selected.tags : []).map(
+                      (tag) => (
+                        <span key={tag} style={styles.tagBadge}>
+                          #{tag}
+                        </span>
+                      ),
+                    )}
+
+                    {selected.reminderAt && (
+                      <span style={styles.reminderBadge}>
+                        <CalendarDays size={11} />
+                        {new Date(selected.reminderAt).toLocaleString(
+                          undefined,
+                          {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          },
+                        )}
+                      </span>
+                    )}
+
+                    {selected.reminderAt && selected.notifyTelegram && (
+                      <span style={styles.telegramBadge}>Telegram</span>
+                    )}
+                  </div>
                 </div>
 
                 <div style={styles.detailActions}>
@@ -1723,6 +2406,21 @@ export default function NotesView({ vault, onVaultChange }) {
                   >
                     <Pencil size={15} />
                   </button>
+
+                  <select
+                    value={selected.folderId || ""}
+                    onChange={(e) => moveSelectedNote(e.target.value || "all")}
+                    style={styles.folderSelect}
+                    title="Move to folder"
+                  >
+                    <option value="">No folder</option>
+
+                    {folders.map((folder) => (
+                      <option key={folder.id} value={folder.id}>
+                        {folder.name}
+                      </option>
+                    ))}
+                  </select>
 
                   <button
                     type="button"
@@ -1756,6 +2454,117 @@ export default function NotesView({ vault, onVaultChange }) {
           )}
         </div>
       </div>
+
+      {showTelegramConnect && (
+        <div style={styles.overlay}>
+          <div style={styles.smallFormModal}>
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => {
+                setShowTelegramConnect(false);
+                setTelegramConnectUrl("");
+                setError("");
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.iconLargeSmall}>
+              <Bell size={22} />
+            </div>
+
+            <div style={styles.detailEyebrow}>TELEGRAM CONNECTION</div>
+
+            <h2 style={styles.formTitle}>
+              {telegramConnected ? "Telegram connected" : "Connect Telegram"}
+            </h2>
+
+            {telegramConnected ? (
+              <>
+                <p style={styles.copy}>
+                  Pocket can send Notes reminders to your Telegram chat.
+                </p>
+
+                {telegramUsername && (
+                  <div style={styles.telegramConnectedCard}>
+                    <Bell size={15} />
+                    <span>
+                      Connected as <strong>{telegramUsername}</strong>
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={disconnectTelegram}
+                >
+                  Disconnect Telegram
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={styles.telegramSteps}>
+                  <div style={styles.telegramStep}>
+                    <span style={styles.telegramStepNumber}>1</span>
+                    <span>Open the Pocket Telegram bot.</span>
+                  </div>
+
+                  <div style={styles.telegramStep}>
+                    <span style={styles.telegramStepNumber}>2</span>
+                    <span>
+                      Press <strong>Start</strong> in Telegram.
+                    </span>
+                  </div>
+
+                  <div style={styles.telegramStep}>
+                    <span style={styles.telegramStepNumber}>3</span>
+                    <span>Return to Pocket and press Check connection.</span>
+                  </div>
+                </div>
+
+                {error && <div style={styles.error}>{error}</div>}
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  disabled={!telegramConnectUrl}
+                  onClick={() => {
+                    if (telegramConnectUrl) {
+                      window.open(
+                        telegramConnectUrl,
+                        "_blank",
+                        "noopener,noreferrer",
+                      );
+                    }
+                  }}
+                >
+                  Open Telegram
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.secondaryFullButton}
+                  onClick={async () => {
+                    const connected = await checkTelegramConnection();
+
+                    if (!connected) {
+                      setError(
+                        "Telegram is not connected yet. Press Start in the bot, then check again.",
+                      );
+                    } else {
+                      setError("");
+                    }
+                  }}
+                >
+                  Check connection
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {showRecoverySetup && (
         <div style={styles.overlay}>
@@ -1964,6 +2773,61 @@ export default function NotesView({ vault, onVaultChange }) {
         </div>
       )}
 
+      {showFolderForm && (
+        <div style={styles.overlay}>
+          <div style={styles.smallFormModal}>
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => {
+                setShowFolderForm(false);
+                setNewFolderName("");
+                setError("");
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.iconLargeSmall}>
+              <FolderPlus size={22} />
+            </div>
+
+            <div style={styles.detailEyebrow}>NOTE ORGANIZATION</div>
+
+            <h2 style={styles.formTitle}>New folder</h2>
+
+            <p style={styles.copy}>
+              Create a folder to keep related private notes together.
+            </p>
+
+            <label style={styles.label}>Folder name</label>
+
+            <input
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  createFolder();
+                }
+              }}
+              placeholder="Travel"
+              style={styles.input}
+              autoFocus
+            />
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              onClick={createFolder}
+            >
+              Create folder
+            </button>
+          </div>
+        </div>
+      )}
+
       {showForm && (
         <div style={styles.overlay}>
           <div style={styles.formModal}>
@@ -1977,6 +2841,10 @@ export default function NotesView({ vault, onVaultChange }) {
                   title: "",
                   content: "",
                 });
+                setFormTags([]);
+                setFormReminder("");
+                setFormNotifyTelegram(false);
+                setTagInput("");
                 setError("");
               }}
             >
@@ -2007,6 +2875,88 @@ export default function NotesView({ vault, onVaultChange }) {
               style={styles.input}
               autoFocus
             />
+
+            <label style={styles.label}>Tags</label>
+
+            <div style={styles.tagsEditor}>
+              {formTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  style={styles.editTagChip}
+                  onClick={() => removeTag(tag)}
+                  title="Remove tag"
+                >
+                  #{tag}
+                  <X size={11} />
+                </button>
+              ))}
+
+              <input
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                onBlur={addTag}
+                placeholder="Add tag…"
+                style={styles.tagInput}
+              />
+            </div>
+
+            <label style={styles.label}>Reminder</label>
+
+            <div style={styles.reminderInputRow}>
+              <CalendarDays size={14} color="#68707A" />
+
+              <input
+                type="datetime-local"
+                value={formReminder}
+                onChange={(e) => setFormReminder(e.target.value)}
+                style={styles.reminderInput}
+              />
+
+              {formReminder && (
+                <button
+                  type="button"
+                  style={styles.clearReminderButton}
+                  onClick={() => setFormReminder("")}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <label style={styles.telegramOption}>
+              <input
+                type="checkbox"
+                checked={formNotifyTelegram}
+                onChange={(e) => setFormNotifyTelegram(e.target.checked)}
+              />
+
+              <span style={styles.telegramOptionText}>
+                <span style={styles.telegramOptionTitle}>
+                  Notify me on Telegram
+                </span>
+
+                <span style={styles.telegramOptionSub}>
+                  {formNotifyTelegram
+                    ? telegramConnected
+                      ? "This reminder will be sent only to Telegram."
+                      : "Telegram is not connected yet. Connect it before saving this reminder."
+                    : "Leave unchecked to use browser notifications."}
+                </span>
+              </span>
+            </label>
+
+            <div style={styles.reminderHint}>
+              {notificationsEnabled
+                ? "Browser notifications are enabled on this device."
+                : "Enable notifications to receive reminders while Pocket is open."}
+            </div>
 
             <div style={styles.editorHeader}>
               <label
@@ -2506,6 +3456,371 @@ const styles = {
     padding: "9px 11px",
     marginBottom: 12,
     fontSize: 11,
+  },
+
+  folderBar: {
+    marginBottom: 12,
+  },
+
+  folderScroll: {
+    display: "flex",
+    gap: 7,
+    overflowX: "auto",
+    paddingBottom: 2,
+  },
+
+  folderChip: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 10px",
+    border: "1px solid #2A2E37",
+    borderRadius: 7,
+    background: "#171A1F",
+    color: "#8D929B",
+    fontSize: 10,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  folderChipActive: {
+    background: "#20251F",
+    border: "1px solid #314537",
+    color: "#82A48B",
+  },
+
+  folderAddButton: {
+    width: 30,
+    height: 30,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #2A2E37",
+    borderRadius: 7,
+    background: "#171A1F",
+    color: "#838993",
+    cursor: "pointer",
+  },
+
+  folderSelect: {
+    height: 32,
+    maxWidth: 140,
+    padding: "0 8px",
+    border: "1px solid #2C313A",
+    borderRadius: 7,
+    background: "#181B20",
+    color: "#9AA0A9",
+    fontSize: 10,
+    outline: "none",
+  },
+
+  footerDot: {
+    color: "#424850",
+    marginLeft: 2,
+  },
+
+  smallFormModal: {
+    width: "min(430px, calc(100vw - 40px))",
+    background: "#1A1D24",
+    border: "1px solid #30343D",
+    borderRadius: 15,
+    padding: 24,
+    position: "relative",
+    boxSizing: "border-box",
+    boxShadow: "0 30px 90px rgba(0,0,0,.5)",
+  },
+
+  filterToolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 9,
+  },
+
+  tagFilterScroll: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+    minWidth: 0,
+  },
+
+  filterLabel: {
+    color: "#555C66",
+    fontSize: 9,
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+    marginRight: 2,
+  },
+
+  sortWrap: {
+    position: "relative",
+    flexShrink: 0,
+  },
+
+  sortButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    padding: "7px 9px",
+    background: "#181B20",
+    color: "#9AA0A9",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+
+  sortMenu: {
+    position: "absolute",
+    top: "calc(100% + 5px)",
+    right: 0,
+    zIndex: 40,
+    width: 165,
+    padding: 5,
+    border: "1px solid #30343D",
+    borderRadius: 8,
+    background: "#1A1D24",
+    boxShadow: "0 16px 40px rgba(0,0,0,.35)",
+  },
+
+  sortMenuItem: {
+    display: "block",
+    width: "100%",
+    border: "none",
+    borderRadius: 6,
+    padding: "8px 9px",
+    background: "transparent",
+    color: "#8E949E",
+    fontSize: 10,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  sortMenuItemActive: {
+    background: "#20251F",
+    color: "#B5C9BA",
+  },
+
+  reminderSummary: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    color: "#788C7D",
+    background: "#151A17",
+    border: "1px solid #27352D",
+    borderRadius: 7,
+    padding: "7px 9px",
+    marginBottom: 9,
+    fontSize: 10,
+  },
+
+  metadataRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 8,
+  },
+
+  tagBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 6px",
+    borderRadius: 5,
+    background: "#20242B",
+    color: "#7E8690",
+    fontSize: 9,
+  },
+
+  reminderBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "4px 7px",
+    borderRadius: 5,
+    background: "#19231C",
+    color: "#7F9A86",
+    fontSize: 9,
+  },
+
+  tagsEditor: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    flexWrap: "wrap",
+    minHeight: 38,
+    padding: "5px 7px",
+    marginBottom: 14,
+    border: "1px solid #2A2E37",
+    borderRadius: 7,
+    background: "#14161B",
+  },
+
+  editTagChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "5px 6px",
+    border: "none",
+    borderRadius: 5,
+    background: "#20242B",
+    color: "#A3A8B0",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  tagInput: {
+    flex: 1,
+    minWidth: 140,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#ECEAE3",
+    fontSize: 10,
+    padding: "5px 4px",
+  },
+
+  telegramOption: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "9px 10px",
+    marginBottom: 14,
+    border: "1px solid #2A2E37",
+    borderRadius: 7,
+    background: "#14161B",
+    cursor: "pointer",
+    userSelect: "none",
+  },
+
+  telegramOptionText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+  },
+
+  telegramOptionTitle: {
+    color: "#C9CDD2",
+    fontSize: 10,
+    fontWeight: 600,
+  },
+
+  telegramOptionSub: {
+    color: "#606772",
+    fontSize: 9,
+    lineHeight: 1.4,
+  },
+
+  telegramBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "4px 7px",
+    borderRadius: 5,
+    background: "#20252F",
+    color: "#8795AD",
+    fontSize: 9,
+  },
+
+  reminderHint: {
+    marginTop: -8,
+    marginBottom: 14,
+    color: "#5C6870",
+    fontSize: 9,
+    lineHeight: 1.4,
+  },
+
+  reminderInputRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "6px 8px",
+    marginBottom: 14,
+    border: "1px solid #2A2E37",
+    borderRadius: 7,
+    background: "#14161B",
+  },
+
+  reminderInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#C8CBD0",
+    fontSize: 10,
+    colorScheme: "dark",
+  },
+
+  clearReminderButton: {
+    border: "none",
+    background: "transparent",
+    color: "#737A84",
+    fontSize: 9,
+    cursor: "pointer",
+    padding: "4px 5px",
+  },
+
+  telegramSteps: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    margin: "4px 0 16px",
+  },
+
+  telegramStep: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 9,
+    padding: "9px 10px",
+    border: "1px solid #292E36",
+    borderRadius: 8,
+    background: "#15181D",
+    color: "#949AA4",
+    fontSize: 10,
+    lineHeight: 1.45,
+  },
+
+  telegramStepNumber: {
+    width: 20,
+    height: 20,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "50%",
+    background: "#20251F",
+    color: "#4FE36B",
+    fontSize: 9,
+    fontWeight: 700,
+  },
+
+  telegramConnectedCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 11px",
+    margin: "2px 0 16px",
+    border: "1px solid #27352D",
+    borderRadius: 8,
+    background: "#151A17",
+    color: "#7E9B88",
+    fontSize: 10,
+  },
+
+  secondaryFullButton: {
+    width: "100%",
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+    padding: "10px 14px",
+    marginTop: 8,
+    background: "#181B20",
+    color: "#C9CCD1",
+    fontSize: 11,
+    cursor: "pointer",
   },
 
   headerRow: {
