@@ -787,11 +787,16 @@ export default function LockScreen({ children }) {
     }
 
     try {
-      const res = await fetch("/api/auth/pair-status", {
+      const res = await fetch("/api/auth/pair?action=status", {
         method: "POST",
+
+        cache: "no-store",
+
         headers: {
           "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
         },
+
         body: JSON.stringify({
           pairingId,
           secret: pairingSecret,
@@ -801,8 +806,12 @@ export default function LockScreen({ children }) {
       const data = await res.json();
 
       if (!res.ok) {
+        console.debug("Pair status:", data);
+
         return;
       }
+
+      console.log("PAIRING STATUS:", data.status);
 
       if (data.status === "approved") {
         setPairingStatus("approved");
@@ -813,10 +822,8 @@ export default function LockScreen({ children }) {
       if (data.status === "completed") {
         setPairingStatus("completed");
       }
-    } catch {
-      /*
-       * Polling errors are transient.
-       */
+    } catch (error) {
+      console.debug("Pairing status error:", error);
     }
   }, [pairingId, pairingSecret]);
 
@@ -830,11 +837,13 @@ export default function LockScreen({ children }) {
       return;
     }
 
-    const interval = setInterval(pollNewDeviceApproval, 1500);
+    const interval = setInterval(pollNewDeviceApproval, 1000);
 
     pollNewDeviceApproval();
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+    };
   }, [
     pairMode,
     pairingStatus,
@@ -843,13 +852,32 @@ export default function LockScreen({ children }) {
     pollNewDeviceApproval,
   ]);
 
+  useEffect(() => {
+    if (pairMode !== "new" || pairingStatus !== "approved") {
+      return;
+    }
+
+    /*
+     * Give React one frame to render the
+     * approved state before opening the
+     * platform passkey UI.
+     */
+    const timer = setTimeout(() => {
+      completePairing();
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [pairMode, pairingStatus, completePairing]);
+
   /*
    * ==========================================================
    * CREATE PASSKEY — NEW DEVICE
    * ==========================================================
    */
 
-  const completePairing = async () => {
+  const completePairing = useCallback(async () => {
     if (!pairingId || !pairingSecret) {
       setPairingError("Pairing information is missing.");
 
@@ -935,7 +963,7 @@ export default function LockScreen({ children }) {
 
       setPairingStatus("approved");
     }
-  };
+  }, [pairingId, pairingSecret, pairDeviceName, pairDeviceType]);
 
   /*
    * ==========================================================

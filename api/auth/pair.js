@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -23,9 +22,6 @@ function hash(value) {
 }
 
 function createCode() {
-  /*
-   * 10 characters, uppercase, easy to copy.
-   */
   return crypto.randomBytes(8).toString("hex").toUpperCase().slice(0, 10);
 }
 
@@ -55,7 +51,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
 
   try {
     const action =
@@ -66,9 +62,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * START
-     *
-     * Trusted device creates the one-time pairing code.
-     * POST /api/auth/pair?action=start
      * ==========================================================
      */
 
@@ -109,8 +102,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Clean old pairings for this
-       * trusted credential.
+       * Remove old expired pairings.
        */
       await supabase
         .from("webauthn_pairing")
@@ -122,6 +114,8 @@ export default async function handler(req, res) {
 
       const code = createCode();
 
+      const initialSecret = crypto.randomBytes(32).toString("base64url");
+
       const expiresAt = new Date(Date.now() + PAIRING_TTL_MS).toISOString();
 
       const { error } = await supabase.from("webauthn_pairing").insert({
@@ -129,11 +123,7 @@ export default async function handler(req, res) {
 
         code_hash: hash(code),
 
-        /*
-         * Secret is created later when
-         * the new device claims the code.
-         */
-        secret_hash: hash(crypto.randomBytes(32).toString("base64url")),
+        secret_hash: hash(initialSecret),
 
         initiator_credential_id: credentialId,
 
@@ -152,13 +142,9 @@ export default async function handler(req, res) {
 
       res.status(200).json({
         pairingId,
-
         code,
-
         expiresAt,
-
         deviceName,
-
         deviceType,
       });
 
@@ -168,10 +154,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * REQUEST
-     *
-     * New device claims the pairing code.
-     *
-     * POST /api/auth/pair?action=request
      * ==========================================================
      */
 
@@ -235,6 +217,7 @@ export default async function handler(req, res) {
         res.status(410).json({
           error: "This pairing code has expired",
         });
+
         return;
       }
 
@@ -242,13 +225,12 @@ export default async function handler(req, res) {
         res.status(409).json({
           error: "This pairing code has already been used",
         });
+
         return;
       }
 
       /*
-       * Generate a secret for the new
-       * device. Only the hash remains in
-       * Supabase.
+       * Generate the new-device secret.
        */
       const secret = crypto.randomBytes(32).toString("base64url");
 
@@ -276,6 +258,10 @@ export default async function handler(req, res) {
 
         status: "pending_approval",
 
+        deviceName,
+
+        deviceType,
+
         expiresAt: pairing.expires_at,
       });
 
@@ -285,16 +271,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * STATUS
-     *
-     * Both trusted and new devices use this.
-     *
-     * Trusted:
-     * POST /api/auth/pair?action=status
-     * { pairingId }
-     *
-     * New device:
-     * POST /api/auth/pair?action=status
-     * { pairingId, secret }
      * ==========================================================
      */
 
@@ -330,7 +306,12 @@ export default async function handler(req, res) {
       }
 
       /*
-       * New device status check.
+       * ========================================================
+       * NEW DEVICE
+       * ========================================================
+       *
+       * Secret proves this device owns the
+       * pairing information.
        */
       if (secret) {
         if (hash(secret) !== pairing.secret_hash) {
@@ -340,8 +321,28 @@ export default async function handler(req, res) {
           return;
         }
 
+        /*
+         * IMPORTANT:
+         * Always return the current status.
+         *
+         * The Fold 7 can therefore move:
+         *
+         * waiting
+         *      ↓
+         * pending_approval
+         *      ↓
+         * approved
+         *      ↓
+         * completed
+         */
         res.status(200).json({
+          ok: true,
+
+          role: "new_device",
+
           status: pairing.status,
+
+          pairingId: pairing.id,
 
           deviceName: pairing.requested_device_name,
 
@@ -354,8 +355,11 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Trusted device status check.
+       * ========================================================
+       * TRUSTED DEVICE
+       * ========================================================
        */
+
       if (!isAuthenticated(req)) {
         res.status(401).json({
           error: "Not authenticated",
@@ -373,7 +377,13 @@ export default async function handler(req, res) {
       }
 
       res.status(200).json({
+        ok: true,
+
+        role: "trusted_device",
+
         status: pairing.status,
+
+        pairingId: pairing.id,
 
         deviceName: pairing.requested_device_name,
 
@@ -388,10 +398,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * APPROVE
-     *
-     * Trusted device approves the new device.
-     *
-     * POST /api/auth/pair?action=approve
      * ==========================================================
      */
 
@@ -400,6 +406,7 @@ export default async function handler(req, res) {
         res.status(401).json({
           error: "Not authenticated",
         });
+
         return;
       }
 
@@ -414,6 +421,7 @@ export default async function handler(req, res) {
         res.status(400).json({
           error: "Pairing ID is required",
         });
+
         return;
       }
 
@@ -423,6 +431,7 @@ export default async function handler(req, res) {
         res.status(404).json({
           error: "Pairing not found",
         });
+
         return;
       }
 
@@ -430,6 +439,7 @@ export default async function handler(req, res) {
         res.status(403).json({
           error: "Not authorized",
         });
+
         return;
       }
 
@@ -437,6 +447,7 @@ export default async function handler(req, res) {
         res.status(410).json({
           error: "Pairing has expired",
         });
+
         return;
       }
 
@@ -444,15 +455,18 @@ export default async function handler(req, res) {
         res.status(409).json({
           error: "No device is waiting for approval",
         });
+
         return;
       }
+
+      const now = new Date().toISOString();
 
       const { error: updateError } = await supabase
         .from("webauthn_pairing")
         .update({
           status: "approved",
 
-          approved_at: new Date().toISOString(),
+          approved_at: now,
         })
         .eq("id", pairingId);
 
@@ -460,8 +474,12 @@ export default async function handler(req, res) {
         throw updateError;
       }
 
+      /*
+       * Return the new state immediately.
+       */
       res.status(200).json({
         approved: true,
+        status: "approved",
       });
 
       return;
@@ -470,11 +488,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * OPTIONS
-     *
-     * New device gets registration options
-     * after trusted-device approval.
-     *
-     * POST /api/auth/pair?action=options
      * ==========================================================
      */
 
@@ -490,6 +503,7 @@ export default async function handler(req, res) {
         res.status(400).json({
           error: "Pairing credentials are required",
         });
+
         return;
       }
 
@@ -499,6 +513,7 @@ export default async function handler(req, res) {
         res.status(404).json({
           error: "Pairing not found",
         });
+
         return;
       }
 
@@ -506,6 +521,7 @@ export default async function handler(req, res) {
         res.status(403).json({
           error: "Invalid pairing secret",
         });
+
         return;
       }
 
@@ -513,6 +529,7 @@ export default async function handler(req, res) {
         res.status(410).json({
           error: "Pairing has expired",
         });
+
         return;
       }
 
@@ -520,13 +537,10 @@ export default async function handler(req, res) {
         res.status(409).json({
           error: "The trusted device has not approved this device yet",
         });
+
         return;
       }
 
-      /*
-       * Use a unique challenge ID for
-       * this pairing.
-       */
       const challengeId = `pair:${pairingId}`;
 
       const { data: existingCredentials, error: credentialsError } =
@@ -582,10 +596,6 @@ export default async function handler(req, res) {
     /*
      * ==========================================================
      * COMPLETE
-     *
-     * New device creates its actual passkey.
-     *
-     * POST /api/auth/pair?action=complete
      * ==========================================================
      */
 
@@ -611,6 +621,7 @@ export default async function handler(req, res) {
         res.status(400).json({
           error: "Pairing information is incomplete",
         });
+
         return;
       }
 
@@ -620,6 +631,7 @@ export default async function handler(req, res) {
         res.status(404).json({
           error: "Pairing not found",
         });
+
         return;
       }
 
@@ -627,6 +639,7 @@ export default async function handler(req, res) {
         res.status(403).json({
           error: "Invalid pairing secret",
         });
+
         return;
       }
 
@@ -634,6 +647,7 @@ export default async function handler(req, res) {
         res.status(410).json({
           error: "Pairing has expired",
         });
+
         return;
       }
 
@@ -641,6 +655,7 @@ export default async function handler(req, res) {
         res.status(409).json({
           error: "Device pairing has not been approved",
         });
+
         return;
       }
 
@@ -660,13 +675,7 @@ export default async function handler(req, res) {
         res.status(400).json({
           error: "No pending device registration",
         });
-        return;
-      }
 
-      if (!body.registration) {
-        res.status(400).json({
-          error: "Registration response is missing",
-        });
         return;
       }
 
@@ -686,6 +695,7 @@ export default async function handler(req, res) {
         res.status(400).json({
           error: "Device verification failed",
         });
+
         return;
       }
 
@@ -719,6 +729,7 @@ export default async function handler(req, res) {
           res.status(409).json({
             error: "This passkey is already registered",
           });
+
           return;
         }
 
@@ -736,10 +747,6 @@ export default async function handler(req, res) {
         })
         .eq("id", pairingId);
 
-      /*
-       * The newly paired device gets
-       * a real authenticated session.
-       */
       const sessionToken = createSessionToken(credentialID);
 
       res.setHeader("Set-Cookie", serializeSessionCookie(sessionToken));
