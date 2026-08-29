@@ -1,5 +1,9 @@
 import React, { useMemo, useRef, useState } from "react";
 import {
+  startRegistration,
+  startAuthentication,
+} from "@simplewebauthn/browser";
+import {
   Plus,
   Search,
   KeyRound,
