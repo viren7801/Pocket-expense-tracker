@@ -19,6 +19,7 @@ import {
   RefreshCw,
   X,
   Fingerprint,
+  ChevronRight,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -570,10 +571,7 @@ export default function PasswordsView({ vault, onVaultChange }) {
 
   async function passkeyRecoveryAuthentication({ setupSalt, wrappers = [] }) {
     const payload = setupSalt
-      ? {
-          mode: "setup",
-          prfSalt: setupSalt,
-        }
+      ? { mode: "setup", prfSalt: setupSalt }
       : {
           mode: "reset",
           wrappers: wrappers.map((item) => ({
@@ -586,112 +584,42 @@ export default function PasswordsView({ vault, onVaultChange }) {
       "/api/auth/pair?action=vault-recovery-options",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
     );
 
     const options = await optionsRes.json();
-
     if (!optionsRes.ok) {
       throw new Error(options.error || "Could not start passkey recovery");
     }
 
-    /*
-     * SimpleWebAuthn expects WebAuthn options
-     * in JSON form.
-     *
-     * The one exception here is the PRF input:
-     * the WebAuthn spec expects the PRF salt
-     * as a BufferSource.
-     *
-     * Convert ONLY the PRF values.
-     */
-    if (options.extensions?.prf?.evalByCredential) {
-      const evalByCredential = {};
-
-      for (const [credentialId, values] of Object.entries(
-        options.extensions.prf.evalByCredential,
-      )) {
-        evalByCredential[credentialId] = {
-          ...(values?.first
-            ? {
-                first: base64URLStringToBuffer(values.first),
-              }
-            : {}),
-
-          ...(values?.second
-            ? {
-                second: base64URLStringToBuffer(values.second),
-              }
-            : {}),
-        };
-      }
-
-      options.extensions = {
-        ...options.extensions,
-
-        prf: {
-          ...options.extensions.prf,
-
-          evalByCredential,
-        },
-      };
-    }
-
-    /*
-     * IMPORTANT:
-     *
-     * Do NOT manually convert:
-     *   challenge
-     *   allowCredentials[].id
-     *   rawId
-     *
-     * SimpleWebAuthn handles those when
-     * using optionsJSON.
-     */
-    const authResp = await startAuthentication({
-      optionsJSON: options,
-    });
+    const authResp = await startAuthentication(options);
 
     const verifyRes = await fetch(
       "/api/auth/pair?action=vault-recovery-verify",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          response: authResp,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: authResp }),
       },
     );
 
     const verifyData = await verifyRes.json();
-
     if (!verifyRes.ok || !verifyData.verified) {
       throw new Error(verifyData.error || "Passkey verification failed");
     }
 
-    /*
-     * PRF output comes back in the
-     * SimpleWebAuthn response as a
-     * base64url string.
-     */
     const prfOutputB64 = authResp?.clientExtensionResults?.prf?.results?.first;
-
     if (!prfOutputB64) {
       throw new Error(
-        "This passkey or browser does not support WebAuthn PRF recovery.",
+        "This passkey or browser does not support WebAuthn PRF. Use another supported passkey.",
       );
     }
 
     return {
       credentialId: verifyData.credentialId,
-
-      prfOutput: base64URLStringToBuffer(prfOutputB64),
+      prfOutput: base64UrlToBytes(prfOutputB64),
     };
   }
 
@@ -914,44 +842,93 @@ export default function PasswordsView({ vault, onVaultChange }) {
           </div>
 
           <div style={styles.eyebrow}>SECURE VAULT</div>
+
           <h1 style={styles.title}>Vault locked</h1>
+
           <p style={styles.copy}>
             Enter your vault password to decrypt your saved passwords on this
             device.
           </p>
+
+          <label style={styles.label}>Vault password</label>
 
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleUnlock();
+              if (e.key === "Enter") {
+                unlockVault();
+              }
             }}
             style={styles.input}
-            placeholder="Vault password"
+            placeholder="Enter vault password"
             autoFocus
           />
 
           {vault?.version === 2 && vault?.passkeyWraps?.length > 0 && (
-            <button
-              type="button"
-              style={styles.linkButton}
-              onClick={beginForgotPasswordRecovery}
-              disabled={recoveryBusy}
-            >
-              <Fingerprint size={14} />
-              {recoveryBusy
-                ? "Verifying passkey…"
-                : "Forgot vault password? Use passkey"}
-            </button>
+            <>
+              <div style={styles.recoveryDivider}>
+                <span style={styles.recoveryDividerLine} />
+                <span>OR</span>
+                <span style={styles.recoveryDividerLine} />
+              </div>
+
+              <button
+                type="button"
+                style={styles.recoveryButton}
+                onClick={async () => {
+                  /*
+                   * Open the SAME modal used by
+                   * "Change vault password", but switch
+                   * immediately to recovery mode.
+                   */
+                  setShowChangePassword(true);
+                  setForgotPasswordMode(true);
+                  setError("");
+
+                  /*
+                   * Start passkey authentication.
+                   * The recovery function itself handles
+                   * the WebAuthn request and sets the
+                   * recovery data key when successful.
+                   */
+                  try {
+                    await beginForgotPasswordRecovery();
+                  } catch {
+                    // The recovery function surfaces errors.
+                  }
+                }}
+                disabled={recoveryBusy}
+              >
+                <div style={styles.recoveryButtonIcon}>
+                  <Fingerprint size={17} />
+                </div>
+
+                <div style={styles.recoveryButtonText}>
+                  <div style={styles.recoveryButtonTitle}>
+                    Forgot vault password?
+                  </div>
+
+                  <div style={styles.recoveryButtonSubtitle}>
+                    Use Touch ID, Face ID, or passkey
+                  </div>
+                </div>
+
+                <ChevronRight size={16} color="#727883" />
+              </button>
+            </>
           )}
 
           {error && <div style={styles.error}>{error}</div>}
 
           <button
             type="button"
-            style={styles.primaryButton}
-            disabled={busy}
+            style={{
+              ...styles.primaryButton,
+              opacity: busy || !password ? 0.5 : 1,
+            }}
+            disabled={busy || !password}
             onClick={unlockVault}
           >
             {busy ? "Unlocking…" : "Unlock vault"}
@@ -1156,17 +1133,13 @@ export default function PasswordsView({ vault, onVaultChange }) {
         </div>
       </div>
 
-      {showChangePassword && (
+      {recoveryMode === "reset" && (
         <div style={styles.overlay}>
           <div style={styles.formModal}>
             <button
               style={styles.modalClose}
               onClick={() => {
-                setShowChangePassword(false);
                 setRecoveryMode(null);
-                setCurrentVaultPassword("");
-                setNewVaultPassword("");
-                setConfirmNewVaultPassword("");
                 setRecoveryNewPassword("");
                 setRecoveryConfirmPassword("");
                 recoveredDataKeyRef.current = null;
@@ -1176,75 +1149,104 @@ export default function PasswordsView({ vault, onVaultChange }) {
               <X size={17} />
             </button>
 
-            {recoveryMode === "reset" ? (
+            <div style={styles.iconLargeSmall}>
+              <Fingerprint size={22} />
+            </div>
+
+            <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
+            <h2 style={styles.formTitle}>Create a new vault password</h2>
+            <p style={styles.copy}>
+              Your passkey verified your identity. Choose a new password for
+              your existing vault.
+            </p>
+
+            <label style={styles.label}>New vault password</label>
+            <input
+              type="password"
+              value={recoveryNewPassword}
+              onChange={(e) => setRecoveryNewPassword(e.target.value)}
+              placeholder="At least 12 characters"
+              style={styles.input}
+              autoFocus
+            />
+
+            <label style={styles.label}>Confirm new password</label>
+            <input
+              type="password"
+              value={recoveryConfirmPassword}
+              onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+              placeholder="Enter the new password again"
+              style={styles.input}
+            />
+
+            <div style={styles.notice}>
+              <ShieldCheck size={16} />
+              <span>
+                Your saved passwords remain encrypted. Only the key protecting
+                them is re-wrapped with the new password.
+              </span>
+            </div>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              disabled={recoveryBusy}
+              onClick={finishForgotPasswordRecovery}
+            >
+              {recoveryBusy ? "Resetting password…" : "Set new vault password"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showChangePassword && (
+        <div style={styles.overlay}>
+          <div style={styles.formModal}>
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => {
+                setShowChangePassword(false);
+                setForgotPasswordMode(false);
+                setCurrentVaultPassword("");
+                setNewVaultPassword("");
+                setConfirmNewVaultPassword("");
+                setError("");
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.iconLargeSmall}>
+              {forgotPasswordMode ? (
+                <Fingerprint size={22} />
+              ) : (
+                <ShieldCheck size={22} />
+              )}
+            </div>
+
+            <div style={styles.detailEyebrow}>
+              {forgotPasswordMode ? "PASSKEY RECOVERY" : "SECURE VAULT"}
+            </div>
+
+            <h2 style={styles.formTitle}>
+              {forgotPasswordMode
+                ? "Reset vault password"
+                : "Change vault password"}
+            </h2>
+
+            <p style={styles.copy}>
+              {forgotPasswordMode
+                ? "Use your Pocket passkey to verify your identity, then choose a new vault password."
+                : "Your saved passwords will be re-encrypted with the new password."}
+            </p>
+
+            {!forgotPasswordMode && (
               <>
-                <div style={styles.iconLargeSmall}>
-                  <Fingerprint size={22} />
-                </div>
-
-                <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
-                <h2 style={styles.formTitle}>Create a new vault password</h2>
-                <p style={styles.copy}>
-                  Your passkey verified your identity. Choose a new password for
-                  your existing vault.
-                </p>
-
-                <label style={styles.label}>New vault password</label>
-                <input
-                  type="password"
-                  value={recoveryNewPassword}
-                  onChange={(e) => setRecoveryNewPassword(e.target.value)}
-                  placeholder="At least 12 characters"
-                  style={styles.input}
-                  autoFocus
-                />
-
-                <label style={styles.label}>Confirm new password</label>
-                <input
-                  type="password"
-                  value={recoveryConfirmPassword}
-                  onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
-                  placeholder="Enter the new password again"
-                  style={styles.input}
-                />
-
-                <div style={styles.notice}>
-                  <ShieldCheck size={16} />
-                  <span>
-                    Your saved passwords remain protected. Only the key
-                    protecting them is re-wrapped with the new password.
-                  </span>
-                </div>
-
-                {error && <div style={styles.error}>{error}</div>}
-
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  disabled={recoveryBusy}
-                  onClick={finishForgotPasswordRecovery}
-                >
-                  {recoveryBusy
-                    ? "Resetting password…"
-                    : "Set new vault password"}
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={styles.iconLargeSmall}>
-                  <ShieldCheck size={22} />
-                </div>
-
-                <div style={styles.detailEyebrow}>SECURE VAULT</div>
-
-                <h2 style={styles.formTitle}>Change vault password</h2>
-
-                <p style={styles.copy}>
-                  Your saved passwords will be re-encrypted with the new
-                  password.
-                </p>
-
                 <label style={styles.label}>Current vault password</label>
+
                 <input
                   type="password"
                   value={currentVaultPassword}
@@ -1257,59 +1259,114 @@ export default function PasswordsView({ vault, onVaultChange }) {
                 {vault?.version === 2 && vault?.passkeyWraps?.length > 0 && (
                   <button
                     type="button"
-                    style={styles.linkButton}
-                    onClick={() => {
+                    style={styles.forgotPasswordButton}
+                    onClick={async () => {
+                      setForgotPasswordMode(true);
+                      setCurrentVaultPassword("");
+                      setNewVaultPassword("");
+                      setConfirmNewVaultPassword("");
                       setError("");
-                      beginForgotPasswordRecovery();
+
+                      try {
+                        await beginForgotPasswordRecovery();
+                      } catch {
+                        // Recovery function surfaces errors.
+                      }
                     }}
                     disabled={recoveryBusy}
                   >
                     <Fingerprint size={14} />
                     {recoveryBusy
-                      ? "Waiting for passkey…"
+                      ? "Verifying passkey…"
                       : "Forgot password? Use passkey"}
                   </button>
                 )}
-
-                <label style={styles.label}>New vault password</label>
-                <input
-                  type="password"
-                  value={newVaultPassword}
-                  onChange={(e) => setNewVaultPassword(e.target.value)}
-                  placeholder="At least 12 characters"
-                  style={styles.input}
-                />
-
-                <label style={styles.label}>Confirm new password</label>
-                <input
-                  type="password"
-                  value={confirmNewVaultPassword}
-                  onChange={(e) => setConfirmNewVaultPassword(e.target.value)}
-                  placeholder="Enter the new password again"
-                  style={styles.input}
-                />
-
-                <div style={styles.notice}>
-                  <ShieldCheck size={16} />
-                  <span>
-                    Your passwords are decrypted only in memory and encrypted
-                    again using the new vault password.
-                  </span>
-                </div>
-
-                {error && <div style={styles.error}>{error}</div>}
-
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  disabled={changePasswordBusy}
-                  onClick={changeVaultPassword}
-                >
-                  {changePasswordBusy
-                    ? "Changing password…"
-                    : "Change vault password"}
-                </button>
               </>
+            )}
+
+            <label style={styles.label}>New vault password</label>
+
+            <input
+              type="password"
+              value={
+                forgotPasswordMode ? recoveryNewPassword : newVaultPassword
+              }
+              onChange={(e) => {
+                if (forgotPasswordMode) {
+                  setRecoveryNewPassword(e.target.value);
+                } else {
+                  setNewVaultPassword(e.target.value);
+                }
+              }}
+              placeholder="At least 12 characters"
+              style={styles.input}
+              autoFocus={forgotPasswordMode}
+            />
+
+            <label style={styles.label}>Confirm new password</label>
+
+            <input
+              type="password"
+              value={
+                forgotPasswordMode
+                  ? recoveryConfirmPassword
+                  : confirmNewVaultPassword
+              }
+              onChange={(e) => {
+                if (forgotPasswordMode) {
+                  setRecoveryConfirmPassword(e.target.value);
+                } else {
+                  setConfirmNewVaultPassword(e.target.value);
+                }
+              }}
+              placeholder="Enter the new password again"
+              style={styles.input}
+            />
+
+            <div style={styles.notice}>
+              <ShieldCheck size={16} />
+              <span>
+                {forgotPasswordMode
+                  ? "Your passkey verifies access to the vault recovery key. The old vault password is not required."
+                  : "Your passwords are decrypted only in memory and encrypted again using the new vault password."}
+              </span>
+            </div>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <button
+              type="button"
+              style={styles.primaryButton}
+              disabled={forgotPasswordMode ? recoveryBusy : changePasswordBusy}
+              onClick={
+                forgotPasswordMode
+                  ? finishForgotPasswordRecovery
+                  : changeVaultPassword
+              }
+            >
+              {forgotPasswordMode
+                ? recoveryBusy
+                  ? "Resetting password…"
+                  : "Set new vault password"
+                : changePasswordBusy
+                  ? "Changing password…"
+                  : "Change vault password"}
+            </button>
+
+            {forgotPasswordMode && (
+              <button
+                type="button"
+                style={styles.linkButton}
+                onClick={() => {
+                  setForgotPasswordMode(false);
+                  setRecoveryNewPassword("");
+                  setRecoveryConfirmPassword("");
+                  recoveredDataKeyRef.current = null;
+                  setError("");
+                }}
+              >
+                Back to current password
+              </button>
             )}
           </div>
         </div>
@@ -1521,6 +1578,84 @@ const styles = {
     fontSize: 12,
     fontFamily: "Inter, sans-serif",
   },
+  recoveryDivider: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    margin: "4px 0 12px",
+    color: "#555B64",
+    fontSize: 9,
+    letterSpacing: "0.12em",
+    fontWeight: 600,
+  },
+
+  recoveryDividerLine: {
+    flex: 1,
+    height: 1,
+    background: "#292D35",
+  },
+
+  recoveryButton: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "11px 12px",
+    marginBottom: 14,
+    background: "#181B20",
+    border: "1px solid #303640",
+    borderRadius: 9,
+    color: "#D6D8D4",
+    cursor: "pointer",
+    textAlign: "left",
+    boxSizing: "border-box",
+  },
+
+  recoveryButtonIcon: {
+    width: 32,
+    height: 32,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    background: "#20251F",
+    color: "#4FE36B",
+  },
+
+  recoveryButtonText: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  recoveryButtonTitle: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#E3E4DF",
+  },
+
+  recoveryButtonSubtitle: {
+    marginTop: 3,
+    fontSize: 10,
+    color: "#727883",
+  },
+
+  forgotPasswordButton: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    padding: "9px 12px",
+    background: "#181B20",
+    color: "#A1A6AF",
+    fontSize: 11,
+    cursor: "pointer",
+    marginBottom: 14,
+  },
+
   primaryButton: {
     width: "100%",
     border: "none",
