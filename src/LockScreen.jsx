@@ -23,23 +23,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-/*
- * ============================================================
- * STORAGE KEYS
- * ============================================================
- */
-
 const TAB_SESSION_KEY = "ledger_tab_session";
 
 const DEVICE_REGISTERED_KEY = "ledger_device_registered";
 
 const CURRENT_DEVICE_KEY = "ledger_current_device";
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
 
 function formatDate(value) {
   if (!value) {
@@ -62,13 +50,13 @@ function formatTimeRemaining(value) {
     return "";
   }
 
-  const remaining = new Date(value).getTime() - Date.now();
+  const diff = new Date(value).getTime() - Date.now();
 
-  if (remaining <= 0) {
+  if (diff <= 0) {
     return "Expired";
   }
 
-  const totalSeconds = Math.floor(remaining / 1000);
+  const totalSeconds = Math.floor(diff / 1000);
 
   const minutes = Math.floor(totalSeconds / 60);
 
@@ -77,18 +65,12 @@ function formatTimeRemaining(value) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-/*
- * ============================================================
- * COMPONENT
- * ============================================================
- */
-
 export default function LockScreen({ children }) {
   const isDevelopment = import.meta.env.DEV;
 
   /*
    * ==========================================================
-   * GENERAL AUTH STATE
+   * AUTH STATE
    * ==========================================================
    */
 
@@ -106,11 +88,17 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * ACCOUNT / DEVICE MANAGEMENT
+   * ACCOUNT MENU
    * ==========================================================
    */
 
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+
+  /*
+   * ==========================================================
+   * DEVICE MANAGEMENT
+   * ==========================================================
+   */
 
   const [showDevices, setShowDevices] = useState(false);
 
@@ -132,17 +120,15 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * PAIRING STATE
+   * PAIRING
    * ==========================================================
    */
-
-  const [showPairMenu, setShowPairMenu] = useState(false);
 
   const [pairMode, setPairMode] = useState(null);
   /*
    * null
-   * "trusted"
-   * "new"
+   * trusted
+   * new
    */
 
   const [pairDeviceName, setPairDeviceName] = useState("");
@@ -177,10 +163,6 @@ export default function LockScreen({ children }) {
 
       const data = await res.json();
 
-      /*
-       * Don't let an existing cookie
-       * automatically unlock a new tab.
-       */
       if (
         data.authenticated &&
         !window.sessionStorage.getItem(TAB_SESSION_KEY)
@@ -207,13 +189,6 @@ export default function LockScreen({ children }) {
   }, []);
 
   useEffect(() => {
-    /*
-     * Localhost is a UI development
-     * environment.
-     *
-     * Real WebAuthn is only used in
-     * production.
-     */
     if (isDevelopment) {
       setStatus({
         authenticated: true,
@@ -257,21 +232,16 @@ export default function LockScreen({ children }) {
 
       const verifyData = await verifyRes.json();
 
-      /*
-       * Handle a passkey that has
-       * been revoked on the server
-       * but still exists locally.
-       */
       if (!verifyRes.ok || !verifyData.verified) {
+        /*
+         * A credential can remain in the
+         * browser/passkey manager even after
+         * Pocket revoked it from Supabase.
+         */
         if (
           verifyRes.status === 404 &&
           verifyData.code === "CREDENTIAL_NOT_REGISTERED"
         ) {
-          /*
-           * Tell supported authenticators
-           * that this credential is no longer
-           * accepted by Pocket.
-           */
           if (window.PublicKeyCredential?.signalUnknownCredential) {
             try {
               await window.PublicKeyCredential.signalUnknownCredential({
@@ -279,11 +249,7 @@ export default function LockScreen({ children }) {
                 credentialId: authResp.id,
               });
             } catch {
-              /*
-               * Signal support varies by platform.
-               * This must never prevent the
-               * server from rejecting the credential.
-               */
+              // Browser/platform may not support signaling.
             }
           }
 
@@ -295,30 +261,15 @@ export default function LockScreen({ children }) {
         throw new Error(verifyData.error || "Unlock failed");
       }
 
-      /*
-       * Mark this browser tab as
-       * authenticated.
-       */
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
 
-      /*
-       * Remember the credential that
-       * authenticated the session.
-       */
       if (verifyData.device?.id) {
         window.localStorage.setItem(CURRENT_DEVICE_KEY, verifyData.device.id);
       } else if (authResp.id) {
         window.localStorage.setItem(CURRENT_DEVICE_KEY, authResp.id);
       }
 
-      /*
-       * QR/phone cross-device authentication
-       * may not mean that the current device
-       * has a platform passkey yet.
-       */
       if (authResp.authenticatorAttachment !== "platform" && !hasLocalPasskey) {
-        setPairDeviceName("");
-        setPairingError(null);
         setShowAddDevice(true);
       }
 
@@ -336,7 +287,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * ADD DEVICE
+   * DIRECT ADD DEVICE
    * ==========================================================
    */
 
@@ -347,9 +298,6 @@ export default function LockScreen({ children }) {
       return;
     }
 
-    /*
-     * Localhost is UI-only.
-     */
     if (isDevelopment) {
       setDeviceError("Device registration will work on pocket.patelviren.com.");
 
@@ -455,6 +403,7 @@ export default function LockScreen({ children }) {
 
   const openDevices = async () => {
     setShowAccountMenu(false);
+
     setShowDevices(true);
 
     await loadDevices();
@@ -503,7 +452,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * LOGOUT
+   * LOG OUT
    * ==========================================================
    */
 
@@ -521,13 +470,13 @@ export default function LockScreen({ children }) {
       window.localStorage.removeItem(CURRENT_DEVICE_KEY);
 
       setShowLogoutConfirm(false);
+
       setShowAccountMenu(false);
+
       setShowDevices(false);
+
       setShowAddDevice(false);
 
-      /*
-       * Development is UI-only.
-       */
       if (isDevelopment) {
         window.location.reload();
         return;
@@ -543,7 +492,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * START PAIRING — TRUSTED DEVICE
+   * START PAIRING ON TRUSTED DEVICE
    * ==========================================================
    */
 
@@ -578,23 +527,16 @@ export default function LockScreen({ children }) {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Could not start device pairing");
+        throw new Error(data.error || "Could not start pairing");
       }
 
       setPairingId(data.pairingId);
 
       setPairingCode(data.code);
 
-      /*
-       * The new-device secret is generated
-       * after the new device claims the code.
-       *
-       * Trusted device keeps the pairing
-       * information only in memory.
-       */
-      setPairingSecret(data.secret || "");
-
       setPairingExpiresAt(data.expiresAt);
+
+      setPairingSecret("");
 
       setPairingStatus("waiting");
     } catch (e) {
@@ -606,11 +548,11 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * POLL PAIRING — TRUSTED DEVICE
+   * TRUSTED DEVICE STATUS POLLING
    * ==========================================================
    */
 
-  const pollPairingStatus = useCallback(async () => {
+  const pollTrustedPairing = useCallback(async () => {
     if (!pairingId) {
       return;
     }
@@ -618,8 +560,10 @@ export default function LockScreen({ children }) {
     try {
       const res = await fetch("/api/auth/pair?action=status", {
         method: "POST",
+        cache: "no-store",
         headers: {
           "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
         },
         body: JSON.stringify({
           pairingId,
@@ -642,17 +586,9 @@ export default function LockScreen({ children }) {
 
       if (data.status === "completed") {
         setPairingStatus("completed");
-
-        if (pairingPollRef.current) {
-          clearInterval(pairingPollRef.current);
-
-          pairingPollRef.current = null;
-        }
       }
     } catch {
-      /*
-       * Polling failures are transient.
-       */
+      // Pairing polling errors are transient.
     }
   }, [pairingId]);
 
@@ -666,9 +602,9 @@ export default function LockScreen({ children }) {
       return;
     }
 
-    pairingPollRef.current = setInterval(pollPairingStatus, 1500);
+    pairingPollRef.current = setInterval(pollTrustedPairing, 1000);
 
-    pollPairingStatus();
+    pollTrustedPairing();
 
     return () => {
       if (pairingPollRef.current) {
@@ -677,11 +613,11 @@ export default function LockScreen({ children }) {
         pairingPollRef.current = null;
       }
     };
-  }, [pairMode, pairingId, pairingStatus, pollPairingStatus]);
+  }, [pairMode, pairingId, pairingStatus, pollTrustedPairing]);
 
   /*
    * ==========================================================
-   * APPROVE PAIRING — TRUSTED DEVICE
+   * APPROVE PAIRING
    * ==========================================================
    */
 
@@ -720,7 +656,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * CLAIM PAIRING — NEW DEVICE
+   * CLAIM PAIRING ON NEW DEVICE
    * ==========================================================
    */
 
@@ -777,8 +713,16 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * POLL PAIRING — NEW DEVICE
+   * NEW DEVICE STATUS POLLING
    * ==========================================================
+   *
+   * IMPORTANT:
+   * This only changes state.
+   *
+   * It does NOT call completePairing().
+   *
+   * That prevents the initialization error that
+   * broke your page.
    */
 
   const pollNewDeviceApproval = useCallback(async () => {
@@ -789,14 +733,11 @@ export default function LockScreen({ children }) {
     try {
       const res = await fetch("/api/auth/pair?action=status", {
         method: "POST",
-
         cache: "no-store",
-
         headers: {
           "Content-Type": "application/json",
           "Cache-Control": "no-cache",
         },
-
         body: JSON.stringify({
           pairingId,
           secret: pairingSecret,
@@ -841,9 +782,7 @@ export default function LockScreen({ children }) {
 
     pollNewDeviceApproval();
 
-    return () => {
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [
     pairMode,
     pairingStatus,
@@ -852,32 +791,17 @@ export default function LockScreen({ children }) {
     pollNewDeviceApproval,
   ]);
 
-  useEffect(() => {
-    if (pairMode !== "new" || pairingStatus !== "approved") {
-      return;
-    }
-
-    /*
-     * Give React one frame to render the
-     * approved state before opening the
-     * platform passkey UI.
-     */
-    const timer = setTimeout(() => {
-      completePairing();
-    }, 250);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [pairMode, pairingStatus, completePairing]);
-
   /*
    * ==========================================================
-   * CREATE PASSKEY — NEW DEVICE
+   * COMPLETE PAIRING
    * ==========================================================
+   *
+   * This function is declared BEFORE it is used
+   * by any JSX/button, so there is no temporal
+   * dead-zone issue.
    */
 
-  const completePairing = useCallback(async () => {
+  const completePairing = async () => {
     if (!pairingId || !pairingSecret) {
       setPairingError("Pairing information is missing.");
 
@@ -907,14 +831,6 @@ export default function LockScreen({ children }) {
         );
       }
 
-      /*
-       * Create the actual passkey
-       * on THIS device.
-       *
-       * On Fold 7 this will normally
-       * invoke the platform biometric /
-       * passkey UI.
-       */
       const regResp = await startRegistration(options);
 
       setPairingStatus("verifying");
@@ -943,10 +859,6 @@ export default function LockScreen({ children }) {
         throw new Error(data.error || "Device registration failed");
       }
 
-      /*
-       * The new device is now
-       * authenticated.
-       */
       window.sessionStorage.setItem(TAB_SESSION_KEY, "1");
 
       window.localStorage.setItem(DEVICE_REGISTERED_KEY, "1");
@@ -963,11 +875,11 @@ export default function LockScreen({ children }) {
 
       setPairingStatus("approved");
     }
-  }, [pairingId, pairingSecret, pairDeviceName, pairDeviceType]);
+  };
 
   /*
    * ==========================================================
-   * COPY PAIRING CODE
+   * COPY CODE
    * ==========================================================
    */
 
@@ -985,10 +897,7 @@ export default function LockScreen({ children }) {
         setCopiedPairingCode(false);
       }, 1500);
     } catch {
-      /*
-       * Clipboard permission can be
-       * unavailable on some browsers.
-       */
+      // Clipboard may be unavailable.
     }
   };
 
@@ -1007,9 +916,9 @@ export default function LockScreen({ children }) {
 
     setPairMode(null);
 
-    setShowPairMenu(false);
-
     setPairDeviceName("");
+
+    setPairDeviceType("Fingerprint / Face ID");
 
     setPairingId("");
 
@@ -1028,7 +937,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * OPEN PAIRING — TRUSTED DEVICE
+   * OPEN TRUSTED PAIRING
    * ==========================================================
    */
 
@@ -1045,29 +954,29 @@ export default function LockScreen({ children }) {
 
     setPairDeviceType("Fingerprint / Face ID");
 
-    setPairingError(null);
-
-    setPairingStatus("");
+    setPairingId("");
 
     setPairingCode("");
-
-    setPairingId("");
 
     setPairingSecret("");
 
     setPairingExpiresAt(null);
+
+    setPairingStatus("");
+
+    setPairingError(null);
+
+    setCopiedPairingCode(false);
   };
 
   /*
    * ==========================================================
-   * OPEN PAIRING — NEW DEVICE
+   * OPEN NEW DEVICE PAIRING
    * ==========================================================
    */
 
   const openNewDevicePairing = () => {
     setError(null);
-
-    setShowPairMenu(false);
 
     setPairMode("new");
 
@@ -1075,9 +984,9 @@ export default function LockScreen({ children }) {
 
     setPairDeviceType("Fingerprint / Face ID");
 
-    setPairingCode("");
-
     setPairingId("");
+
+    setPairingCode("");
 
     setPairingSecret("");
 
@@ -1086,6 +995,8 @@ export default function LockScreen({ children }) {
     setPairingStatus("");
 
     setPairingError(null);
+
+    setCopiedPairingCode(false);
   };
 
   /*
@@ -1126,11 +1037,9 @@ export default function LockScreen({ children }) {
 
               setShowAddDevice(true);
 
-              setDeviceError(null);
-
               setDeviceName("");
 
-              setDeviceType("Touch ID / Face ID");
+              setDeviceError(null);
             }}
           >
             <div style={styles.menuIcon}>
@@ -1336,7 +1245,7 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * MANAGE DEVICES
+   * DEVICES MODAL
    * ==========================================================
    */
 
@@ -1384,10 +1293,12 @@ export default function LockScreen({ children }) {
 
               const isCurrent = currentDevice === device.id;
 
+              const deviceTypeLower = (device.deviceType || "").toLowerCase();
+
               const isPhone =
-                device.deviceType?.toLowerCase().includes("face") ||
-                device.deviceType?.toLowerCase().includes("phone") ||
-                device.deviceType?.toLowerCase().includes("fingerprint");
+                deviceTypeLower.includes("phone") ||
+                deviceTypeLower.includes("face") ||
+                deviceTypeLower.includes("fingerprint");
 
               return (
                 <div key={device.id} style={styles.deviceCard}>
@@ -1480,8 +1391,7 @@ export default function LockScreen({ children }) {
         {pairingStatus === "" ? (
           <>
             <div style={styles.modalDescription}>
-              Create a secure, one-time pairing code for another phone or
-              computer.
+              Create a short-lived, one-time code for another phone or computer.
             </div>
 
             <label style={styles.label}>New device name</label>
@@ -1538,15 +1448,15 @@ export default function LockScreen({ children }) {
           </>
         ) : pairingStatus === "creating" ? (
           <div style={styles.centerState}>
-            <RefreshCw size={25} className="spin" />
+            <RefreshCw size={25} className="pocket-spin" />
 
             <div style={styles.stateTitle}>Creating secure pairing…</div>
           </div>
         ) : (
           <>
             <div style={styles.modalDescription}>
-              On the new device, open Pocket and choose
-              <strong> Pair this device</strong>, then enter this code.
+              Open Pocket on the new device and choose
+              <strong> Pair this device</strong>.
             </div>
 
             <div style={styles.pairCodeCard}>
@@ -1586,25 +1496,29 @@ export default function LockScreen({ children }) {
 
               <div>
                 <div style={styles.statusTitle}>
-                  {pairingStatus === "pending_approval"
-                    ? "New device is waiting for approval"
-                    : pairingStatus === "approving"
-                      ? "Approving device…"
-                      : pairingStatus === "approved"
-                        ? "Device approved"
-                        : pairingStatus === "completed"
-                          ? "Device successfully added"
-                          : "Waiting for new device…"}
+                  {pairingStatus === "waiting"
+                    ? "Waiting for the new device"
+                    : pairingStatus === "pending_approval"
+                      ? "New device is waiting for approval"
+                      : pairingStatus === "approving"
+                        ? "Approving device…"
+                        : pairingStatus === "approved"
+                          ? "Device approved"
+                          : pairingStatus === "completed"
+                            ? "Device successfully added"
+                            : "Pairing in progress"}
                 </div>
 
                 <div style={styles.statusDescription}>
-                  {pairingStatus === "pending_approval"
-                    ? "Review the device and approve it below."
-                    : pairingStatus === "approved"
-                      ? "The new device can now create its Pocket passkey."
-                      : pairingStatus === "completed"
-                        ? "You can close this window."
-                        : "Keep this window open while the other device connects."}
+                  {pairingStatus === "waiting"
+                    ? "Keep this window open while the other device enters the code."
+                    : pairingStatus === "pending_approval"
+                      ? "Review the request and approve the new device."
+                      : pairingStatus === "approved"
+                        ? "The new device can now create its Pocket passkey."
+                        : pairingStatus === "completed"
+                          ? "The new device is ready."
+                          : "Waiting for the next step."}
                 </div>
               </div>
             </div>
@@ -1705,7 +1619,7 @@ export default function LockScreen({ children }) {
             <input
               value={pairingCode}
               onChange={(e) => setPairingCode(e.target.value)}
-              placeholder="7A39C21F5B"
+              placeholder="A7AC0BA5E2"
               style={{
                 ...styles.input,
                 textTransform: "uppercase",
@@ -1734,14 +1648,14 @@ export default function LockScreen({ children }) {
             <button
               type="button"
               style={styles.linkButton}
-              onClick={() => setPairMode(null)}
+              onClick={resetPairing}
             >
               Back
             </button>
           </>
         ) : pairingStatus === "claiming" ? (
           <div style={styles.centerState}>
-            <RefreshCw size={25} className="spin" />
+            <RefreshCw size={25} className="pocket-spin" />
 
             <div style={styles.stateTitle}>Connecting…</div>
 
@@ -1938,13 +1852,29 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * LOCALHOST
+   * DEVELOPMENT MODE
    * ==========================================================
    */
 
   if (isDevelopment) {
     return (
       <>
+        <style>{`
+          .pocket-spin {
+            animation: pocketSpin 1s linear infinite;
+          }
+
+          @keyframes pocketSpin {
+            from {
+              transform: rotate(0deg);
+            }
+
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
+
         {children}
 
         {accountMenu}
@@ -1982,13 +1912,29 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * AUTHENTICATED PRODUCTION
+   * AUTHENTICATED
    * ==========================================================
    */
 
   if (status.authenticated) {
     return (
       <>
+        <style>{`
+          .pocket-spin {
+            animation: pocketSpin 1s linear infinite;
+          }
+
+          @keyframes pocketSpin {
+            from {
+              transform: rotate(0deg);
+            }
+
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}</style>
+
         {children}
 
         {accountMenu}
@@ -2012,32 +1958,12 @@ export default function LockScreen({ children }) {
 
   /*
    * ==========================================================
-   * PRODUCTION LOCK SCREEN
+   * LOCK SCREEN
    * ==========================================================
    */
 
   return (
     <div style={styles.lockWrap}>
-      <style>{`
-        @import url(
-          'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;500&display=swap'
-        );
-
-        .spin {
-          animation: pocketSpin 1s linear infinite;
-        }
-
-        @keyframes pocketSpin {
-          from {
-            transform: rotate(0deg);
-          }
-
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
-
       <div style={styles.lockCard}>
         <Fingerprint size={42} color="#C9A455" />
 
@@ -2133,8 +2059,6 @@ const styles = {
     background: "#14161B",
 
     fontFamily: "Inter, sans-serif",
-
-    position: "relative",
   },
 
   lockCard: {
@@ -2177,11 +2101,23 @@ const styles = {
     textAlign: "center",
   },
 
+  loadingText: {
+    color: "#858A93",
+
+    fontSize: 13,
+
+    textAlign: "center",
+
+    padding: 20,
+  },
+
   lockSecondaryButton: {
     width: "100%",
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     gap: 7,
@@ -2203,20 +2139,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  loadingText: {
-    color: "#858A93",
-
-    fontSize: 13,
-
-    textAlign: "center",
-
-    padding: 20,
-  },
-
-  /*
-   * ACCOUNT
-   */
-
   accountButton: {
     position: "fixed",
 
@@ -2226,6 +2148,7 @@ const styles = {
     zIndex: 1000,
 
     display: "flex",
+
     alignItems: "center",
 
     gap: 10,
@@ -2258,7 +2181,9 @@ const styles = {
     borderRadius: "50%",
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     background: "#C9A455",
@@ -2296,10 +2221,6 @@ const styles = {
     fontSize: 14,
   },
 
-  /*
-   * ACCOUNT MENU
-   */
-
   accountMenu: {
     position: "fixed",
 
@@ -2325,6 +2246,7 @@ const styles = {
 
   accountHeader: {
     display: "flex",
+
     alignItems: "center",
 
     gap: 10,
@@ -2339,7 +2261,9 @@ const styles = {
     borderRadius: "50%",
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     background: "#C9A455",
@@ -2374,7 +2298,9 @@ const styles = {
     height: 28,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     border: "1px solid #30343D",
@@ -2400,6 +2326,7 @@ const styles = {
     width: "100%",
 
     display: "flex",
+
     alignItems: "center",
 
     gap: 11,
@@ -2428,7 +2355,9 @@ const styles = {
     height: 31,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     borderRadius: 8,
@@ -2462,10 +2391,6 @@ const styles = {
     color: "#686D76",
   },
 
-  /*
-   * MODALS
-   */
-
   overlay: {
     position: "fixed",
 
@@ -2474,7 +2399,9 @@ const styles = {
     zIndex: 2000,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     padding: 20,
@@ -2534,7 +2461,9 @@ const styles = {
     height: 30,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     border: "1px solid #30343D",
@@ -2553,7 +2482,9 @@ const styles = {
     height: 52,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     borderRadius: 13,
@@ -2643,6 +2574,7 @@ const styles = {
 
   securityNotice: {
     display: "flex",
+
     alignItems: "flex-start",
 
     gap: 9,
@@ -2666,6 +2598,7 @@ const styles = {
 
   localNotice: {
     display: "flex",
+
     alignItems: "flex-start",
 
     gap: 9,
@@ -2711,6 +2644,7 @@ const styles = {
     display: "flex",
 
     alignItems: "center",
+
     justifyContent: "center",
 
     gap: 7,
@@ -2746,7 +2680,9 @@ const styles = {
     width: "100%",
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     gap: 6,
@@ -2797,7 +2733,9 @@ const styles = {
     height: 48,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     borderRadius: 12,
@@ -2814,7 +2752,9 @@ const styles = {
     height: 48,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     borderRadius: 12,
@@ -2843,10 +2783,6 @@ const styles = {
 
     marginBottom: 12,
   },
-
-  /*
-   * DEVICE LIST
-   */
 
   deviceList: {
     display: "flex",
@@ -2881,7 +2817,9 @@ const styles = {
     flexShrink: 0,
 
     display: "flex",
+
     alignItems: "center",
+
     justifyContent: "center",
 
     borderRadius: 9,
@@ -2986,7 +2924,7 @@ const styles = {
   },
 
   /*
-   * PAIRING
+   * PAIRING UI
    */
 
   pairCodeCard: {
@@ -3204,10 +3142,6 @@ const styles = {
 
     fontWeight: 700,
   },
-
-  /*
-   * TOAST
-   */
 
   toast: {
     position: "fixed",
