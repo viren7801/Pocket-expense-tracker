@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 import {
   startRegistration,
   startAuthentication,
+  base64URLStringToBuffer,
 } from "@simplewebauthn/browser";
 import {
   Plus,
@@ -569,7 +570,10 @@ export default function PasswordsView({ vault, onVaultChange }) {
 
   async function passkeyRecoveryAuthentication({ setupSalt, wrappers = [] }) {
     const payload = setupSalt
-      ? { mode: "setup", prfSalt: setupSalt }
+      ? {
+          mode: "setup",
+          prfSalt: setupSalt,
+        }
       : {
           mode: "reset",
           wrappers: wrappers.map((item) => ({
@@ -582,42 +586,112 @@ export default function PasswordsView({ vault, onVaultChange }) {
       "/api/auth/pair?action=vault-recovery-options",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(payload),
       },
     );
 
     const options = await optionsRes.json();
+
     if (!optionsRes.ok) {
       throw new Error(options.error || "Could not start passkey recovery");
     }
 
-    const authResp = await startAuthentication(options);
+    /*
+     * SimpleWebAuthn expects WebAuthn options
+     * in JSON form.
+     *
+     * The one exception here is the PRF input:
+     * the WebAuthn spec expects the PRF salt
+     * as a BufferSource.
+     *
+     * Convert ONLY the PRF values.
+     */
+    if (options.extensions?.prf?.evalByCredential) {
+      const evalByCredential = {};
+
+      for (const [credentialId, values] of Object.entries(
+        options.extensions.prf.evalByCredential,
+      )) {
+        evalByCredential[credentialId] = {
+          ...(values?.first
+            ? {
+                first: base64URLStringToBuffer(values.first),
+              }
+            : {}),
+
+          ...(values?.second
+            ? {
+                second: base64URLStringToBuffer(values.second),
+              }
+            : {}),
+        };
+      }
+
+      options.extensions = {
+        ...options.extensions,
+
+        prf: {
+          ...options.extensions.prf,
+
+          evalByCredential,
+        },
+      };
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * Do NOT manually convert:
+     *   challenge
+     *   allowCredentials[].id
+     *   rawId
+     *
+     * SimpleWebAuthn handles those when
+     * using optionsJSON.
+     */
+    const authResp = await startAuthentication({
+      optionsJSON: options,
+    });
 
     const verifyRes = await fetch(
       "/api/auth/pair?action=vault-recovery-verify",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response: authResp }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          response: authResp,
+        }),
       },
     );
 
     const verifyData = await verifyRes.json();
+
     if (!verifyRes.ok || !verifyData.verified) {
       throw new Error(verifyData.error || "Passkey verification failed");
     }
 
+    /*
+     * PRF output comes back in the
+     * SimpleWebAuthn response as a
+     * base64url string.
+     */
     const prfOutputB64 = authResp?.clientExtensionResults?.prf?.results?.first;
+
     if (!prfOutputB64) {
       throw new Error(
-        "This passkey or browser does not support WebAuthn PRF. Use another supported passkey.",
+        "This passkey or browser does not support WebAuthn PRF recovery.",
       );
     }
 
     return {
       credentialId: verifyData.credentialId,
-      prfOutput: base64UrlToBytes(prfOutputB64),
+
+      prfOutput: base64URLStringToBuffer(prfOutputB64),
     };
   }
 
