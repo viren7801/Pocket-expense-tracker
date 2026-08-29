@@ -40,27 +40,108 @@ function cronAuthorized(req) {
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
 }
 
-/*
- * Calculate the next occurrence of a recurring reminder.
- */
-function nextRecurringDate(dateValue, recurrence) {
-  const date = new Date(dateValue);
+function normalizeDays(days) {
+  if (!Array.isArray(days)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      days
+        .map(Number)
+        .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+    ),
+  ).sort((x, y) => x - y);
+}
+
+function nextWeeklyDate(value, days) {
+  const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
     return null;
   }
 
-  if (recurrence === "daily") {
-    date.setUTCDate(date.getUTCDate() + 1);
-  } else if (recurrence === "weekly") {
+  const selected = normalizeDays(days);
+
+  if (!selected.length) {
     date.setUTCDate(date.getUTCDate() + 7);
-  } else if (recurrence === "monthly") {
-    const originalDay = date.getUTCDate();
+
+    return date.toISOString();
+  }
+
+  const today = date.getUTCDay();
+
+  /*
+   * Find the next selected weekday
+   * later in the current week.
+   */
+  for (const day of selected) {
+    const delta = (day - today + 7) % 7;
+
+    if (delta > 0) {
+      date.setUTCDate(date.getUTCDate() + delta);
+
+      return date.toISOString();
+    }
+  }
+
+  /*
+   * Nothing remains later this week,
+   * so go to the first selected day
+   * next week.
+   */
+  const firstDay = selected[0];
+
+  const delta = (firstDay - today + 7) % 7 || 7;
+
+  date.setUTCDate(date.getUTCDate() + delta);
+
+  return date.toISOString();
+}
+
+function nextRecurringDate(value, recurrence, recurrenceDay, recurrenceDays) {
+  /*
+   * DAILY
+   */
+  if (recurrence === "daily") {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    date.setUTCDate(date.getUTCDate() + 1);
+
+    return date.toISOString();
+  }
+
+  /*
+   * WEEKLY
+   */
+  if (recurrence === "weekly") {
+    return nextWeeklyDate(value, recurrenceDays);
+  }
+
+  /*
+   * MONTHLY
+   */
+  if (recurrence === "monthly") {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    const targetDay = Math.min(
+      31,
+      Math.max(1, Number(recurrenceDay || date.getUTCDate())),
+    );
 
     /*
-     * Move to the first day of the
-     * next month so dates like Jan 31
-     * don't overflow into March.
+     * Move to first day of
+     * next month first so that
+     * Jan 31 doesn't overflow
+     * into March.
      */
     date.setUTCDate(1);
 
@@ -70,12 +151,12 @@ function nextRecurringDate(dateValue, recurrence) {
       Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
     ).getUTCDate();
 
-    date.setUTCDate(Math.min(originalDay, lastDay));
-  } else {
-    return null;
+    date.setUTCDate(Math.min(targetDay, lastDay));
+
+    return date.toISOString();
   }
 
-  return date.toISOString();
+  return null;
 }
 
 async function telegramRequest(method, payload) {
@@ -85,9 +166,11 @@ async function telegramRequest(method, payload) {
     `https://api.telegram.org/bot${token}/${method}`,
     {
       method: "POST",
+
       headers: {
         "Content-Type": "application/json",
       },
+
       body: JSON.stringify(payload),
     },
   );
@@ -106,7 +189,9 @@ async function configureWebhook() {
 
   await telegramRequest("setWebhook", {
     url: `${ORIGIN}/api/telegram?action=webhook`,
+
     secret_token: secret,
+
     allowed_updates: ["message"],
   });
 }
@@ -147,11 +232,6 @@ export default async function handler(req, res) {
       const messageText =
         typeof message?.text === "string" ? message.text.trim() : "";
 
-      /*
-       * We only process:
-       *
-       * /start TOKEN
-       */
       const match = messageText.match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
 
       if (!match?.[1]) {
@@ -165,7 +245,7 @@ export default async function handler(req, res) {
       const supabase = getServiceClient();
 
       /*
-       * Find one-time connection token.
+       * Find one-time token.
        */
       const { data: link } = await supabase
         .from("telegram_link_token")
@@ -174,7 +254,7 @@ export default async function handler(req, res) {
         .maybeSingle();
 
       /*
-       * Expired or already-used token.
+       * Invalid / used / expired token.
        */
       if (
         !link ||
@@ -193,7 +273,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Store connected Telegram chat.
+       * Save connected Telegram chat.
        */
       const { error: connectionError } = await supabase
         .from("telegram_connection")
@@ -219,7 +299,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Make token unusable again.
+       * Mark token used.
        */
       await supabase
         .from("telegram_link_token")
@@ -241,11 +321,10 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
-     * BACKGROUND REMINDER WORKER
+     * CRON REMINDER WORKER
      * =========================================================
-     *
-     * Supabase Cron calls this every minute.
      */
+
     if (action === "process-reminders") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -263,16 +342,15 @@ export default async function handler(req, res) {
 
       const now = new Date().toISOString();
 
-      /*
-       * Recover reminders stuck in
-       * processing for more than 10 minutes.
-       */
       const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
+      /*
+       * Find due reminders.
+       */
       const { data: reminders, error: reminderQueryError } = await supabase
         .from("telegram_reminder")
         .select(
-          "id, note_id, title, reminder_at, status, locked_at, attempts, recurrence",
+          "id, note_id, title, reminder_at, status, locked_at, attempts, recurrence, recurrence_day, recurrence_days",
         )
         .lte("reminder_at", now)
         .or(
@@ -290,9 +368,12 @@ export default async function handler(req, res) {
       let sent = 0;
       let failed = 0;
 
+      /*
+       * Process reminders.
+       */
       for (const reminder of reminders || []) {
         /*
-         * Claim this reminder.
+         * Claim reminder.
          */
         const { data: claimed, error: claimError } = await supabase
           .from("telegram_reminder")
@@ -313,7 +394,7 @@ export default async function handler(req, res) {
           .maybeSingle();
 
         /*
-         * Another worker already claimed it.
+         * Another worker got it.
          */
         if (claimError || !claimed) {
           continue;
@@ -321,7 +402,7 @@ export default async function handler(req, res) {
 
         try {
           /*
-           * Get connected Telegram chat.
+           * Get Telegram connection.
            */
           const { data: connection } = await supabase
             .from("telegram_connection")
@@ -345,7 +426,7 @@ export default async function handler(req, res) {
           const recurrence = reminder.recurrence || "none";
 
           /*
-           * One-time reminder.
+           * ONE-TIME REMINDER
            */
           if (recurrence === "none") {
             await supabase
@@ -362,15 +443,22 @@ export default async function handler(req, res) {
               .eq("id", reminder.id);
           } else {
             /*
-             * Calculate next occurrence.
+             * RECURRING REMINDER
+             *
+             * Use selected weekdays for
+             * weekly reminders.
              */
-            let nextAt = nextRecurringDate(reminder.reminder_at, recurrence);
+            let nextAt = nextRecurringDate(
+              reminder.reminder_at,
+              recurrence,
+              reminder.recurrence_day,
+              reminder.recurrence_days,
+            );
 
             /*
-             * If the scheduler was offline for
-             * multiple occurrences, skip missed
-             * occurrences and move to the next
-             * future occurrence.
+             * If multiple occurrences were
+             * missed while the scheduler was
+             * offline, skip the missed ones.
              */
             let guard = 0;
 
@@ -379,15 +467,18 @@ export default async function handler(req, res) {
               new Date(nextAt).getTime() <= Date.now() &&
               guard < 370
             ) {
-              nextAt = nextRecurringDate(nextAt, recurrence);
+              nextAt = nextRecurringDate(
+                nextAt,
+                recurrence,
+                reminder.recurrence_day,
+                reminder.recurrence_days,
+              );
 
               guard += 1;
             }
 
             if (!nextAt) {
-              throw new Error(
-                "Could not calculate the next recurring reminder time.",
-              );
+              throw new Error("Could not calculate next recurring reminder.");
             }
 
             await supabase
@@ -401,9 +492,9 @@ export default async function handler(req, res) {
 
                 locked_at: null,
 
-                last_error: null,
-
                 attempts: 0,
+
+                last_error: null,
               })
               .eq("id", reminder.id);
           }
@@ -411,7 +502,7 @@ export default async function handler(req, res) {
           sent += 1;
         } catch (sendError) {
           /*
-           * Retry on the next scheduler run.
+           * Retry next run.
            */
           await supabase
             .from("telegram_reminder")
@@ -493,7 +584,7 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
-     * CONNECT TELEGRAM
+     * START TELEGRAM CONNECTION
      * =========================================================
      */
 
@@ -509,7 +600,7 @@ export default async function handler(req, res) {
       const botUsername = env("TELEGRAM_BOT_USERNAME");
 
       /*
-       * Remove expired tokens.
+       * Remove expired link tokens.
        */
       await supabase
         .from("telegram_link_token")
@@ -559,7 +650,8 @@ export default async function handler(req, res) {
       await supabase.from("telegram_connection").delete().eq("id", "main");
 
       /*
-       * Remove Telegram scheduled reminders.
+       * Remove Telegram reminders
+       * when Telegram is disconnected.
        */
       await supabase.from("telegram_reminder").delete().neq("id", "");
 
@@ -603,6 +695,15 @@ export default async function handler(req, res) {
           ? body.recurrence
           : "none";
 
+      const recurrenceDay =
+        body.recurrenceDay === null ||
+        body.recurrenceDay === undefined ||
+        body.recurrenceDay === ""
+          ? null
+          : Number(body.recurrenceDay);
+
+      const recurrenceDays = normalizeDays(body.recurrenceDays);
+
       if (!noteId || !title || !reminderAt) {
         return json(res, 400, {
           error: "Note reminder data is incomplete",
@@ -624,7 +725,32 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Make sure Telegram is connected.
+       * Weekly reminders require at least
+       * one selected weekday.
+       */
+      if (recurrence === "weekly" && recurrenceDays.length === 0) {
+        return json(res, 400, {
+          error: "Choose at least one weekday for the weekly reminder",
+        });
+      }
+
+      /*
+       * Monthly reminders require
+       * a valid day 1–31.
+       */
+      if (
+        recurrence === "monthly" &&
+        (!Number.isInteger(recurrenceDay) ||
+          recurrenceDay < 1 ||
+          recurrenceDay > 31)
+      ) {
+        return json(res, 400, {
+          error: "Choose a day from 1 to 31 for the monthly reminder",
+        });
+      }
+
+      /*
+       * Confirm Telegram is connected.
        */
       const { data: connection } = await supabase
         .from("telegram_connection")
@@ -639,8 +765,9 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Update the existing reminder if
-       * this note already has one.
+       * Upsert existing reminder.
+       * This prevents duplicate rows
+       * when a note is edited.
        */
       const { data: reminder, error } = await supabase
         .from("telegram_reminder")
@@ -656,6 +783,10 @@ export default async function handler(req, res) {
 
             recurrence,
 
+            recurrence_day: recurrence === "monthly" ? recurrenceDay : null,
+
+            recurrence_days: recurrence === "weekly" ? recurrenceDays : [],
+
             status: "pending",
 
             sent_at: null,
@@ -670,7 +801,9 @@ export default async function handler(req, res) {
             onConflict: "id",
           },
         )
-        .select("id, note_id, title, reminder_at, recurrence, status")
+        .select(
+          "id, note_id, title, reminder_at, recurrence, recurrence_day, recurrence_days, status",
+        )
         .single();
 
       if (error) {

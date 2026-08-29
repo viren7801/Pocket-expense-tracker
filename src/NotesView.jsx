@@ -454,6 +454,28 @@ function recurrenceLabel(recurrence, recurrenceDay) {
   return "Does not repeat";
 }
 
+function normalizeRecurrenceDays(days) {
+  if (!Array.isArray(days)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      days
+        .map(Number)
+        .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6),
+    ),
+  ).sort((a, b) => a - b);
+}
+
+function weekdayList(days) {
+  const normalized = normalizeRecurrenceDays(days);
+
+  return normalized.length
+    ? normalized.map((day) => RECURRENCE_WEEKDAYS[day]).join(", ")
+    : "";
+}
+
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -512,6 +534,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [formRecurrence, setFormRecurrence] = useState("none");
   const [formRecurrenceDay, setFormRecurrenceDay] = useState("");
+  const [formRecurrenceDays, setFormRecurrenceDays] = useState([]);
 
   const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
 
@@ -1114,13 +1137,20 @@ export default function NotesView({ vault, onVaultChange }) {
             reminderAt: localReminderToISO(formReminder),
             recurrence: formReminder ? formRecurrence : "none",
             recurrenceDay:
-              formReminder &&
-              (formRecurrence === "weekly" || formRecurrence === "monthly")
+              formReminder && formRecurrence === "monthly"
                 ? Number(
                     formRecurrenceDay ||
-                      defaultRecurrenceDay(formReminder, formRecurrence),
+                      defaultRecurrenceDay(formReminder, "monthly"),
                   )
                 : null,
+            recurrenceDays:
+              formReminder && formRecurrence === "weekly"
+                ? normalizeRecurrenceDays(
+                    formRecurrenceDays.length
+                      ? formRecurrenceDays
+                      : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
+                  )
+                : [],
             notifyTelegram: Boolean(formReminder && formNotifyTelegram),
             updatedAt,
           }
@@ -1359,6 +1389,7 @@ export default function NotesView({ vault, onVaultChange }) {
             reminderAt: localReminderToISO(note.reminderAt) || note.reminderAt,
             recurrence: note.recurrence || "none",
             recurrenceDay: note.recurrenceDay ?? null,
+            recurrenceDays: normalizeRecurrenceDays(note.recurrenceDays),
           }),
         });
 
@@ -1443,11 +1474,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
     if (
       formRecurrence === "weekly" &&
-      (!Number.isInteger(Number(recurrenceDay)) ||
-        Number(recurrenceDay) < 0 ||
-        Number(recurrenceDay) > 6)
+      normalizeRecurrenceDays(
+        formRecurrenceDays.length
+          ? formRecurrenceDays
+          : [Number(recurrenceDay)],
+      ).length === 0
     ) {
-      setError("Choose a weekday for the weekly reminder.");
+      setError("Choose at least one weekday for the weekly reminder.");
       return;
     }
 
@@ -1462,9 +1495,16 @@ export default function NotesView({ vault, onVaultChange }) {
     }
 
     const finalRecurrenceDay =
-      formRecurrence === "weekly" || formRecurrence === "monthly"
-        ? Number(recurrenceDay)
-        : null;
+      formRecurrence === "monthly" ? Number(recurrenceDay) : null;
+
+    const finalRecurrenceDays =
+      formRecurrence === "weekly"
+        ? normalizeRecurrenceDays(
+            formRecurrenceDays.length
+              ? formRecurrenceDays
+              : [Number(recurrenceDay)],
+          )
+        : [];
 
     const now = new Date().toISOString();
 
@@ -1530,6 +1570,7 @@ export default function NotesView({ vault, onVaultChange }) {
     setFormReminder("");
     setFormRecurrence("none");
     setFormRecurrenceDay("");
+    setFormRecurrenceDays([]);
     setFormNotifyTelegram(false);
     setTagInput("");
     setEditorStatus("Saved");
@@ -1592,6 +1633,8 @@ export default function NotesView({ vault, onVaultChange }) {
       note.recurrenceDay ??
         defaultRecurrenceDay(note.reminderAt, note.recurrence || "none"),
     );
+
+    setFormRecurrenceDays(normalizeRecurrenceDays(note.recurrenceDays));
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
 
@@ -3452,6 +3495,7 @@ export default function NotesView({ vault, onVaultChange }) {
                     setFormReminder("");
                     setFormRecurrence("none");
                     setFormRecurrenceDay("");
+                    setFormRecurrenceDays([]);
                   }}
                 >
                   Clear
@@ -3484,7 +3528,7 @@ export default function NotesView({ vault, onVaultChange }) {
               >
                 <option value="none">Does not repeat</option>
                 <option value="daily">Every day</option>
-                <option value="weekly">Every week</option>
+                <option value="weekly">Weekly</option>
                 <option value="monthly">Every month</option>
               </select>
             </div>
@@ -3496,23 +3540,72 @@ export default function NotesView({ vault, onVaultChange }) {
             )}
 
             {formReminder && formRecurrence === "weekly" && (
-              <div style={styles.recurrenceExtra}>
-                <span style={styles.recurrenceExtraLabel}>Repeat on</span>
+              <div style={styles.recurrenceExtraBlock}>
+                <div style={styles.recurrenceExtraLabel}>Remind me on</div>
 
-                <select
-                  value={
-                    formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, "weekly")
-                  }
-                  onChange={(e) => setFormRecurrenceDay(e.target.value)}
-                  style={styles.recurrenceSmallSelect}
-                >
-                  {RECURRENCE_WEEKDAYS.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
+                <div style={styles.weekdayPicker}>
+                  {RECURRENCE_WEEKDAYS.map((day, index) => {
+                    const selectedDays = normalizeRecurrenceDays(
+                      formRecurrenceDays.length
+                        ? formRecurrenceDays
+                        : [
+                            Number(
+                              defaultRecurrenceDay(formReminder, "weekly"),
+                            ),
+                          ],
+                    );
+
+                    const selected = selectedDays.includes(index);
+
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        title={day}
+                        style={{
+                          ...styles.weekdayChip,
+                          ...(selected ? styles.weekdayChipActive : {}),
+                        }}
+                        onClick={() =>
+                          setFormRecurrenceDays((current) => {
+                            const base = normalizeRecurrenceDays(
+                              current.length
+                                ? current
+                                : [
+                                    Number(
+                                      defaultRecurrenceDay(
+                                        formReminder,
+                                        "weekly",
+                                      ),
+                                    ),
+                                  ],
+                            );
+
+                            const next = new Set(base);
+
+                            if (next.has(index)) {
+                              next.delete(index);
+                            } else {
+                              next.add(index);
+                            }
+
+                            return Array.from(next).sort((a, b) => a - b);
+                          })
+                        }
+                      >
+                        {day.slice(0, 3)}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={styles.recurrenceHint}>
+                  {weekdayList(
+                    formRecurrenceDays.length
+                      ? formRecurrenceDays
+                      : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
+                  ) || "Choose at least one day"}
+                </div>
               </div>
             )}
 
@@ -4387,6 +4480,37 @@ const styles = {
     color: "#D9D7D0",
     fontSize: 11,
     cursor: "pointer",
+  },
+
+  recurrenceExtraBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginTop: 7,
+  },
+
+  weekdayPicker: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  weekdayChip: {
+    minWidth: 38,
+    padding: "7px 8px",
+    border: "1px solid #2C3038",
+    borderRadius: 7,
+    background: "#181B20",
+    color: "#858C96",
+    fontSize: 10,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+
+  weekdayChipActive: {
+    border: "1px solid #3AA850",
+    background: "#1C3421",
+    color: "#63E278",
   },
 
   recurrenceExtra: {
