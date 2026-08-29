@@ -649,57 +649,19 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   async function showReminderNotification(note) {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || note.notifyTelegram) {
       return;
     }
 
-    if (notifiedReminderIdsRef.current.has(note.id)) {
+    if (
+      !("Notification" in window) ||
+      Notification.permission !== "granted" ||
+      notifiedReminderIdsRef.current.has(note.id)
+    ) {
       return;
     }
 
     notifiedReminderIdsRef.current.add(note.id);
-
-    /*
-     * A Telegram-selected reminder is NEVER
-     * also sent as a browser notification.
-     *
-     * The bot token must stay on the server.
-     */
-    if (note.notifyTelegram) {
-      try {
-        const response = await fetch("/api/telegram/send-reminder", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            noteId: note.id,
-            title: note.title,
-            reminderAt: note.reminderAt,
-          }),
-        });
-
-        if (!response.ok) {
-          /*
-           * The reminder was selected for Telegram,
-           * so do not silently fall back to browser
-           * notifications. The selected channel is respected.
-           */
-          console.error("Telegram reminder failed", await response.text());
-        }
-      } catch (error) {
-        console.error("Telegram reminder request failed", error);
-      }
-
-      return;
-    }
-
-    /*
-     * No Telegram selection = browser notification.
-     */
-    if (!("Notification" in window) || Notification.permission !== "granted") {
-      return;
-    }
 
     try {
       const notification = new Notification("Pocket Notes", {
@@ -715,7 +677,7 @@ export default function NotesView({ vault, onVaultChange }) {
         notification.close();
       };
     } catch {
-      // Browser notification unavailable.
+      // Browser notifications may be unavailable.
     }
   }
 
@@ -1031,6 +993,11 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       setNotes(nextNotes);
+
+      const savedNote = nextNotes.find((note) => note.id === editing.id);
+
+      await syncTelegramReminder(savedNote);
+
       setEditorStatus("Saved");
     } catch {
       setEditorStatus("Save failed");
@@ -1124,6 +1091,48 @@ export default function NotesView({ vault, onVaultChange }) {
     await persistFolderChange(folders, nextNotes);
   }
 
+  async function syncTelegramReminder(note) {
+    if (!note?.id) {
+      return;
+    }
+
+    try {
+      if (note.notifyTelegram && note.reminderAt) {
+        const response = await fetch("/api/telegram?action=schedule-reminder", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            noteId: note.id,
+            title: note.title,
+            reminderAt: note.reminderAt,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "Could not schedule Telegram reminder.",
+          );
+        }
+      } else {
+        await fetch("/api/telegram?action=cancel-reminder", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            noteId: note.id,
+          }),
+        });
+      }
+    } catch (e) {
+      setError(e.message || "Could not sync Telegram reminder.");
+    }
+  }
+
   async function saveNote() {
     if (!form.title.trim()) {
       setError("A note title is required.");
@@ -1193,6 +1202,12 @@ export default function NotesView({ vault, onVaultChange }) {
 
     await persistNotes(next);
 
+    const savedNote = next.find(
+      (note) => note.id === (editing?.id || next[0]?.id),
+    );
+
+    await syncTelegramReminder(savedNote);
+
     setEditorStatus("Saved");
   }
 
@@ -1254,6 +1269,20 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   async function deleteNote(id) {
+    try {
+      await fetch("/api/telegram?action=cancel-reminder", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          noteId: id,
+        }),
+      });
+    } catch {
+      // Deleting the note can still proceed.
+    }
+
     const next = notes.filter((note) => note.id !== id);
 
     setSelectedId(next[0]?.id || null);
@@ -2953,9 +2982,11 @@ export default function NotesView({ vault, onVaultChange }) {
             </label>
 
             <div style={styles.reminderHint}>
-              {notificationsEnabled
-                ? "Browser notifications are enabled on this device."
-                : "Enable notifications to receive reminders while Pocket is open."}
+              {formNotifyTelegram
+                ? "Telegram reminders are delivered by the server, even when Pocket is closed."
+                : notificationsEnabled
+                  ? "Browser notifications are enabled on this device."
+                  : "Enable notifications to receive reminders while Pocket is open."}
             </div>
 
             <div style={styles.editorHeader}>
