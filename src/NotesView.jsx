@@ -440,6 +440,12 @@ export default function NotesView({ vault, onVaultChange }) {
   );
 
   React.useEffect(() => {
+    if (phase === "unlocked") {
+      checkTelegramConnection();
+    }
+  }, [phase]);
+
+  React.useEffect(() => {
     if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
       return undefined;
     }
@@ -958,9 +964,7 @@ export default function NotesView({ vault, onVaultChange }) {
             content: nextContent,
             tags: [...formTags],
             reminderAt: formReminder || null,
-            notifyTelegram: Boolean(
-              formReminder && formNotifyTelegram && telegramConnected,
-            ),
+            notifyTelegram: Boolean(formReminder && formNotifyTelegram),
             updatedAt,
           }
         : note,
@@ -1134,6 +1138,8 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   async function saveNote() {
+    setError("");
+
     if (!form.title.trim()) {
       setError("A note title is required.");
       return;
@@ -1144,14 +1150,29 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    if (formNotifyTelegram && !telegramConnected) {
-      setError(
-        "Connect Telegram before saving a reminder with Telegram notifications.",
-      );
-      return;
+    /*
+     * Always refresh the real server-side Telegram
+     * connection before deciding whether this note
+     * should use Telegram delivery.
+     */
+    let telegramIsReady = telegramConnected;
+
+    if (formNotifyTelegram) {
+      telegramIsReady = await checkTelegramConnection();
+
+      if (!telegramIsReady) {
+        setError(
+          "Telegram is not connected. Open Connect Telegram and complete the connection first.",
+        );
+        return;
+      }
     }
 
     const now = new Date().toISOString();
+
+    const telegramReminderEnabled = Boolean(
+      formReminder && formNotifyTelegram && telegramIsReady,
+    );
 
     const next = editing
       ? notes.map((note) =>
@@ -1162,9 +1183,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 content: form.content,
                 tags: [...formTags],
                 reminderAt: formReminder || null,
-                notifyTelegram: Boolean(
-                  formReminder && formNotifyTelegram && telegramConnected,
-                ),
+                notifyTelegram: telegramReminderEnabled,
                 updatedAt: now,
               }
             : note,
@@ -1176,9 +1195,7 @@ export default function NotesView({ vault, onVaultChange }) {
             content: form.content,
             tags: [...formTags],
             reminderAt: formReminder || null,
-            notifyTelegram: Boolean(
-              formReminder && formNotifyTelegram && telegramConnected,
-            ),
+            notifyTelegram: telegramReminderEnabled,
             pinned: false,
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
@@ -1190,7 +1207,24 @@ export default function NotesView({ vault, onVaultChange }) {
           ...notes,
         ];
 
-    setSelectedId(editing?.id || next[0]?.id || null);
+    const savedNoteId = editing?.id || next[0]?.id || null;
+
+    setSelectedId(savedNoteId);
+
+    /*
+     * Persist first. Keep the editor state available
+     * until the server scheduling request completes.
+     */
+    const saved = await persistNotes(next);
+
+    /*
+     * persistNotes currently reports errors through
+     * state but does not return a boolean. Only schedule
+     * after the local encrypted save has been attempted.
+     */
+    const savedNote = next.find((note) => note.id === savedNoteId);
+
+    await syncTelegramReminder(savedNote);
 
     setShowForm(false);
     setEditing(null);
@@ -1200,14 +1234,10 @@ export default function NotesView({ vault, onVaultChange }) {
       content: "",
     });
 
-    await persistNotes(next);
-
-    const savedNote = next.find(
-      (note) => note.id === (editing?.id || next[0]?.id),
-    );
-
-    await syncTelegramReminder(savedNote);
-
+    setFormTags([]);
+    setFormReminder("");
+    setFormNotifyTelegram(false);
+    setTagInput("");
     setEditorStatus("Saved");
   }
 
@@ -2975,7 +3005,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   {formNotifyTelegram
                     ? telegramConnected
                       ? "This reminder will be sent only to Telegram."
-                      : "Telegram is not connected yet. Connect it before saving this reminder."
+                      : "Telegram is selected. Connect Telegram before saving."
                     : "Leave unchecked to use browser notifications."}
                 </span>
               </span>
