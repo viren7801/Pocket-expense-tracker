@@ -569,7 +569,10 @@ export default function PasswordsView({ vault, onVaultChange }) {
 
   async function passkeyRecoveryAuthentication({ setupSalt, wrappers = [] }) {
     const payload = setupSalt
-      ? { mode: "setup", prfSalt: setupSalt }
+      ? {
+          mode: "setup",
+          prfSalt: setupSalt,
+        }
       : {
           mode: "reset",
           wrappers: wrappers.map((item) => ({
@@ -582,33 +585,93 @@ export default function PasswordsView({ vault, onVaultChange }) {
       "/api/auth/pair?action=vault-recovery-options",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(payload),
       },
     );
 
     const options = await optionsRes.json();
+
     if (!optionsRes.ok) {
       throw new Error(options.error || "Could not start passkey recovery");
     }
 
-    const authResp = await startAuthentication(options);
+    /*
+     * SimpleWebAuthn server sends the PRF inputs
+     * as base64url strings so they can travel through JSON.
+     *
+     * WebAuthn itself requires BufferSource values.
+     *
+     * Convert:
+     *
+     *   extensions.prf.evalByCredential[id].first
+     *
+     * from base64url -> Uint8Array.
+     */
+    const browserOptions = {
+      ...options,
+
+      extensions: {
+        ...(options.extensions || {}),
+        prf: {
+          ...(options.extensions?.prf || {}),
+          evalByCredential: Object.fromEntries(
+            Object.entries(options.extensions?.prf?.evalByCredential || {}).map(
+              ([credentialId, values]) => ({
+                credentialId,
+                values: {
+                  ...values,
+
+                  ...(values?.first
+                    ? {
+                        first: base64UrlToBytes(values.first),
+                      }
+                    : {}),
+
+                  ...(values?.second
+                    ? {
+                        second: base64UrlToBytes(values.second),
+                      }
+                    : {}),
+                },
+              }),
+            ),
+          ),
+        },
+      },
+    };
+
+    /*
+     * Use the current SimpleWebAuthn API shape:
+     * startAuthentication({ optionsJSON })
+     */
+    const authResp = await startAuthentication({
+      optionsJSON: browserOptions,
+    });
 
     const verifyRes = await fetch(
       "/api/auth/pair?action=vault-recovery-verify",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response: authResp }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          response: authResp,
+        }),
       },
     );
 
     const verifyData = await verifyRes.json();
+
     if (!verifyRes.ok || !verifyData.verified) {
       throw new Error(verifyData.error || "Passkey verification failed");
     }
 
     const prfOutputB64 = authResp?.clientExtensionResults?.prf?.results?.first;
+
     if (!prfOutputB64) {
       throw new Error(
         "This passkey or browser does not support WebAuthn PRF. Use another supported passkey.",
@@ -617,6 +680,7 @@ export default function PasswordsView({ vault, onVaultChange }) {
 
     return {
       credentialId: verifyData.credentialId,
+
       prfOutput: base64UrlToBytes(prfOutputB64),
     };
   }
