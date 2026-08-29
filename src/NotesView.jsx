@@ -122,6 +122,43 @@ function dateTimeLocalToISOString(value) {
   return date.toISOString();
 }
 
+function nextRecurringDate(dateValue, recurrence) {
+  if (!dateValue || recurrence === "none") {
+    return null;
+  }
+
+  const date = new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  if (recurrence === "daily") {
+    date.setDate(date.getDate() + 1);
+    return date.toISOString();
+  }
+
+  if (recurrence === "weekly") {
+    date.setDate(date.getDate() + 7);
+    return date.toISOString();
+  }
+
+  if (recurrence === "monthly") {
+    const originalDay = date.getDate();
+    date.setDate(1);
+    date.setMonth(date.getMonth() + 1);
+    const lastDay = new Date(
+      date.getFullYear(),
+      date.getMonth() + 1,
+      0,
+    ).getDate();
+    date.setDate(Math.min(originalDay, lastDay));
+    return date.toISOString();
+  }
+
+  return null;
+}
+
 async function deriveVaultKey(password, salt) {
   const material = await crypto.subtle.importKey(
     "raw",
@@ -363,6 +400,8 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const notificationTimerRef = useRef(null);
 
+  const browserReminderNextAtRef = useRef(new Map());
+
   const notifiedReminderIdsRef = useRef(new Set());
 
   const [folders, setFolders] = useState(() => [
@@ -389,6 +428,8 @@ export default function NotesView({ vault, onVaultChange }) {
   const [formTags, setFormTags] = useState([]);
 
   const [formReminder, setFormReminder] = useState("");
+
+  const [formRecurrence, setFormRecurrence] = useState("none");
 
   const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
 
@@ -452,6 +493,47 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
   );
+
+  /* Telegram status is persisted on the server, so restore it after refresh/unlock. */
+  React.useEffect(() => {
+    if (phase !== "unlocked") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let retryTimer = null;
+    let attempts = 0;
+
+    const refresh = async () => {
+      if (cancelled) return;
+
+      const connected = await checkTelegramConnection();
+
+      if (!connected && !cancelled && attempts < 3) {
+        attempts += 1;
+        retryTimer = window.setTimeout(refresh, 1200);
+      }
+    };
+
+    refresh();
+
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") {
+        attempts = 0;
+        refresh();
+      }
+    };
+
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
+  }, [phase]);
 
   React.useEffect(() => {
     if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
@@ -589,56 +671,6 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
-  /*
-   * Telegram connection is stored on the server, so the UI must
-   * restore its status after a page refresh. Retry briefly because
-   * the Pocket authentication/session can still be initializing
-   * immediately after the vault is unlocked.
-   */
-  React.useEffect(() => {
-    if (phase !== "unlocked") {
-      return undefined;
-    }
-
-    let cancelled = false;
-    let retryTimer = null;
-    let attempt = 0;
-
-    const refreshTelegramStatus = async () => {
-      if (cancelled) {
-        return;
-      }
-
-      const connected = await checkTelegramConnection();
-
-      if (!connected && !cancelled && attempt < 3) {
-        attempt += 1;
-        retryTimer = window.setTimeout(refreshTelegramStatus, 1200);
-      }
-    };
-
-    refreshTelegramStatus();
-
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === "visible") {
-        attempt = 0;
-        refreshTelegramStatus();
-      }
-    };
-
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) {
-        window.clearTimeout(retryTimer);
-      }
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
-    };
-  }, [phase]);
-
   async function connectTelegram() {
     setError("");
 
@@ -717,15 +749,9 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    if (
-      !("Notification" in window) ||
-      Notification.permission !== "granted" ||
-      notifiedReminderIdsRef.current.has(note.id)
-    ) {
+    if (!("Notification" in window) || Notification.permission !== "granted") {
       return;
     }
-
-    notifiedReminderIdsRef.current.add(note.id);
 
     try {
       const notification = new Notification("Pocket Notes", {
@@ -760,12 +786,44 @@ export default function NotesView({ vault, onVaultChange }) {
       notes.forEach((note) => {
         if (!note.reminderAt) return;
 
-        const reminderTime = new Date(note.reminderAt).getTime();
+        /* Telegram reminders are processed server-side. */
+        if (note.notifyTelegram) return;
 
-        if (!Number.isNaN(reminderTime) && reminderTime <= now) {
-          showReminderNotification(note);
+        let nextAt = browserReminderNextAtRef.current.get(note.id);
+
+        if (!nextAt) {
+          nextAt = note.reminderAt;
+          browserReminderNextAtRef.current.set(note.id, nextAt);
         }
+
+        const reminderTime = new Date(nextAt).getTime();
+
+        if (Number.isNaN(reminderTime) || reminderTime > now) {
+          return;
+        }
+
+        showReminderNotification(note);
+
+        if (note.recurrence && note.recurrence !== "none") {
+          const nextOccurrence = nextRecurringDate(nextAt, note.recurrence);
+
+          if (nextOccurrence) {
+            browserReminderNextAtRef.current.set(note.id, nextOccurrence);
+            return;
+          }
+        }
+
+        browserReminderNextAtRef.current.delete(note.id);
       });
+
+      /* Remove entries for deleted notes. */
+      const noteIds = new Set(notes.map((note) => note.id));
+
+      for (const id of browserReminderNextAtRef.current.keys()) {
+        if (!noteIds.has(id)) {
+          browserReminderNextAtRef.current.delete(id);
+        }
+      }
     };
 
     checkReminders();
@@ -1022,7 +1080,10 @@ export default function NotesView({ vault, onVaultChange }) {
             content: nextContent,
             tags: [...formTags],
             reminderAt: normalizedReminderAt,
-            notifyTelegram: Boolean(normalizedReminderAt && formNotifyTelegram),
+            recurrence: normalizedReminderAt ? formRecurrence : "none",
+            notifyTelegram: Boolean(
+              normalizedReminderAt && formNotifyTelegram && telegramConnected,
+            ),
             updatedAt,
           }
         : note,
@@ -1055,10 +1116,6 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       setNotes(nextNotes);
-
-      const savedNote = nextNotes.find((note) => note.id === editing.id);
-
-      await syncTelegramReminder(savedNote);
 
       setEditorStatus("Saved");
     } catch {
@@ -1168,8 +1225,8 @@ export default function NotesView({ vault, onVaultChange }) {
           body: JSON.stringify({
             noteId: note.id,
             title: note.title,
-            reminderAt:
-              dateTimeLocalToISOString(note.reminderAt) || note.reminderAt,
+            reminderAt: note.reminderAt,
+            recurrence: note.recurrence || "none",
           }),
         });
 
@@ -1242,6 +1299,8 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
+    const recurrence = normalizedReminderAt ? formRecurrence : "none";
+
     const now = new Date().toISOString();
 
     const telegramReminderEnabled = Boolean(
@@ -1257,6 +1316,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 content: form.content,
                 tags: [...formTags],
                 reminderAt: normalizedReminderAt,
+                recurrence,
                 notifyTelegram: telegramReminderEnabled,
                 updatedAt: now,
               }
@@ -1269,6 +1329,7 @@ export default function NotesView({ vault, onVaultChange }) {
             content: form.content,
             tags: [...formTags],
             reminderAt: normalizedReminderAt,
+            recurrence,
             notifyTelegram: telegramReminderEnabled,
             pinned: false,
             folderId:
@@ -1290,7 +1351,6 @@ export default function NotesView({ vault, onVaultChange }) {
     await syncTelegramReminder(savedNote);
 
     setSelectedId(savedNoteId);
-
     setShowForm(false);
     setEditing(null);
 
@@ -1301,6 +1361,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setFormTags([]);
     setFormReminder("");
+    setFormRecurrence("none");
     setFormNotifyTelegram(false);
     setTagInput("");
     setEditorStatus("Saved");
@@ -1337,6 +1398,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setFormTags([]);
     setFormReminder("");
+    setFormRecurrence("none");
     setTagInput("");
     setEditorStatus("New note");
     setShowForm(true);
@@ -1364,16 +1426,16 @@ export default function NotesView({ vault, onVaultChange }) {
 
             const pad = (value) => String(value).padStart(2, "0");
 
-            return (
-              `${date.getFullYear()}-` +
-              `${pad(date.getMonth() + 1)}-` +
-              `${pad(date.getDate())}T` +
-              `${pad(date.getHours())}:` +
-              `${pad(date.getMinutes())}`
-            );
+            return `${date.getFullYear()}-${pad(
+              date.getMonth() + 1,
+            )}-${pad(date.getDate())}T${pad(
+              date.getHours(),
+            )}:${pad(date.getMinutes())}`;
           })()
         : "",
     );
+
+    setFormRecurrence(note.reminderAt ? note.recurrence || "none" : "none");
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
 
@@ -2527,6 +2589,17 @@ export default function NotesView({ vault, onVaultChange }) {
                     {selected.reminderAt && selected.notifyTelegram && (
                       <span style={styles.telegramBadge}>Telegram</span>
                     )}
+                    {selected.reminderAt &&
+                      selected.recurrence &&
+                      selected.recurrence !== "none" && (
+                        <span style={styles.recurrenceBadge}>
+                          {selected.recurrence === "daily"
+                            ? "Daily"
+                            : selected.recurrence === "weekly"
+                              ? "Weekly"
+                              : "Monthly"}
+                        </span>
+                      )}
                   </div>
                 </div>
 
@@ -2985,6 +3058,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 });
                 setFormTags([]);
                 setFormReminder("");
+                setFormRecurrence("none");
                 setFormNotifyTelegram(false);
                 setTagInput("");
                 setError("");
@@ -3072,6 +3146,20 @@ export default function NotesView({ vault, onVaultChange }) {
               )}
             </div>
 
+            <label style={styles.label}>Repeat</label>
+
+            <select
+              value={formRecurrence}
+              onChange={(e) => setFormRecurrence(e.target.value)}
+              disabled={!formReminder}
+              style={styles.input}
+            >
+              <option value="none">Does not repeat</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every week</option>
+              <option value="monthly">Every month</option>
+            </select>
+
             <label style={styles.telegramOption}>
               <input
                 type="checkbox"
@@ -3100,8 +3188,6 @@ export default function NotesView({ vault, onVaultChange }) {
                 : notificationsEnabled
                   ? "Browser notifications are enabled on this device."
                   : "Enable notifications to receive reminders while Pocket is open."}
-              Reminder time uses your device timezone; Telegram scheduling is
-              stored in UTC.
             </div>
 
             <div style={styles.editorHeader}>
@@ -3942,6 +4028,19 @@ const styles = {
     color: "#4FE36B",
     fontSize: 9,
     fontWeight: 700,
+  },
+
+  recurrenceBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "2px 6px",
+    border: "1px solid #303641",
+    borderRadius: 999,
+    color: "#8E96A3",
+    fontSize: 8,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
   },
 
   telegramConnectedCard: {

@@ -40,6 +40,44 @@ function cronAuthorized(req) {
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
 }
 
+/*
+ * Calculate the next occurrence of a recurring reminder.
+ */
+function nextRecurringDate(dateValue, recurrence) {
+  const date = new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  if (recurrence === "daily") {
+    date.setUTCDate(date.getUTCDate() + 1);
+  } else if (recurrence === "weekly") {
+    date.setUTCDate(date.getUTCDate() + 7);
+  } else if (recurrence === "monthly") {
+    const originalDay = date.getUTCDate();
+
+    /*
+     * Move to the first day of the
+     * next month so dates like Jan 31
+     * don't overflow into March.
+     */
+    date.setUTCDate(1);
+
+    date.setUTCMonth(date.getUTCMonth() + 1);
+
+    const lastDay = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+
+    date.setUTCDate(Math.min(originalDay, lastDay));
+  } else {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
 async function telegramRequest(method, payload) {
   const token = env("TELEGRAM_BOT_TOKEN");
 
@@ -83,10 +121,8 @@ export default async function handler(req, res) {
      * =========================================================
      * TELEGRAM WEBHOOK
      * =========================================================
-     *
-     * Telegram calls this endpoint when the user
-     * presses /start on the Pocket bot.
      */
+
     if (action === "webhook") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -111,6 +147,11 @@ export default async function handler(req, res) {
       const messageText =
         typeof message?.text === "string" ? message.text.trim() : "";
 
+      /*
+       * We only process:
+       *
+       * /start TOKEN
+       */
       const match = messageText.match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
 
       if (!match?.[1]) {
@@ -124,7 +165,7 @@ export default async function handler(req, res) {
       const supabase = getServiceClient();
 
       /*
-       * Find the one-time connection token.
+       * Find one-time connection token.
        */
       const { data: link } = await supabase
         .from("telegram_link_token")
@@ -133,8 +174,7 @@ export default async function handler(req, res) {
         .maybeSingle();
 
       /*
-       * Token missing, already used,
-       * or expired.
+       * Expired or already-used token.
        */
       if (
         !link ||
@@ -143,6 +183,7 @@ export default async function handler(req, res) {
       ) {
         await telegramRequest("sendMessage", {
           chat_id: message.chat.id,
+
           text: "This Pocket connection link has expired. Start the Telegram connection again from Pocket.",
         });
 
@@ -152,7 +193,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Store the Telegram chat.
+       * Store connected Telegram chat.
        */
       const { error: connectionError } = await supabase
         .from("telegram_connection")
@@ -178,7 +219,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * One-time token cannot be reused.
+       * Make token unusable again.
        */
       await supabase
         .from("telegram_link_token")
@@ -200,7 +241,7 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
-     * BACKGROUND TELEGRAM REMINDER WORKER
+     * BACKGROUND REMINDER WORKER
      * =========================================================
      *
      * Supabase Cron calls this every minute.
@@ -212,10 +253,6 @@ export default async function handler(req, res) {
         });
       }
 
-      /*
-       * Only the scheduler should be allowed
-       * to call this endpoint.
-       */
       if (!cronAuthorized(req)) {
         return json(res, 401, {
           error: "Invalid cron secret",
@@ -227,18 +264,16 @@ export default async function handler(req, res) {
       const now = new Date().toISOString();
 
       /*
-       * If a worker crashed while processing
-       * a reminder, allow another worker to
-       * recover it after 10 minutes.
+       * Recover reminders stuck in
+       * processing for more than 10 minutes.
        */
       const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
-      /*
-       * Find reminders that are due.
-       */
       const { data: reminders, error: reminderQueryError } = await supabase
         .from("telegram_reminder")
-        .select("id, note_id, title, reminder_at, status, locked_at, attempts")
+        .select(
+          "id, note_id, title, reminder_at, status, locked_at, attempts, recurrence",
+        )
         .lte("reminder_at", now)
         .or(
           `status.eq.pending,and(status.eq.processing,locked_at.lt.${cutoff})`,
@@ -255,13 +290,9 @@ export default async function handler(req, res) {
       let sent = 0;
       let failed = 0;
 
-      /*
-       * Process reminders one by one.
-       */
       for (const reminder of reminders || []) {
         /*
-         * Claim the reminder so two workers
-         * don't send it at the same time.
+         * Claim this reminder.
          */
         const { data: claimed, error: claimError } = await supabase
           .from("telegram_reminder")
@@ -281,13 +312,16 @@ export default async function handler(req, res) {
           .select("id")
           .maybeSingle();
 
+        /*
+         * Another worker already claimed it.
+         */
         if (claimError || !claimed) {
           continue;
         }
 
         try {
           /*
-           * Find connected Telegram chat.
+           * Get connected Telegram chat.
            */
           const { data: connection } = await supabase
             .from("telegram_connection")
@@ -300,7 +334,7 @@ export default async function handler(req, res) {
           }
 
           /*
-           * Send the reminder.
+           * Send Telegram message.
            */
           await telegramRequest("sendMessage", {
             chat_id: connection.chat_id,
@@ -308,27 +342,76 @@ export default async function handler(req, res) {
             text: `🔔 Pocket Notes reminder\n\n${reminder.title}`,
           });
 
+          const recurrence = reminder.recurrence || "none";
+
           /*
-           * Mark it as sent.
+           * One-time reminder.
            */
-          await supabase
-            .from("telegram_reminder")
-            .update({
-              status: "sent",
+          if (recurrence === "none") {
+            await supabase
+              .from("telegram_reminder")
+              .update({
+                status: "sent",
 
-              sent_at: new Date().toISOString(),
+                sent_at: new Date().toISOString(),
 
-              locked_at: null,
+                locked_at: null,
 
-              last_error: null,
-            })
-            .eq("id", reminder.id);
+                last_error: null,
+              })
+              .eq("id", reminder.id);
+          } else {
+            /*
+             * Calculate next occurrence.
+             */
+            let nextAt = nextRecurringDate(reminder.reminder_at, recurrence);
+
+            /*
+             * If the scheduler was offline for
+             * multiple occurrences, skip missed
+             * occurrences and move to the next
+             * future occurrence.
+             */
+            let guard = 0;
+
+            while (
+              nextAt &&
+              new Date(nextAt).getTime() <= Date.now() &&
+              guard < 370
+            ) {
+              nextAt = nextRecurringDate(nextAt, recurrence);
+
+              guard += 1;
+            }
+
+            if (!nextAt) {
+              throw new Error(
+                "Could not calculate the next recurring reminder time.",
+              );
+            }
+
+            await supabase
+              .from("telegram_reminder")
+              .update({
+                status: "pending",
+
+                reminder_at: nextAt,
+
+                sent_at: new Date().toISOString(),
+
+                locked_at: null,
+
+                last_error: null,
+
+                attempts: 0,
+              })
+              .eq("id", reminder.id);
+          }
 
           sent += 1;
         } catch (sendError) {
           /*
-           * Put it back into pending state so
-           * the next scheduler run can retry it.
+           * Retry on the next scheduler run.
            */
           await supabase
             .from("telegram_reminder")
@@ -358,7 +441,7 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
-     * POCKET BROWSER AUTH
+     * BROWSER AUTH
      * =========================================================
      */
 
@@ -383,6 +466,7 @@ export default async function handler(req, res) {
      * TELEGRAM STATUS
      * =========================================================
      */
+
     if (action === "status") {
       if (req.method !== "GET") {
         return json(res, 405, {
@@ -409,9 +493,10 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
-     * START TELEGRAM CONNECTION
+     * CONNECT TELEGRAM
      * =========================================================
      */
+
     if (action === "connect") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -419,30 +504,24 @@ export default async function handler(req, res) {
         });
       }
 
-      /*
-       * Configure Telegram webhook.
-       */
       await configureWebhook();
 
       const botUsername = env("TELEGRAM_BOT_USERNAME");
 
       /*
-       * Delete old expired tokens.
+       * Remove expired tokens.
        */
       await supabase
         .from("telegram_link_token")
         .delete()
         .lt("expires_at", new Date().toISOString());
 
-      /*
-       * Cryptographically random token.
-       */
       const token = crypto.randomBytes(32).toString("base64url");
 
       const expiresAt = new Date(Date.now() + LINK_TTL_MS).toISOString();
 
       /*
-       * Store only the token hash.
+       * Store only token hash.
        */
       const { error } = await supabase.from("telegram_link_token").insert({
         token_hash: hash(token),
@@ -454,9 +533,6 @@ export default async function handler(req, res) {
         throw error;
       }
 
-      /*
-       * Telegram deep link.
-       */
       const url = `https://t.me/${botUsername}?start=${encodeURIComponent(
         token,
       )}`;
@@ -472,6 +548,7 @@ export default async function handler(req, res) {
      * DISCONNECT TELEGRAM
      * =========================================================
      */
+
     if (action === "disconnect") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -482,8 +559,7 @@ export default async function handler(req, res) {
       await supabase.from("telegram_connection").delete().eq("id", "main");
 
       /*
-       * Remove all scheduled Telegram
-       * reminders when Telegram is disconnected.
+       * Remove Telegram scheduled reminders.
        */
       await supabase.from("telegram_reminder").delete().neq("id", "");
 
@@ -497,6 +573,7 @@ export default async function handler(req, res) {
      * SCHEDULE TELEGRAM REMINDER
      * =========================================================
      */
+
     if (action === "schedule-reminder") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -512,6 +589,19 @@ export default async function handler(req, res) {
 
       const reminderAt =
         typeof body.reminderAt === "string" ? body.reminderAt : "";
+
+      const allowedRecurrences = new Set([
+        "none",
+        "daily",
+        "weekly",
+        "monthly",
+      ]);
+
+      const recurrence =
+        typeof body.recurrence === "string" &&
+        allowedRecurrences.has(body.recurrence)
+          ? body.recurrence
+          : "none";
 
       if (!noteId || !title || !reminderAt) {
         return json(res, 400, {
@@ -534,7 +624,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Confirm Telegram is connected.
+       * Make sure Telegram is connected.
        */
       const { data: connection } = await supabase
         .from("telegram_connection")
@@ -549,9 +639,8 @@ export default async function handler(req, res) {
       }
 
       /*
-       * Upsert means editing the reminder
-       * updates the existing schedule instead
-       * of creating duplicates.
+       * Update the existing reminder if
+       * this note already has one.
        */
       const { data: reminder, error } = await supabase
         .from("telegram_reminder")
@@ -564,6 +653,8 @@ export default async function handler(req, res) {
             title,
 
             reminder_at: reminderDate.toISOString(),
+
+            recurrence,
 
             status: "pending",
 
@@ -579,7 +670,7 @@ export default async function handler(req, res) {
             onConflict: "id",
           },
         )
-        .select("id, note_id, title, reminder_at, status")
+        .select("id, note_id, title, reminder_at, recurrence, status")
         .single();
 
       if (error) {
@@ -588,6 +679,7 @@ export default async function handler(req, res) {
 
       return json(res, 200, {
         scheduled: true,
+
         reminder,
       });
     }
@@ -597,6 +689,7 @@ export default async function handler(req, res) {
      * CANCEL TELEGRAM REMINDER
      * =========================================================
      */
+
     if (action === "cancel-reminder") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -632,9 +725,8 @@ export default async function handler(req, res) {
      * =========================================================
      * MANUAL SEND REMINDER
      * =========================================================
-     *
-     * Kept for compatibility/testing.
      */
+
     if (action === "send-reminder") {
       if (req.method !== "POST") {
         return json(res, 405, {
@@ -682,6 +774,7 @@ export default async function handler(req, res) {
      * UNKNOWN ACTION
      * =========================================================
      */
+
     return json(res, 404, {
       error: "Unknown Telegram action",
     });
