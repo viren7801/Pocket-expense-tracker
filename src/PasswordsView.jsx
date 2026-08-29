@@ -291,6 +291,7 @@ export default function PasswordsView({ vault, onVaultChange }) {
   const [error, setError] = useState("");
   const [copiedId, setCopiedId] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [forgotPasswordMode, setForgotPasswordMode] = useState(false);
   const [currentVaultPassword, setCurrentVaultPassword] = useState("");
   const [newVaultPassword, setNewVaultPassword] = useState("");
   const [confirmNewVaultPassword, setConfirmNewVaultPassword] = useState("");
@@ -765,6 +766,8 @@ export default function PasswordsView({ vault, onVaultChange }) {
       setEntries(decrypted);
       setPhase("unlocked");
       setRecoveryMode(null);
+      setShowChangePassword(false);
+      setForgotPasswordMode(false);
       setRecoveryNewPassword("");
       setRecoveryConfirmPassword("");
       setPassword("");
@@ -933,6 +936,138 @@ export default function PasswordsView({ vault, onVaultChange }) {
           >
             {busy ? "Unlocking…" : "Unlock vault"}
           </button>
+
+          {showChangePassword && forgotPasswordMode && (
+            <div style={styles.overlay}>
+              <div style={styles.formModal}>
+                <button
+                  type="button"
+                  style={styles.modalClose}
+                  onClick={() => {
+                    setShowChangePassword(false);
+                    setForgotPasswordMode(false);
+                    setRecoveryMode(null);
+                    setRecoveryNewPassword("");
+                    setRecoveryConfirmPassword("");
+                    recoveredDataKeyRef.current = null;
+                    setError("");
+                  }}
+                >
+                  <X size={17} />
+                </button>
+
+                <div style={styles.iconLargeSmall}>
+                  <Fingerprint size={22} />
+                </div>
+
+                <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
+
+                <h2 style={styles.formTitle}>
+                  {recoveryMode === "reset"
+                    ? "Reset vault password"
+                    : "Verify your passkey"}
+                </h2>
+
+                <p style={styles.copy}>
+                  {recoveryMode === "reset"
+                    ? "Your passkey verified your identity. Choose a new password for your existing vault."
+                    : "Confirm your identity with Touch ID, Face ID, or your Pocket passkey."}
+                </p>
+
+                {recoveryMode === "reset" ? (
+                  <>
+                    <label style={styles.label}>New vault password</label>
+
+                    <input
+                      type="password"
+                      value={recoveryNewPassword}
+                      onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                      placeholder="At least 12 characters"
+                      style={styles.input}
+                      autoFocus
+                    />
+
+                    <label style={styles.label}>Confirm new password</label>
+
+                    <input
+                      type="password"
+                      value={recoveryConfirmPassword}
+                      onChange={(e) =>
+                        setRecoveryConfirmPassword(e.target.value)
+                      }
+                      placeholder="Enter the new password again"
+                      style={styles.input}
+                    />
+
+                    <div style={styles.notice}>
+                      <ShieldCheck size={16} />
+                      <span>
+                        Your old vault password is not required for recovery.
+                      </span>
+                    </div>
+
+                    {error && <div style={styles.error}>{error}</div>}
+
+                    <button
+                      type="button"
+                      style={styles.primaryButton}
+                      disabled={recoveryBusy}
+                      onClick={finishForgotPasswordRecovery}
+                    >
+                      {recoveryBusy
+                        ? "Resetting password…"
+                        : "Set new vault password"}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={styles.recoveryWaitingCard}>
+                      <div style={styles.recoveryWaitingIcon}>
+                        <Fingerprint size={20} />
+                      </div>
+
+                      <div>
+                        <div style={styles.recoveryWaitingTitle}>
+                          Waiting for passkey
+                        </div>
+
+                        <div style={styles.recoveryWaitingCopy}>
+                          Approve with Touch ID, Face ID, or your passkey.
+                        </div>
+                      </div>
+                    </div>
+
+                    {error && <div style={styles.error}>{error}</div>}
+
+                    <button
+                      type="button"
+                      style={styles.primaryButton}
+                      disabled={recoveryBusy}
+                      onClick={beginForgotPasswordRecovery}
+                    >
+                      {recoveryBusy ? "Verifying passkey…" : "Use passkey"}
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  style={styles.linkButton}
+                  onClick={() => {
+                    setShowChangePassword(false);
+                    setForgotPasswordMode(false);
+                    setRecoveryMode(null);
+                    setRecoveryNewPassword("");
+                    setRecoveryConfirmPassword("");
+                    recoveredDataKeyRef.current = null;
+                    setError("");
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -962,6 +1097,7 @@ export default function PasswordsView({ vault, onVaultChange }) {
             style={styles.secondaryButton}
             onClick={() => {
               setShowChangePassword(true);
+              setForgotPasswordMode(false);
               setError("");
             }}
           >
@@ -1654,6 +1790,42 @@ const styles = {
     fontSize: 11,
     cursor: "pointer",
     marginBottom: 14,
+  },
+
+  recoveryWaitingCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: 12,
+    marginBottom: 14,
+    borderRadius: 9,
+    background: "#15181D",
+    border: "1px solid #2A2E37",
+  },
+
+  recoveryWaitingIcon: {
+    width: 34,
+    height: 34,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 9,
+    background: "#20251F",
+    color: "#4FE36B",
+  },
+
+  recoveryWaitingTitle: {
+    color: "#E3E4DF",
+    fontSize: 11,
+    fontWeight: 600,
+  },
+
+  recoveryWaitingCopy: {
+    marginTop: 3,
+    color: "#727883",
+    fontSize: 10,
+    lineHeight: 1.4,
   },
 
   primaryButton: {
