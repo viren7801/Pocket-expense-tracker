@@ -30,6 +30,8 @@ import {
   FolderPlus,
   CalendarDays,
   SlidersHorizontal,
+  Pause,
+  Play,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -106,57 +108,6 @@ function makeId() {
   }
 
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function dateTimeLocalToISOString(value) {
-  if (typeof value !== "string" || !value.trim()) {
-    return null;
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toISOString();
-}
-
-function nextRecurringDate(dateValue, recurrence) {
-  if (!dateValue || recurrence === "none") {
-    return null;
-  }
-
-  const date = new Date(dateValue);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  if (recurrence === "daily") {
-    date.setDate(date.getDate() + 1);
-    return date.toISOString();
-  }
-
-  if (recurrence === "weekly") {
-    date.setDate(date.getDate() + 7);
-    return date.toISOString();
-  }
-
-  if (recurrence === "monthly") {
-    const originalDay = date.getDate();
-    date.setDate(1);
-    date.setMonth(date.getMonth() + 1);
-    const lastDay = new Date(
-      date.getFullYear(),
-      date.getMonth() + 1,
-      0,
-    ).getDate();
-    date.setDate(Math.min(originalDay, lastDay));
-    return date.toISOString();
-  }
-
-  return null;
 }
 
 async function deriveVaultKey(password, salt) {
@@ -373,6 +324,43 @@ async function unwrapDataKeyWithPrf(passkeyWrap, prfOutput) {
   return decryptBytes(key, passkeyWrap);
 }
 
+function getNextReminderOccurrence(value, recurrence) {
+  if (!value || !recurrence || recurrence === "none") {
+    return value || null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  if (recurrence === "daily") {
+    date.setUTCDate(date.getUTCDate() + 1);
+  } else if (recurrence === "weekly") {
+    date.setUTCDate(date.getUTCDate() + 7);
+  } else if (recurrence === "monthly") {
+    const day = date.getUTCDate();
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() + 1);
+
+    const lastDay = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+
+    date.setUTCDate(Math.min(day, lastDay));
+  }
+
+  return date.toISOString();
+}
+
+function reminderRecurrenceLabel(note) {
+  return note?.recurrence === "daily"
+    ? "Daily"
+    : note?.recurrence === "weekly"
+      ? "Weekly"
+      : note?.recurrence === "monthly"
+        ? "Monthly"
+        : "Once";
+}
+
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -392,6 +380,8 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
 
+  const [showReminderCenter, setShowReminderCenter] = useState(false);
+
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     typeof window !== "undefined" &&
       "Notification" in window &&
@@ -399,8 +389,6 @@ export default function NotesView({ vault, onVaultChange }) {
   );
 
   const notificationTimerRef = useRef(null);
-
-  const browserReminderNextAtRef = useRef(new Map());
 
   const notifiedReminderIdsRef = useRef(new Set());
 
@@ -428,8 +416,6 @@ export default function NotesView({ vault, onVaultChange }) {
   const [formTags, setFormTags] = useState([]);
 
   const [formReminder, setFormReminder] = useState("");
-
-  const [formRecurrence, setFormRecurrence] = useState("none");
 
   const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
 
@@ -494,47 +480,6 @@ export default function NotesView({ vault, onVaultChange }) {
     vault?.version === 2 && vault?.passkeyWraps?.length,
   );
 
-  /* Telegram status is persisted on the server, so restore it after refresh/unlock. */
-  React.useEffect(() => {
-    if (phase !== "unlocked") {
-      return undefined;
-    }
-
-    let cancelled = false;
-    let retryTimer = null;
-    let attempts = 0;
-
-    const refresh = async () => {
-      if (cancelled) return;
-
-      const connected = await checkTelegramConnection();
-
-      if (!connected && !cancelled && attempts < 3) {
-        attempts += 1;
-        retryTimer = window.setTimeout(refresh, 1200);
-      }
-    };
-
-    refresh();
-
-    const refreshOnReturn = () => {
-      if (document.visibilityState === "visible") {
-        attempts = 0;
-        refresh();
-      }
-    };
-
-    window.addEventListener("focus", refreshOnReturn);
-    document.addEventListener("visibilitychange", refreshOnReturn);
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) window.clearTimeout(retryTimer);
-      window.removeEventListener("focus", refreshOnReturn);
-      document.removeEventListener("visibilitychange", refreshOnReturn);
-    };
-  }, [phase]);
-
   React.useEffect(() => {
     if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
       return undefined;
@@ -560,6 +505,21 @@ export default function NotesView({ vault, onVaultChange }) {
 
     return Array.from(all).sort((a, b) => a.localeCompare(b));
   }, [notes]);
+
+  const reminderCenterItems = useMemo(
+    () =>
+      notes
+        .filter((note) => Boolean(note.reminderAt))
+        .sort(
+          (a, b) =>
+            new Date(a.reminderAt).getTime() - new Date(b.reminderAt).getTime(),
+        ),
+    [notes],
+  );
+
+  const activeReminderCount = reminderCenterItems.filter(
+    (note) => !note.reminderPaused,
+  ).length;
 
   const upcomingReminderCount = useMemo(() => {
     const now = Date.now();
@@ -749,9 +709,15 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    if (!("Notification" in window) || Notification.permission !== "granted") {
+    if (
+      !("Notification" in window) ||
+      Notification.permission !== "granted" ||
+      notifiedReminderIdsRef.current.has(note.id)
+    ) {
       return;
     }
+
+    notifiedReminderIdsRef.current.add(note.id);
 
     try {
       const notification = new Notification("Pocket Notes", {
@@ -784,46 +750,16 @@ export default function NotesView({ vault, onVaultChange }) {
       const now = Date.now();
 
       notes.forEach((note) => {
-        if (!note.reminderAt) return;
-
-        /* Telegram reminders are processed server-side. */
-        if (note.notifyTelegram) return;
-
-        let nextAt = browserReminderNextAtRef.current.get(note.id);
-
-        if (!nextAt) {
-          nextAt = note.reminderAt;
-          browserReminderNextAtRef.current.set(note.id, nextAt);
-        }
-
-        const reminderTime = new Date(nextAt).getTime();
-
-        if (Number.isNaN(reminderTime) || reminderTime > now) {
+        if (!note.reminderAt || note.reminderPaused) {
           return;
         }
 
-        showReminderNotification(note);
+        const reminderTime = new Date(note.reminderAt).getTime();
 
-        if (note.recurrence && note.recurrence !== "none") {
-          const nextOccurrence = nextRecurringDate(nextAt, note.recurrence);
-
-          if (nextOccurrence) {
-            browserReminderNextAtRef.current.set(note.id, nextOccurrence);
-            return;
-          }
+        if (!Number.isNaN(reminderTime) && reminderTime <= now) {
+          showReminderNotification(note);
         }
-
-        browserReminderNextAtRef.current.delete(note.id);
       });
-
-      /* Remove entries for deleted notes. */
-      const noteIds = new Set(notes.map((note) => note.id));
-
-      for (const id of browserReminderNextAtRef.current.keys()) {
-        if (!noteIds.has(id)) {
-          browserReminderNextAtRef.current.delete(id);
-        }
-      }
     };
 
     checkReminders();
@@ -1079,10 +1015,9 @@ export default function NotesView({ vault, onVaultChange }) {
             title: form.title.trim() || note.title,
             content: nextContent,
             tags: [...formTags],
-            reminderAt: normalizedReminderAt,
-            recurrence: normalizedReminderAt ? formRecurrence : "none",
+            reminderAt: formReminder || null,
             notifyTelegram: Boolean(
-              normalizedReminderAt && formNotifyTelegram && telegramConnected,
+              formReminder && formNotifyTelegram && telegramConnected,
             ),
             updatedAt,
           }
@@ -1116,6 +1051,10 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       setNotes(nextNotes);
+
+      const savedNote = nextNotes.find((note) => note.id === editing.id);
+
+      await syncTelegramReminder(savedNote);
 
       setEditorStatus("Saved");
     } catch {
@@ -1210,13 +1149,106 @@ export default function NotesView({ vault, onVaultChange }) {
     await persistFolderChange(folders, nextNotes);
   }
 
+  async function pauseReminder(note) {
+    const nextNotes = notes.map((current) =>
+      current.id === note.id
+        ? {
+            ...current,
+            reminderPaused: true,
+            updatedAt: new Date().toISOString(),
+          }
+        : current,
+    );
+
+    await persistNotes(nextNotes);
+    await fetch("/api/telegram?action=cancel-reminder", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        noteId: note.id,
+      }),
+    });
+
+    setError("");
+  }
+
+  async function resumeReminder(note) {
+    let reminderAt = note.reminderAt;
+
+    if (note.recurrence && note.recurrence !== "none") {
+      let guard = 0;
+
+      while (
+        reminderAt &&
+        new Date(reminderAt).getTime() <= Date.now() &&
+        guard < 370
+      ) {
+        reminderAt = getNextReminderOccurrence(reminderAt, note.recurrence);
+        guard += 1;
+      }
+    }
+
+    const nextNote = {
+      ...note,
+      reminderAt,
+      reminderPaused: false,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextNotes = notes.map((current) =>
+      current.id === note.id ? nextNote : current,
+    );
+
+    await persistNotes(nextNotes);
+    await syncTelegramReminder(nextNote);
+    setError("");
+  }
+
+  async function cancelReminder(note) {
+    const nextNotes = notes.map((current) =>
+      current.id === note.id
+        ? {
+            ...current,
+            reminderAt: null,
+            reminderPaused: false,
+            notifyTelegram: false,
+            recurrence: "none",
+            updatedAt: new Date().toISOString(),
+          }
+        : current,
+    );
+
+    await persistNotes(nextNotes);
+
+    await fetch("/api/telegram?action=cancel-reminder", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        noteId: note.id,
+      }),
+    });
+
+    setError("");
+  }
+
+  function openReminderFromCenter(note) {
+    setSelectedId(note.id);
+    setSelectedFolder("all");
+    setSelectedTag("all");
+    setShowReminderCenter(false);
+  }
+
   async function syncTelegramReminder(note) {
     if (!note?.id) {
       return;
     }
 
     try {
-      if (note.notifyTelegram && note.reminderAt) {
+      if (note.notifyTelegram && note.reminderAt && !note.reminderPaused) {
         const response = await fetch("/api/telegram?action=schedule-reminder", {
           method: "POST",
           headers: {
@@ -1226,7 +1258,6 @@ export default function NotesView({ vault, onVaultChange }) {
             noteId: note.id,
             title: note.title,
             reminderAt: note.reminderAt,
-            recurrence: note.recurrence || "none",
           }),
         });
 
@@ -1254,8 +1285,6 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   async function saveNote() {
-    setError("");
-
     if (!form.title.trim()) {
       setError("A note title is required.");
       return;
@@ -1266,46 +1295,14 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    let telegramIsReady = telegramConnected;
-
-    if (formNotifyTelegram) {
-      telegramIsReady = await checkTelegramConnection();
-
-      if (!telegramIsReady) {
-        setError(
-          "Telegram is not connected. Open Connect Telegram and complete the connection first.",
-        );
-        return;
-      }
-    }
-
-    const normalizedReminderAt = dateTimeLocalToISOString(formReminder);
-
-    if (formReminder && !normalizedReminderAt) {
-      setError("The reminder date/time is invalid.");
+    if (formNotifyTelegram && !telegramConnected) {
+      setError(
+        "Connect Telegram before saving a reminder with Telegram notifications.",
+      );
       return;
     }
-
-    if (formNotifyTelegram && !normalizedReminderAt) {
-      setError("Choose a reminder date and time for the Telegram reminder.");
-      return;
-    }
-
-    if (
-      normalizedReminderAt &&
-      new Date(normalizedReminderAt).getTime() <= Date.now()
-    ) {
-      setError("Choose a future reminder time.");
-      return;
-    }
-
-    const recurrence = normalizedReminderAt ? formRecurrence : "none";
 
     const now = new Date().toISOString();
-
-    const telegramReminderEnabled = Boolean(
-      normalizedReminderAt && formNotifyTelegram && telegramIsReady,
-    );
 
     const next = editing
       ? notes.map((note) =>
@@ -1315,9 +1312,10 @@ export default function NotesView({ vault, onVaultChange }) {
                 title: form.title.trim(),
                 content: form.content,
                 tags: [...formTags],
-                reminderAt: normalizedReminderAt,
-                recurrence,
-                notifyTelegram: telegramReminderEnabled,
+                reminderAt: formReminder || null,
+                notifyTelegram: Boolean(
+                  formReminder && formNotifyTelegram && telegramConnected,
+                ),
                 updatedAt: now,
               }
             : note,
@@ -1328,9 +1326,10 @@ export default function NotesView({ vault, onVaultChange }) {
             title: form.title.trim(),
             content: form.content,
             tags: [...formTags],
-            reminderAt: normalizedReminderAt,
-            recurrence,
-            notifyTelegram: telegramReminderEnabled,
+            reminderAt: formReminder || null,
+            notifyTelegram: Boolean(
+              formReminder && formNotifyTelegram && telegramConnected,
+            ),
             pinned: false,
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
@@ -1342,15 +1341,8 @@ export default function NotesView({ vault, onVaultChange }) {
           ...notes,
         ];
 
-    const savedNoteId = editing?.id || next[0]?.id || null;
+    setSelectedId(editing?.id || next[0]?.id || null);
 
-    await persistNotes(next);
-
-    const savedNote = next.find((note) => note.id === savedNoteId);
-
-    await syncTelegramReminder(savedNote);
-
-    setSelectedId(savedNoteId);
     setShowForm(false);
     setEditing(null);
 
@@ -1359,11 +1351,14 @@ export default function NotesView({ vault, onVaultChange }) {
       content: "",
     });
 
-    setFormTags([]);
-    setFormReminder("");
-    setFormRecurrence("none");
-    setFormNotifyTelegram(false);
-    setTagInput("");
+    await persistNotes(next);
+
+    const savedNote = next.find(
+      (note) => note.id === (editing?.id || next[0]?.id),
+    );
+
+    await syncTelegramReminder(savedNote);
+
     setEditorStatus("Saved");
   }
 
@@ -1398,7 +1393,6 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setFormTags([]);
     setFormReminder("");
-    setFormRecurrence("none");
     setTagInput("");
     setEditorStatus("New note");
     setShowForm(true);
@@ -1416,26 +1410,8 @@ export default function NotesView({ vault, onVaultChange }) {
     setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
 
     setFormReminder(
-      note.reminderAt
-        ? (() => {
-            const date = new Date(note.reminderAt);
-
-            if (Number.isNaN(date.getTime())) {
-              return "";
-            }
-
-            const pad = (value) => String(value).padStart(2, "0");
-
-            return `${date.getFullYear()}-${pad(
-              date.getMonth() + 1,
-            )}-${pad(date.getDate())}T${pad(
-              date.getHours(),
-            )}:${pad(date.getMinutes())}`;
-          })()
-        : "",
+      note.reminderAt ? String(note.reminderAt).slice(0, 16) : "",
     );
-
-    setFormRecurrence(note.reminderAt ? note.recurrence || "none" : "none");
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
 
@@ -2437,6 +2413,20 @@ export default function NotesView({ vault, onVaultChange }) {
           <button
             type="button"
             style={styles.secondaryButton}
+            onClick={() => setShowReminderCenter(true)}
+          >
+            <CalendarDays size={14} />
+            Reminders
+            {activeReminderCount > 0 && (
+              <span style={styles.reminderCountPill}>
+                {activeReminderCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
             onClick={
               telegramConnected
                 ? () => setShowTelegramConnect(true)
@@ -2589,17 +2579,6 @@ export default function NotesView({ vault, onVaultChange }) {
                     {selected.reminderAt && selected.notifyTelegram && (
                       <span style={styles.telegramBadge}>Telegram</span>
                     )}
-                    {selected.reminderAt &&
-                      selected.recurrence &&
-                      selected.recurrence !== "none" && (
-                        <span style={styles.recurrenceBadge}>
-                          {selected.recurrence === "daily"
-                            ? "Daily"
-                            : selected.recurrence === "weekly"
-                              ? "Weekly"
-                              : "Monthly"}
-                        </span>
-                      )}
                   </div>
                 </div>
 
@@ -2669,6 +2648,157 @@ export default function NotesView({ vault, onVaultChange }) {
           )}
         </div>
       </div>
+
+      {showReminderCenter && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 760,
+              width: "min(760px, calc(100vw - 32px))",
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowReminderCenter(false)}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>REMINDER CENTER</div>
+
+            <h2 style={styles.formTitle}>Reminders</h2>
+
+            <p style={styles.copy}>
+              View and manage all your upcoming note reminders.
+            </p>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            {reminderCenterItems.length === 0 ? (
+              <div style={styles.reminderCenterEmpty}>
+                <CalendarDays size={28} />
+                <strong>No reminders yet</strong>
+                <span>Add a reminder from a note to see it here.</span>
+              </div>
+            ) : (
+              <div style={styles.reminderCenterList}>
+                {reminderCenterItems.map((note) => {
+                  const date = new Date(note.reminderAt);
+                  const paused = Boolean(note.reminderPaused);
+
+                  return (
+                    <div
+                      key={note.id}
+                      style={{
+                        ...styles.reminderCenterRow,
+                        ...(paused ? styles.reminderCenterRowPaused : {}),
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={styles.reminderCenterMain}
+                        onClick={() => openReminderFromCenter(note)}
+                      >
+                        <span style={styles.reminderCenterIcon}>
+                          <CalendarDays size={15} />
+                        </span>
+
+                        <span style={styles.reminderCenterContent}>
+                          <span style={styles.reminderCenterTitle}>
+                            {note.title}
+                          </span>
+
+                          <span style={styles.reminderCenterDate}>
+                            {Number.isNaN(date.getTime())
+                              ? "Invalid reminder date"
+                              : date.toLocaleString(undefined, {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                })}
+                          </span>
+
+                          <span style={styles.reminderCenterMeta}>
+                            <span style={styles.reminderCenterBadge}>
+                              {note.notifyTelegram ? "Telegram" : "Browser"}
+                            </span>
+
+                            <span style={styles.reminderCenterBadge}>
+                              {reminderRecurrenceLabel(note)}
+                            </span>
+
+                            {paused && (
+                              <span style={styles.reminderPausedBadge}>
+                                Paused
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      </button>
+
+                      <div style={styles.reminderCenterActions}>
+                        <button
+                          type="button"
+                          style={styles.reminderActionButton}
+                          onClick={() => openEdit(note)}
+                          title="Edit reminder"
+                        >
+                          <Pencil size={14} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.reminderActionButton}
+                          onClick={() =>
+                            paused ? resumeReminder(note) : pauseReminder(note)
+                          }
+                          title={paused ? "Resume reminder" : "Pause reminder"}
+                        >
+                          {paused ? <Play size={14} /> : <Pause size={14} />}
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.reminderActionButton,
+                            ...styles.reminderDeleteButton,
+                          }}
+                          onClick={() => cancelReminder(note)}
+                          title="Cancel reminder"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.secondaryFullButton}
+              onClick={() => {
+                setShowReminderCenter(false);
+                setEditing(null);
+                setForm({
+                  title: "",
+                  content: "",
+                });
+                setFormTags([]);
+                setFormReminder("");
+                setFormNotifyTelegram(false);
+                setShowForm(true);
+                setError("");
+              }}
+            >
+              <Plus size={15} />
+              New note
+            </button>
+          </div>
+        </div>
+      )}
 
       {showTelegramConnect && (
         <div style={styles.overlay}>
@@ -3058,7 +3188,6 @@ export default function NotesView({ vault, onVaultChange }) {
                 });
                 setFormTags([]);
                 setFormReminder("");
-                setFormRecurrence("none");
                 setFormNotifyTelegram(false);
                 setTagInput("");
                 setError("");
@@ -3145,20 +3274,6 @@ export default function NotesView({ vault, onVaultChange }) {
                 </button>
               )}
             </div>
-
-            <label style={styles.label}>Repeat</label>
-
-            <select
-              value={formRecurrence}
-              onChange={(e) => setFormRecurrence(e.target.value)}
-              disabled={!formReminder}
-              style={styles.input}
-            >
-              <option value="none">Does not repeat</option>
-              <option value="daily">Every day</option>
-              <option value="weekly">Every week</option>
-              <option value="monthly">Every month</option>
-            </select>
 
             <label style={styles.telegramOption}>
               <input
@@ -3837,6 +3952,150 @@ const styles = {
     color: "#B5C9BA",
   },
 
+  reminderCountPill: {
+    minWidth: 17,
+    height: 17,
+    padding: "0 5px",
+    borderRadius: 999,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#20251F",
+    color: "#8EB596",
+    fontSize: 9,
+    fontWeight: 700,
+  },
+
+  reminderCenterList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    maxHeight: "52vh",
+    overflowY: "auto",
+    margin: "12px 0 16px",
+  },
+
+  reminderCenterRow: {
+    display: "flex",
+    alignItems: "stretch",
+    gap: 10,
+    padding: 10,
+    border: "1px solid #2A2E37",
+    borderRadius: 9,
+    background: "#14161B",
+  },
+
+  reminderCenterRowPaused: {
+    opacity: 0.58,
+  },
+
+  reminderCenterMain: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    border: "none",
+    background: "transparent",
+    color: "#ECEAE3",
+    textAlign: "left",
+    cursor: "pointer",
+    padding: 0,
+  },
+
+  reminderCenterIcon: {
+    flexShrink: 0,
+    width: 32,
+    height: 32,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    background: "#18231B",
+    color: "#4FE36B",
+  },
+
+  reminderCenterContent: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  reminderCenterTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#ECEAE3",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  reminderCenterDate: {
+    fontSize: 10,
+    color: "#7F858F",
+  },
+
+  reminderCenterMeta: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 5,
+  },
+
+  reminderCenterBadge: {
+    padding: "4px 6px",
+    borderRadius: 5,
+    background: "#20242B",
+    color: "#8A919B",
+    fontSize: 9,
+  },
+
+  reminderPausedBadge: {
+    padding: "4px 6px",
+    borderRadius: 5,
+    background: "#2B2520",
+    color: "#B99876",
+    fontSize: 9,
+  },
+
+  reminderCenterActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    flexShrink: 0,
+  },
+
+  reminderActionButton: {
+    width: 30,
+    height: 30,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    background: "#181B20",
+    color: "#8D949E",
+    cursor: "pointer",
+  },
+
+  reminderDeleteButton: {
+    color: "#C37A6A",
+  },
+
+  reminderCenterEmpty: {
+    minHeight: 210,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "column",
+    gap: 9,
+    margin: "14px 0 18px",
+    border: "1px dashed #30343D",
+    borderRadius: 10,
+    color: "#69717B",
+  },
+
   reminderSummary: {
     display: "flex",
     alignItems: "center",
@@ -4028,19 +4287,6 @@ const styles = {
     color: "#4FE36B",
     fontSize: 9,
     fontWeight: 700,
-  },
-
-  recurrenceBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "2px 6px",
-    border: "1px solid #303641",
-    borderRadius: 999,
-    color: "#8E96A3",
-    fontSize: 8,
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
   },
 
   telegramConnectedCard: {
