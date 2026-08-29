@@ -1,8 +1,13 @@
 import crypto from "node:crypto";
+
 import {
   generateRegistrationOptions,
+  generateAuthenticationOptions,
   verifyRegistrationResponse,
+  verifyAuthenticationResponse,
 } from "@simplewebauthn/server";
+
+import { isoBase64URL } from "@simplewebauthn/server/helpers";
 
 import {
   getServiceClient,
@@ -61,7 +66,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * START
+     * START DEVICE PAIRING
      * ==========================================================
      */
 
@@ -101,9 +106,6 @@ export default async function handler(req, res) {
         return;
       }
 
-      /*
-       * Remove old expired pairings.
-       */
       await supabase
         .from("webauthn_pairing")
         .delete()
@@ -153,7 +155,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * REQUEST
+     * REQUEST DEVICE PAIRING
      * ==========================================================
      */
 
@@ -229,9 +231,6 @@ export default async function handler(req, res) {
         return;
       }
 
-      /*
-       * Generate the new-device secret.
-       */
       const secret = crypto.randomBytes(32).toString("base64url");
 
       const { error: updateError } = await supabase
@@ -270,7 +269,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * STATUS
+     * DEVICE PAIRING STATUS
      * ==========================================================
      */
 
@@ -306,12 +305,7 @@ export default async function handler(req, res) {
       }
 
       /*
-       * ========================================================
-       * NEW DEVICE
-       * ========================================================
-       *
-       * Secret proves this device owns the
-       * pairing information.
+       * New device status.
        */
       if (secret) {
         if (hash(secret) !== pairing.secret_hash) {
@@ -321,20 +315,6 @@ export default async function handler(req, res) {
           return;
         }
 
-        /*
-         * IMPORTANT:
-         * Always return the current status.
-         *
-         * The Fold 7 can therefore move:
-         *
-         * waiting
-         *      ↓
-         * pending_approval
-         *      ↓
-         * approved
-         *      ↓
-         * completed
-         */
         res.status(200).json({
           ok: true,
 
@@ -355,11 +335,8 @@ export default async function handler(req, res) {
       }
 
       /*
-       * ========================================================
-       * TRUSTED DEVICE
-       * ========================================================
+       * Trusted device status.
        */
-
       if (!isAuthenticated(req)) {
         res.status(401).json({
           error: "Not authenticated",
@@ -397,7 +374,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * APPROVE
+     * APPROVE DEVICE
      * ==========================================================
      */
 
@@ -474,9 +451,6 @@ export default async function handler(req, res) {
         throw updateError;
       }
 
-      /*
-       * Return the new state immediately.
-       */
       res.status(200).json({
         approved: true,
         status: "approved",
@@ -487,7 +461,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * OPTIONS
+     * PASSKEY REGISTRATION OPTIONS FOR NEW DEVICE
      * ==========================================================
      */
 
@@ -595,7 +569,7 @@ export default async function handler(req, res) {
 
     /*
      * ==========================================================
-     * COMPLETE
+     * COMPLETE DEVICE PAIRING
      * ==========================================================
      */
 
@@ -765,6 +739,310 @@ export default async function handler(req, res) {
 
       return;
     }
+
+    /*
+     * ==========================================================
+     * VAULT RECOVERY — AUTHENTICATION OPTIONS
+     * ==========================================================
+     *
+     * mode:
+     *
+     * setup
+     *   Used when first enabling passkey recovery.
+     *
+     * reset
+     *   Used when recovering an existing vault.
+     */
+
+    if (action === "vault-recovery-options") {
+      const body = await readJsonBody(req);
+
+      const mode = body.mode === "setup" ? "setup" : "reset";
+
+      let requested = [];
+
+      if (mode === "setup") {
+        if (typeof body.prfSalt !== "string" || !body.prfSalt) {
+          res.status(400).json({
+            error: "PRF salt is required",
+          });
+
+          return;
+        }
+      } else {
+        if (!Array.isArray(body.wrappers) || body.wrappers.length === 0) {
+          res.status(400).json({
+            error: "No recovery passkeys are configured",
+          });
+
+          return;
+        }
+
+        requested = body.wrappers
+          .filter(
+            (item) =>
+              item &&
+              typeof item.credentialId === "string" &&
+              typeof item.prfSalt === "string" &&
+              item.credentialId &&
+              item.prfSalt,
+          )
+          .slice(0, 20);
+      }
+
+      const { data: credentials, error: credentialsError } = await supabase
+        .from("webauthn_credential")
+        .select("id, transports")
+        .limit(20);
+
+      if (credentialsError) {
+        throw credentialsError;
+      }
+
+      const byId = new Map((credentials || []).map((item) => [item.id, item]));
+
+      /*
+       * For recovery, only use passkeys
+       * that are still registered.
+       */
+      if (mode === "reset") {
+        requested = requested.filter((item) => byId.has(item.credentialId));
+
+        if (requested.length === 0) {
+          res.status(400).json({
+            error: "None of your recovery passkeys are currently registered",
+          });
+
+          return;
+        }
+      }
+
+      const challenge = crypto.randomBytes(32).toString("base64url");
+
+      const evalByCredential = {};
+
+      if (mode === "setup") {
+        const saltBytes = Buffer.from(body.prfSalt, "base64url");
+
+        for (const credential of credentials || []) {
+          evalByCredential[credential.id] = {
+            first: isoBase64URL.fromBuffer(saltBytes),
+          };
+        }
+      } else {
+        for (const item of requested) {
+          const saltBytes = Buffer.from(item.prfSalt, "base64");
+
+          evalByCredential[item.credentialId] = {
+            first: isoBase64URL.fromBuffer(saltBytes),
+          };
+        }
+      }
+
+      const allowedIds =
+        mode === "setup"
+          ? (credentials || []).map((item) => item.id)
+          : requested.map((item) => item.credentialId);
+
+      const allowCredentials = allowedIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .map((credential) => ({
+          id: credential.id,
+
+          transports: credential.transports
+            ? credential.transports.split(",")
+            : undefined,
+        }));
+
+      const options = await generateAuthenticationOptions({
+        rpID: RP_ID,
+
+        userVerification: "required",
+
+        allowCredentials,
+
+        extensions: {
+          prf: {
+            evalByCredential,
+          },
+        },
+      });
+
+      /*
+       * Store the challenge only on the
+       * server. Never trust a client-supplied
+       * challenge.
+       */
+      const challengePayload = JSON.stringify({
+        challenge: options.challenge,
+
+        mode,
+
+        credentialIds: allowedIds,
+      });
+
+      const { error: challengeError } = await supabase
+        .from("webauthn_challenge")
+        .upsert({
+          id: "vault-recovery",
+
+          challenge: challengePayload,
+
+          updated_at: new Date().toISOString(),
+        });
+
+      if (challengeError) {
+        throw challengeError;
+      }
+
+      res.status(200).json(options);
+
+      return;
+    }
+
+    /*
+     * ==========================================================
+     * VAULT RECOVERY — VERIFY PASSKEY
+     * ==========================================================
+     */
+
+    if (action === "vault-recovery-verify") {
+      const body = await readJsonBody(req);
+
+      const response = body.response;
+
+      if (!response || typeof response.id !== "string") {
+        res.status(400).json({
+          error: "Invalid passkey response",
+        });
+
+        return;
+      }
+
+      const { data: challengeRow, error: challengeError } = await supabase
+        .from("webauthn_challenge")
+        .select("challenge")
+        .eq("id", "vault-recovery")
+        .maybeSingle();
+
+      if (challengeError) {
+        throw challengeError;
+      }
+
+      if (!challengeRow) {
+        res.status(400).json({
+          error: "No pending recovery challenge",
+        });
+
+        return;
+      }
+
+      let saved;
+
+      try {
+        saved = JSON.parse(challengeRow.challenge);
+      } catch {
+        res.status(400).json({
+          error: "Invalid recovery challenge",
+        });
+
+        return;
+      }
+
+      if (
+        !Array.isArray(saved.credentialIds) ||
+        !saved.credentialIds.includes(response.id)
+      ) {
+        res.status(403).json({
+          error: "This passkey is not authorized for vault recovery",
+        });
+
+        return;
+      }
+
+      const { data: credential, error: credentialError } = await supabase
+        .from("webauthn_credential")
+        .select("*")
+        .eq("id", response.id)
+        .maybeSingle();
+
+      if (credentialError) {
+        throw credentialError;
+      }
+
+      if (!credential) {
+        res.status(404).json({
+          error: "Passkey is no longer registered",
+        });
+
+        return;
+      }
+
+      const verification = await verifyAuthenticationResponse({
+        response,
+
+        expectedChallenge: saved.challenge,
+
+        expectedOrigin: ORIGIN,
+
+        expectedRPID: RP_ID,
+
+        requireUserVerification: true,
+
+        authenticator: {
+          credentialID: credential.id,
+
+          credentialPublicKey: Buffer.from(credential.public_key, "base64"),
+
+          counter: credential.counter,
+
+          transports: credential.transports
+            ? credential.transports.split(",")
+            : undefined,
+        },
+      });
+
+      if (!verification.verified) {
+        res.status(400).json({
+          error: "Passkey verification failed",
+        });
+
+        return;
+      }
+
+      const { error: updateError } = await supabase
+        .from("webauthn_credential")
+        .update({
+          counter: verification.authenticationInfo.newCounter,
+
+          last_used_at: new Date().toISOString(),
+        })
+        .eq("id", credential.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      await supabase
+        .from("webauthn_challenge")
+        .delete()
+        .eq("id", "vault-recovery");
+
+      res.status(200).json({
+        verified: true,
+
+        credentialId: credential.id,
+      });
+
+      return;
+    }
+
+    /*
+     * ==========================================================
+     * UNKNOWN ACTION
+     * ==========================================================
+     */
 
     res.status(400).json({
       error: "Unknown pairing action",

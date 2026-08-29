@@ -51,6 +51,7 @@ import {
   SearchCheck,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
+import PasswordsView from "./PasswordsView";
 
 const SEED_CATEGORIES = {
   income: ["Salary", "Business", "Freelance", "Investment", "Other Income"],
@@ -115,6 +116,7 @@ export default function LedgerApp() {
   const [goals, setGoals] = useState([]);
   const [recurring, setRecurring] = useState([]);
   const [categories, setCategories] = useState(SEED_CATEGORIES);
+  const [passwordVault, setPasswordVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
@@ -140,6 +142,7 @@ export default function LedgerApp() {
           setGoals(data.goals || []);
           setRecurring(data.recurring || []);
           setCategories(data.categories || SEED_CATEGORIES);
+          setPasswordVault(data.passwordVault || null);
         } else {
           setAccounts([
             {
@@ -209,13 +212,23 @@ export default function LedgerApp() {
           goals,
           recurring,
           categories,
+          passwordVault,
         });
         setSaveError(false);
       } catch (e) {
         setSaveError(true);
       }
     })();
-  }, [accounts, transactions, budgets, goals, recurring, categories, loaded]);
+  }, [
+    accounts,
+    transactions,
+    budgets,
+    goals,
+    recurring,
+    categories,
+    passwordVault,
+    loaded,
+  ]);
 
   const ensureCategory = useCallback((type, cat) => {
     setCategories((prev) => {
@@ -615,7 +628,12 @@ export default function LedgerApp() {
             onDelete={deleteGoal}
           />
         )}
-        {tab === "passwords" && <ModulePlaceholder type="passwords" />}
+        {tab === "passwords" && (
+          <PasswordsView
+            vault={passwordVault}
+            onVaultChange={setPasswordVault}
+          />
+        )}
         {tab === "notes" && <ModulePlaceholder type="notes" />}
         {tab === "recurring" && (
           <RecurringView
