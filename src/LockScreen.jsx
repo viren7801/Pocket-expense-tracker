@@ -564,7 +564,7 @@ export default function LockScreen({ children }) {
     setPairingStatus("creating");
 
     try {
-      const res = await fetch("/api/auth/pair-start", {
+      const res = await fetch("/api/auth/pair?action=start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -616,7 +616,7 @@ export default function LockScreen({ children }) {
     }
 
     try {
-      const res = await fetch("/api/auth/pair-status", {
+      const res = await fetch("/api/auth/pair?action=status", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -694,7 +694,7 @@ export default function LockScreen({ children }) {
     setPairingStatus("approving");
 
     try {
-      const res = await fetch("/api/auth/pair-approve", {
+      const res = await fetch("/api/auth/pair?action=approve", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -741,7 +741,7 @@ export default function LockScreen({ children }) {
     setPairingStatus("claiming");
 
     try {
-      const res = await fetch("/api/auth/pair-request", {
+      const res = await fetch("/api/auth/pair?action=request", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -860,7 +860,7 @@ export default function LockScreen({ children }) {
     setPairingStatus("authenticating");
 
     try {
-      const optionsRes = await fetch("/api/auth/pair-options", {
+      const optionsRes = await fetch("/api/auth/pair?action=options", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -891,7 +891,7 @@ export default function LockScreen({ children }) {
 
       setPairingStatus("verifying");
 
-      const verifyRes = await fetch("/api/auth/pair-complete", {
+      const verifyRes = await fetch("/api/auth/pair?action=complete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
