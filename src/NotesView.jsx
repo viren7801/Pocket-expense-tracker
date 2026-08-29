@@ -30,6 +30,7 @@ import {
   FolderPlus,
   CalendarDays,
   SlidersHorizontal,
+  Repeat,
   Pause,
   Play,
 } from "lucide-react";
@@ -361,95 +362,6 @@ function reminderRecurrenceLabel(note) {
         : "Once";
 }
 
-const RECURRENCE_WEEKDAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
-function localReminderToISO(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function isoToLocalDateTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const pad = (n) => String(n).padStart(2, "0");
-
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  );
-}
-
-function defaultRecurrenceDay(value, recurrence) {
-  if (!value) return "";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  if (recurrence === "weekly") {
-    return String(date.getDay());
-  }
-
-  if (recurrence === "monthly") {
-    return String(date.getDate());
-  }
-
-  return "";
-}
-
-function recurrenceLabel(recurrence, day) {
-  if (recurrence === "daily") {
-    return "Every day";
-  }
-
-  if (recurrence === "weekly") {
-    const index = Number(day);
-
-    return Number.isInteger(index) && RECURRENCE_WEEKDAYS[index]
-      ? `Every ${RECURRENCE_WEEKDAYS[index]}`
-      : "Every week";
-  }
-
-  if (recurrence === "monthly") {
-    const value = Number(day);
-
-    if (!Number.isInteger(value) || value < 1 || value > 31) {
-      return "Every month";
-    }
-
-    const suffix =
-      value % 100 >= 11 && value % 100 <= 13
-        ? "th"
-        : value % 10 === 1
-          ? "st"
-          : value % 10 === 2
-            ? "nd"
-            : value % 10 === 3
-              ? "rd"
-              : "th";
-
-    return `Every ${value}${suffix}`;
-  }
-
-  return "Does not repeat";
-}
-
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -505,9 +417,6 @@ export default function NotesView({ vault, onVaultChange }) {
   const [formTags, setFormTags] = useState([]);
 
   const [formReminder, setFormReminder] = useState("");
-
-  const [formRecurrence, setFormRecurrence] = useState("none");
-  const [formRecurrenceDay, setFormRecurrenceDay] = useState("");
 
   const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
 
@@ -571,52 +480,6 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
   );
-
-  /*
-   * Restore Telegram connection status after refresh/unlock.
-   * The actual connection remains stored on the server.
-   */
-  React.useEffect(() => {
-    if (phase !== "unlocked") {
-      return undefined;
-    }
-
-    let cancelled = false;
-    let timer = null;
-    let attempts = 0;
-
-    const refresh = async () => {
-      if (cancelled) return;
-
-      const connected = await checkTelegramConnection();
-
-      if (!connected && !cancelled && attempts < 3) {
-        attempts += 1;
-        timer = window.setTimeout(refresh, 1000);
-      }
-    };
-
-    refresh();
-
-    const onFocus = () => {
-      if (document.visibilityState === "visible") {
-        attempts = 0;
-        refresh();
-      }
-    };
-
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
-
-    return () => {
-      cancelled = true;
-      if (timer) {
-        window.clearTimeout(timer);
-      }
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, [phase]);
 
   React.useEffect(() => {
     if (!showForm || !editing?.id || editorStatus !== "Unsaved changes") {
@@ -1153,17 +1016,10 @@ export default function NotesView({ vault, onVaultChange }) {
             title: form.title.trim() || note.title,
             content: nextContent,
             tags: [...formTags],
-            reminderAt: localReminderToISO(formReminder),
-            recurrence: formReminder ? formRecurrence : "none",
-            recurrenceDay:
-              formReminder &&
-              (formRecurrence === "weekly" || formRecurrence === "monthly")
-                ? Number(
-                    formRecurrenceDay ||
-                      defaultRecurrenceDay(formReminder, formRecurrence),
-                  )
-                : null,
-            notifyTelegram: Boolean(formReminder && formNotifyTelegram),
+            reminderAt: formReminder || null,
+            notifyTelegram: Boolean(
+              formReminder && formNotifyTelegram && telegramConnected,
+            ),
             updatedAt,
           }
         : note,
@@ -1196,6 +1052,10 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       setNotes(nextNotes);
+
+      const savedNote = nextNotes.find((note) => note.id === editing.id);
+
+      await syncTelegramReminder(savedNote);
 
       setEditorStatus("Saved");
     } catch {
@@ -1398,9 +1258,7 @@ export default function NotesView({ vault, onVaultChange }) {
           body: JSON.stringify({
             noteId: note.id,
             title: note.title,
-            reminderAt: localReminderToISO(note.reminderAt) || note.reminderAt,
-            recurrence: note.recurrence || "none",
-            recurrenceDay: note.recurrenceDay ?? null,
+            reminderAt: note.reminderAt,
           }),
         });
 
@@ -1428,8 +1286,6 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   async function saveNote() {
-    setError("");
-
     if (!form.title.trim()) {
       setError("A note title is required.");
       return;
@@ -1440,99 +1296,41 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
-    let telegramIsReady = telegramConnected;
-
-    if (formNotifyTelegram) {
-      telegramIsReady = await checkTelegramConnection();
-
-      if (!telegramIsReady) {
-        setError(
-          "Telegram is not connected. Open Connect Telegram and complete the connection first.",
-        );
-        return;
-      }
-    }
-
-    const normalizedReminderAt = localReminderToISO(formReminder);
-
-    if (formReminder && !normalizedReminderAt) {
-      setError("The reminder date/time is invalid.");
+    if (formNotifyTelegram && !telegramConnected) {
+      setError(
+        "Connect Telegram before saving a reminder with Telegram notifications.",
+      );
       return;
     }
-
-    if (formNotifyTelegram && !normalizedReminderAt) {
-      setError("Choose a reminder date and time for the Telegram reminder.");
-      return;
-    }
-
-    if (
-      normalizedReminderAt &&
-      new Date(normalizedReminderAt).getTime() <= Date.now()
-    ) {
-      setError("Choose a future reminder time.");
-      return;
-    }
-
-    let recurrenceDay = formRecurrenceDay;
-
-    if (formRecurrence === "weekly" && !recurrenceDay) {
-      recurrenceDay = defaultRecurrenceDay(formReminder, "weekly");
-    }
-
-    if (formRecurrence === "monthly" && !recurrenceDay) {
-      recurrenceDay = defaultRecurrenceDay(formReminder, "monthly");
-    }
-
-    if (
-      formRecurrence === "weekly" &&
-      (!Number.isInteger(Number(recurrenceDay)) ||
-        Number(recurrenceDay) < 0 ||
-        Number(recurrenceDay) > 6)
-    ) {
-      setError("Choose a weekday for the weekly reminder.");
-      return;
-    }
-
-    if (
-      formRecurrence === "monthly" &&
-      (!Number.isInteger(Number(recurrenceDay)) ||
-        Number(recurrenceDay) < 1 ||
-        Number(recurrenceDay) > 31)
-    ) {
-      setError("Choose a day from 1 to 31 for the monthly reminder.");
-      return;
-    }
-
-    const finalRecurrenceDay =
-      formRecurrence === "weekly" || formRecurrence === "monthly"
-        ? Number(recurrenceDay)
-        : null;
 
     const now = new Date().toISOString();
 
-    const reminderEnabled = Boolean(
-      normalizedReminderAt && formNotifyTelegram && telegramIsReady,
-    );
-
-    const applyForm = (note) => ({
-      ...note,
-      title: form.title.trim(),
-      content: form.content,
-      tags: [...formTags],
-      reminderAt: normalizedReminderAt,
-      recurrence: normalizedReminderAt ? formRecurrence : "none",
-      recurrenceDay: normalizedReminderAt ? finalRecurrenceDay : null,
-      notifyTelegram: reminderEnabled,
-      reminderPaused: false,
-      updatedAt: now,
-    });
-
     const next = editing
-      ? notes.map((note) => (note.id === editing.id ? applyForm(note) : note))
+      ? notes.map((note) =>
+          note.id === editing.id
+            ? {
+                ...note,
+                title: form.title.trim(),
+                content: form.content,
+                tags: [...formTags],
+                reminderAt: formReminder || null,
+                notifyTelegram: Boolean(
+                  formReminder && formNotifyTelegram && telegramConnected,
+                ),
+                updatedAt: now,
+              }
+            : note,
+        )
       : [
-          applyForm({
+          {
             id: makeId(),
-            tags: [],
+            title: form.title.trim(),
+            content: form.content,
+            tags: [...formTags],
+            reminderAt: formReminder || null,
+            notifyTelegram: Boolean(
+              formReminder && formNotifyTelegram && telegramConnected,
+            ),
             pinned: false,
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
@@ -1540,19 +1338,12 @@ export default function NotesView({ vault, onVaultChange }) {
                 : selectedFolder,
             createdAt: now,
             updatedAt: now,
-          }),
+          },
           ...notes,
         ];
 
-    const savedNoteId = editing?.id || next[0]?.id || null;
+    setSelectedId(editing?.id || next[0]?.id || null);
 
-    await persistNotes(next);
-
-    const savedNote = next.find((note) => note.id === savedNoteId);
-
-    await syncTelegramReminder(savedNote);
-
-    setSelectedId(savedNoteId);
     setShowForm(false);
     setEditing(null);
 
@@ -1561,12 +1352,14 @@ export default function NotesView({ vault, onVaultChange }) {
       content: "",
     });
 
-    setFormTags([]);
-    setFormReminder("");
-    setFormRecurrence("none");
-    setFormRecurrenceDay("");
-    setFormNotifyTelegram(false);
-    setTagInput("");
+    await persistNotes(next);
+
+    const savedNote = next.find(
+      (note) => note.id === (editing?.id || next[0]?.id),
+    );
+
+    await syncTelegramReminder(savedNote);
+
     setEditorStatus("Saved");
   }
 
@@ -1601,8 +1394,6 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setFormTags([]);
     setFormReminder("");
-    setFormRecurrence("none");
-    setFormRecurrenceDay("");
     setTagInput("");
     setEditorStatus("New note");
     setShowForm(true);
@@ -1619,13 +1410,8 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
 
-    setFormReminder(isoToLocalDateTime(note.reminderAt));
-
-    setFormRecurrence(note.recurrence || "none");
-
-    setFormRecurrenceDay(
-      note.recurrenceDay ??
-        defaultRecurrenceDay(note.reminderAt, note.recurrence || "none"),
+    setFormReminder(
+      note.reminderAt ? String(note.reminderAt).slice(0, 16) : "",
     );
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
@@ -3483,104 +3269,12 @@ export default function NotesView({ vault, onVaultChange }) {
                 <button
                   type="button"
                   style={styles.clearReminderButton}
-                  onClick={() => {
-                    setFormReminder("");
-                    setFormRecurrence("none");
-                    setFormRecurrenceDay("");
-                  }}
+                  onClick={() => setFormReminder("")}
                 >
                   Clear
                 </button>
               )}
             </div>
-
-            <label style={styles.label}>Repeat</label>
-
-            <div style={styles.recurrenceControl}>
-              <Repeat size={14} color="#68707A" />
-
-              <select
-                value={formRecurrence}
-                disabled={!formReminder}
-                onChange={(e) => {
-                  const value = e.target.value;
-
-                  setFormRecurrence(value);
-
-                  if (value === "weekly" || value === "monthly") {
-                    setFormRecurrenceDay(
-                      defaultRecurrenceDay(formReminder, value),
-                    );
-                  } else {
-                    setFormRecurrenceDay("");
-                  }
-                }}
-                style={styles.recurrenceSelect}
-              >
-                <option value="none">Does not repeat</option>
-                <option value="daily">Every day</option>
-                <option value="weekly">Every week</option>
-                <option value="monthly">Every month</option>
-              </select>
-            </div>
-
-            {!formReminder && (
-              <div style={styles.recurrenceHint}>
-                Set a reminder time first.
-              </div>
-            )}
-
-            {formReminder && formRecurrence === "weekly" && (
-              <div style={styles.recurrenceExtra}>
-                <span style={styles.recurrenceExtraLabel}>Repeat on</span>
-
-                <select
-                  value={
-                    formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, "weekly")
-                  }
-                  onChange={(e) => setFormRecurrenceDay(e.target.value)}
-                  style={styles.recurrenceSmallSelect}
-                >
-                  {RECURRENCE_WEEKDAYS.map((day, index) => (
-                    <option key={day} value={index}>
-                      {day}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {formReminder && formRecurrence === "monthly" && (
-              <div style={styles.recurrenceExtra}>
-                <span style={styles.recurrenceExtraLabel}>Repeat on day</span>
-
-                <select
-                  value={
-                    formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, "monthly")
-                  }
-                  onChange={(e) => setFormRecurrenceDay(e.target.value)}
-                  style={styles.recurrenceSmallSelect}
-                >
-                  {Array.from({ length: 31 }, (_, index) => (
-                    <option key={index + 1} value={index + 1}>
-                      {index + 1}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {formReminder && (
-              <div style={styles.recurrenceHint}>
-                {recurrenceLabel(
-                  formRecurrence,
-                  formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, formRecurrence),
-                )}
-              </div>
-            )}
 
             <label style={styles.telegramOption}>
               <input
@@ -4401,55 +4095,6 @@ const styles = {
     border: "1px dashed #30343D",
     borderRadius: 10,
     color: "#69717B",
-  },
-
-  recurrenceControl: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    border: "1px solid #2C3038",
-    borderRadius: 8,
-    background: "#181B20",
-    padding: "9px 10px",
-  },
-
-  recurrenceSelect: {
-    flex: 1,
-    minWidth: 0,
-    border: "none",
-    outline: "none",
-    background: "transparent",
-    color: "#D9D7D0",
-    fontSize: 11,
-    cursor: "pointer",
-  },
-
-  recurrenceExtra: {
-    display: "flex",
-    alignItems: "center",
-    gap: 9,
-    marginTop: 7,
-  },
-
-  recurrenceExtraLabel: {
-    color: "#727985",
-    fontSize: 10,
-  },
-
-  recurrenceSmallSelect: {
-    border: "1px solid #2C3038",
-    borderRadius: 6,
-    background: "#181B20",
-    color: "#D9D7D0",
-    padding: "6px 8px",
-    fontSize: 10,
-    cursor: "pointer",
-  },
-
-  recurrenceHint: {
-    marginTop: 6,
-    color: "#788C7D",
-    fontSize: 10,
   },
 
   reminderSummary: {
