@@ -272,6 +272,7 @@ async function decryptEntriesWithDataKey(dataEnvelope, dataKey) {
 }
 
 export default function PasswordsView({ vault, onVaultChange }) {
+  const isDevelopment = import.meta.env.DEV;
   const [phase, setPhase] = useState(vault ? "locked" : "setup");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
