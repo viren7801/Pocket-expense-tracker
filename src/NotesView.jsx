@@ -27,13 +27,13 @@ import {
   Redo2,
   Bell,
   Folder,
-  FolderPlus,
   CalendarDays,
   SlidersHorizontal,
   Repeat,
   Pause,
   Play,
-  FileOutput,
+  Upload,
+  Download,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -519,6 +519,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importPreview, setImportPreview] = useState([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importFormat, setImportFormat] = useState("");
+  const [importDuplicateMode, setImportDuplicateMode] = useState("skip");
+  const [importSelectedIds, setImportSelectedIds] = useState([]);
+  const [importBusy, setImportBusy] = useState(false);
 
   const [showReminderCenter, setShowReminderCenter] = useState(false);
   const [showReminderHistory, setShowReminderHistory] = useState(false);
@@ -1579,6 +1586,367 @@ export default function NotesView({ vault, onVaultChange }) {
       );
     } finally {
       setReminderHistoryLoading(false);
+    }
+  }
+
+  function normalizeImportedNote(raw) {
+    const now = new Date().toISOString();
+
+    const sourceId = raw?.id != null ? String(raw.id) : null;
+
+    const title =
+      String(raw?.title ?? "Imported note").trim() || "Imported note";
+
+    const content = raw?.content == null ? "" : String(raw.content);
+
+    const tags = Array.isArray(raw?.tags)
+      ? Array.from(
+          new Set(raw.tags.map((tag) => String(tag).trim()).filter(Boolean)),
+        )
+      : [];
+
+    return {
+      id: makeId(),
+
+      sourceId,
+
+      title,
+
+      content,
+
+      tags,
+
+      pinned: Boolean(raw?.pinned),
+
+      folderId: folders.some((folder) => folder.id === raw?.folderId)
+        ? raw.folderId
+        : "personal",
+
+      reminderAt: raw?.reminderAt || null,
+
+      recurrence: raw?.recurrence || "none",
+
+      recurrenceDay: raw?.recurrenceDay ?? null,
+
+      recurrenceDays: Array.isArray(raw?.recurrenceDays)
+        ? raw.recurrenceDays
+        : [],
+
+      recurrenceInterval: raw?.recurrenceInterval ?? null,
+
+      recurrenceUnit: raw?.recurrenceUnit ?? null,
+
+      notifyTelegram: Boolean(raw?.notifyTelegram),
+
+      reminderPaused: Boolean(raw?.reminderPaused),
+
+      createdAt: raw?.createdAt || now,
+
+      updatedAt: raw?.updatedAt || now,
+    };
+  }
+
+  function parseMarkdownImport(text) {
+    const sections = text
+      .split(/\n(?=# )/g)
+      .map((section) => section.trim())
+      .filter(Boolean);
+
+    return sections.map((section) => {
+      const lines = section.split("\n");
+
+      const title = lines[0]?.replace(/^#\s*/, "").trim() || "Imported note";
+
+      const body = lines
+        .slice(1)
+        .join("\n")
+        .replace(/\n---\s*$/, "")
+        .replace(/\n*\*\*Tags:\*\*.*$/s, "")
+        .replace(/\n*\*\*Reminder:\*\*.*$/s, "")
+        .trim();
+
+      const tagsMatch = section.match(/\*\*Tags:\*\*\s*(.+)/i);
+
+      const tags = tagsMatch
+        ? tagsMatch[1]
+            .split(",")
+            .map((tag) => tag.trim().replace(/^#/, ""))
+            .filter(Boolean)
+        : [];
+
+      return {
+        title,
+        content: body,
+        tags,
+      };
+    });
+  }
+
+  function parseCsvImport(text) {
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let quoted = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+
+      if (char === '"') {
+        if (quoted && text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          quoted = !quoted;
+        }
+        continue;
+      }
+
+      if (char === "," && !quoted) {
+        row.push(cell);
+        cell = "";
+        continue;
+      }
+
+      if ((char === "\n" || char === "\r") && !quoted) {
+        if (char === "\r" && text[i + 1] === "\n") {
+          i += 1;
+        }
+
+        row.push(cell);
+        cell = "";
+
+        if (row.some((value) => value !== "")) {
+          rows.push(row);
+        }
+
+        row = [];
+        continue;
+      }
+
+      cell += char;
+    }
+
+    if (cell || row.length) {
+      row.push(cell);
+      rows.push(row);
+    }
+
+    if (rows.length < 2) {
+      return [];
+    }
+
+    const headers = rows[0].map((header) => header.trim().toLowerCase());
+
+    return rows.slice(1).map((values) => {
+      const item = {};
+
+      headers.forEach((header, index) => {
+        item[header] = values[index] ?? "";
+      });
+
+      return {
+        title: item.title || "Imported note",
+
+        content: item.content || "",
+
+        tags: item.tags
+          ? item.tags
+              .split(",")
+              .map((tag) => tag.trim())
+              .filter(Boolean)
+          : [],
+
+        reminderAt: item.reminder || null,
+
+        recurrence: item.recurrence || "none",
+
+        notifyTelegram: String(item.telegram).toLowerCase() === "yes",
+
+        pinned: String(item.pinned).toLowerCase() === "yes",
+
+        createdAt: item.created || undefined,
+
+        updatedAt: item.updated || undefined,
+      };
+    });
+  }
+
+  async function parseImportedFile(file) {
+    const extension = file.name.split(".").pop()?.toLowerCase() || "";
+
+    const text = await file.text();
+
+    let rawNotes = [];
+
+    if (extension === "json") {
+      const parsed = JSON.parse(text);
+
+      rawNotes = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.notes)
+          ? parsed.notes
+          : [];
+    } else if (extension === "md" || extension === "markdown") {
+      rawNotes = parseMarkdownImport(text);
+    } else if (extension === "csv") {
+      rawNotes = parseCsvImport(text);
+    } else {
+      throw new Error("Unsupported file. Use JSON, Markdown, or CSV.");
+    }
+
+    const normalized = rawNotes.map(normalizeImportedNote);
+
+    if (!normalized.length) {
+      throw new Error("No notes could be found in this file.");
+    }
+
+    setImportFileName(file.name);
+
+    setImportFormat(extension);
+
+    setImportPreview(normalized);
+
+    setImportSelectedIds(normalized.map((note) => note.id));
+
+    setImportDuplicateMode("skip");
+
+    setShowImportModal(true);
+    setError("");
+  }
+
+  function findDuplicate(imported, existingNotes) {
+    const importedTitle = imported.title.trim().toLowerCase();
+
+    const importedContent = imported.content.trim();
+
+    return existingNotes.find(
+      (note) =>
+        note.title?.trim().toLowerCase() === importedTitle &&
+        String(note.content || "").trim() === importedContent,
+    );
+  }
+
+  async function handleImportNotes() {
+    const selected = importPreview.filter((note) =>
+      importSelectedIds.includes(note.id),
+    );
+
+    if (!selected.length) {
+      setError("Select at least one note to import.");
+      return;
+    }
+
+    setImportBusy(true);
+    setError("");
+
+    try {
+      const additions = [];
+      let skipped = 0;
+
+      for (const note of selected) {
+        const duplicate = findDuplicate(note, notes);
+
+        if (duplicate && importDuplicateMode === "skip") {
+          skipped += 1;
+          continue;
+        }
+
+        if (duplicate && importDuplicateMode === "replace") {
+          // Replace in a second pass below.
+          continue;
+        }
+
+        additions.push(note);
+      }
+
+      let nextNotes = notes.map((existing) => {
+        if (importDuplicateMode !== "replace") {
+          return existing;
+        }
+
+        const replacement = selected.find((note) => {
+          const duplicate = findDuplicate(note, [existing]);
+
+          return Boolean(duplicate);
+        });
+
+        return replacement
+          ? {
+              ...replacement,
+              id: existing.id,
+              updatedAt: new Date().toISOString(),
+            }
+          : existing;
+      });
+
+      if (importDuplicateMode !== "replace") {
+        nextNotes = [...nextNotes, ...additions];
+      } else {
+        const replacedIds = new Set();
+
+        selected.forEach((note) => {
+          const duplicate = findDuplicate(note, notes);
+
+          if (duplicate) {
+            replacedIds.add(duplicate.id);
+          } else {
+            nextNotes.push(note);
+          }
+        });
+
+        // Keep exactly one record for replaced notes.
+        const replacementById = new Map();
+
+        selected.forEach((note) => {
+          const duplicate = findDuplicate(note, notes);
+
+          if (duplicate) {
+            replacementById.set(duplicate.id, {
+              ...note,
+              id: duplicate.id,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+
+        nextNotes = nextNotes.map(
+          (note) => replacementById.get(note.id) || note,
+        );
+      }
+
+      await persistNotes(nextNotes);
+
+      for (const imported of selected) {
+        const duplicate = findDuplicate(imported, notes);
+
+        if (duplicate && importDuplicateMode === "skip") {
+          continue;
+        }
+
+        if (imported.reminderAt && imported.notifyTelegram) {
+          try {
+            await syncTelegramReminder(imported);
+          } catch {
+            // Import should succeed even if Telegram sync fails.
+          }
+        }
+      }
+
+      setShowImportModal(false);
+      setImportPreview([]);
+      setImportSelectedIds([]);
+      setImportFileName("");
+      setImportFormat("");
+
+      setError(
+        skipped > 0
+          ? `Imported ${selected.length - skipped} note(s). Skipped ${skipped} duplicate(s).`
+          : `Imported ${selected.length} note(s).`,
+      );
+    } catch (error) {
+      setError(error.message || "Import failed.");
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -2728,7 +3096,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 }}
                 title="New folder"
               >
-                <FolderPlus size={14} />
+                <Download size={14} />
               </button>
             </div>
           </div>
@@ -3026,6 +3394,31 @@ export default function NotesView({ vault, onVaultChange }) {
             History
           </button>
 
+          <label style={styles.secondaryButton} title="Import notes">
+            <Download size={14} />
+            Import
+            <input
+              type="file"
+              accept=".json,.md,.markdown,.csv"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+
+                e.target.value = "";
+
+                if (!file) {
+                  return;
+                }
+
+                try {
+                  await parseImportedFile(file);
+                } catch (error) {
+                  setError(error.message || "Could not read import file.");
+                }
+              }}
+            />
+          </label>
+
           <div style={styles.exportWrap}>
             <button
               type="button"
@@ -3033,7 +3426,7 @@ export default function NotesView({ vault, onVaultChange }) {
               onClick={() => setShowExportMenu((value) => !value)}
               title="Export notes"
             >
-              <FileOutput size={14} />
+              <Upload size={14} />
               Export
             </button>
 
@@ -3295,6 +3688,178 @@ export default function NotesView({ vault, onVaultChange }) {
           )}
         </div>
       </div>
+
+      {showImportModal && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 820,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => {
+                setShowImportModal(false);
+                setImportPreview([]);
+                setImportSelectedIds([]);
+              }}
+              disabled={importBusy}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>IMPORT NOTES</div>
+
+            <h2 style={styles.formTitle}>Import notes</h2>
+
+            <p style={styles.copy}>
+              {importFileName || "Selected file"} · {importFormat.toUpperCase()}{" "}
+              · {importPreview.length} note
+              {importPreview.length === 1 ? "" : "s"}
+            </p>
+
+            <div style={styles.importDuplicateBox}>
+              <div style={styles.importSectionTitle}>Duplicate handling</div>
+
+              <label style={styles.importRadio}>
+                <input
+                  type="radio"
+                  name="import-duplicate-mode"
+                  checked={importDuplicateMode === "skip"}
+                  onChange={() => setImportDuplicateMode("skip")}
+                />
+                <span>
+                  <strong>Skip duplicates</strong>
+                  <span style={styles.importRadioText}>
+                    <span style={styles.importRadioDetail}>
+                      Recommended · keeps existing notes
+                    </span>
+                  </span>
+                </span>
+              </label>
+
+              <label style={styles.importRadio}>
+                <input
+                  type="radio"
+                  name="import-duplicate-mode"
+                  checked={importDuplicateMode === "keep"}
+                  onChange={() => setImportDuplicateMode("keep")}
+                />
+                <span>
+                  <strong>Keep both</strong>
+                  <span style={styles.importRadioText}>
+                    <span style={styles.importRadioDetail}>
+                      Imports everything as a new note
+                    </span>
+                  </span>
+                </span>
+              </label>
+
+              <label style={styles.importRadio}>
+                <input
+                  type="radio"
+                  name="import-duplicate-mode"
+                  checked={importDuplicateMode === "replace"}
+                  onChange={() => setImportDuplicateMode("replace")}
+                />
+                <span>
+                  <strong>Replace existing</strong>
+                  <span style={styles.importRadioText}>
+                    <span style={styles.importRadioDetail}>
+                      Match by title + content
+                    </span>
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div style={styles.importPreviewHeader}>
+              <span>Preview</span>
+
+              <button
+                type="button"
+                style={styles.linkButton}
+                onClick={() => {
+                  const all = importPreview.map((note) => note.id);
+
+                  setImportSelectedIds(
+                    importSelectedIds.length === all.length ? [] : all,
+                  );
+                }}
+              >
+                {importSelectedIds.length === importPreview.length
+                  ? "Clear all"
+                  : "Select all"}
+              </button>
+            </div>
+
+            <div style={styles.importPreviewList}>
+              {importPreview.map((note) => {
+                const checked = importSelectedIds.includes(note.id);
+
+                return (
+                  <label key={note.id} style={styles.importPreviewRow}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setImportSelectedIds((current) =>
+                          current.includes(note.id)
+                            ? current.filter((id) => id !== note.id)
+                            : [...current, note.id],
+                        );
+                      }}
+                    />
+
+                    <div style={styles.importPreviewText}>
+                      <strong>{note.title}</strong>
+
+                      <span>
+                        {String(note.content || "")
+                          .replace(/\s+/g, " ")
+                          .slice(0, 100) || "Empty note"}
+                      </span>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.linkButton}
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportPreview([]);
+                  setImportSelectedIds([]);
+                  setError("");
+                }}
+                disabled={importBusy}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={handleImportNotes}
+                disabled={importBusy || importSelectedIds.length === 0}
+              >
+                {importBusy
+                  ? "Importing…"
+                  : `Import ${importSelectedIds.length} note${
+                      importSelectedIds.length === 1 ? "" : "s"
+                    }`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showReminderHistory && (
         <div style={styles.overlay}>
@@ -5295,6 +5860,84 @@ const styles = {
 
   reminderDeleteButton: {
     color: "#C37A6A",
+  },
+
+  importDuplicateBox: {
+    marginTop: 12,
+    padding: 10,
+    border: "1px solid #2D323B",
+    borderRadius: 9,
+    background: "#181B20",
+  },
+
+  importSectionTitle: {
+    color: "#A4ABB5",
+    fontSize: 10,
+    fontWeight: 700,
+    marginBottom: 8,
+  },
+
+  importRadio: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "7px 0",
+    color: "#D9D7D0",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+
+  importRadioText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+
+  importRadioDetail: {
+    color: "#69717B",
+    fontSize: 9,
+  },
+
+  importPreviewHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 14,
+    marginBottom: 6,
+    color: "#9EA5AF",
+    fontSize: 10,
+    fontWeight: 700,
+  },
+
+  importPreviewList: {
+    maxHeight: 360,
+    overflowY: "auto",
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+  },
+
+  importPreviewRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 9,
+    padding: "9px 10px",
+    borderBottom: "1px solid #242830",
+    cursor: "pointer",
+  },
+
+  importPreviewText: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    minWidth: 0,
+  },
+
+  importFooter: {
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 14,
   },
 
   historyControls: {
