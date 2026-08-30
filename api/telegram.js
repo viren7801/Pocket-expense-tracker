@@ -221,17 +221,13 @@ async function telegramRequest(method, payload) {
 async function configureWebhook() {
   const secret = env("TELEGRAM_WEBHOOK_SECRET");
 
-  async function configureWebhook() {
-    const secret = env("TELEGRAM_WEBHOOK_SECRET");
+  await telegramRequest("setWebhook", {
+    url: `${ORIGIN}/api/telegram?action=webhook`,
 
-    await telegramRequest("setWebhook", {
-      url: `${ORIGIN}/api/telegram?action=webhook`,
+    secret_token: secret,
 
-      secret_token: secret,
-
-      allowed_updates: ["message", "callback_query"],
-    });
-  }
+    allowed_updates: ["message", "callback_query"],
+  });
 }
 
 export default async function handler(req, res) {
