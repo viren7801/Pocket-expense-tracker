@@ -26,6 +26,7 @@ import {
   Undo2,
   Redo2,
   Bell,
+  Archive,
   Folder,
   FolderPlus,
   CalendarDays,
@@ -569,6 +570,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [selectedFolder, setSelectedFolder] = useState("all");
 
   const [selectedTag, setSelectedTag] = useState("all");
+  const [showArchivedNotes, setShowArchivedNotes] = useState(false);
 
   const [sortMode, setSortMode] = useState("updated");
 
@@ -891,6 +893,12 @@ export default function NotesView({ vault, onVaultChange }) {
     const q = query.trim().toLowerCase();
 
     const result = notes.filter((note) => {
+      const inArchive = Boolean(note.archived) === showArchivedNotes;
+
+      if (!inArchive) {
+        return false;
+      }
+
       const inFolder =
         selectedFolder === "all"
           ? true
@@ -2520,6 +2528,7 @@ export default function NotesView({ vault, onVaultChange }) {
             notifyTelegram: false,
             reminderPaused: false,
             pinned: false,
+            archived: false,
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
                 ? null
@@ -2649,6 +2658,30 @@ export default function NotesView({ vault, onVaultChange }) {
     setSelectedId(next[0]?.id || null);
 
     await persistNotes(next);
+  }
+
+  async function toggleArchive(id) {
+    const note = notes.find((item) => item.id === id);
+
+    if (!note) {
+      return;
+    }
+
+    const next = notes.map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            archived: !item.archived,
+            updatedAt: new Date().toISOString(),
+          }
+        : item,
+    );
+
+    setSelectedId(!note.archived && selectedId === id ? null : selectedId);
+
+    await persistNotes(next);
+
+    setError("");
   }
 
   async function togglePin(id) {
@@ -3301,7 +3334,10 @@ export default function NotesView({ vault, onVaultChange }) {
                   ...styles.folderChip,
                   ...(selectedFolder === "all" ? styles.folderChipActive : {}),
                 }}
-                onClick={() => setSelectedFolder("all")}
+                onClick={() => {
+                  setSelectedFolder("all");
+                  setShowArchivedNotes(false);
+                }}
               >
                 <FileText size={13} />
                 All Notes
@@ -3331,7 +3367,10 @@ export default function NotesView({ vault, onVaultChange }) {
                       ? styles.folderChipActive
                       : {}),
                   }}
-                  onClick={() => setSelectedFolder(folder.id)}
+                  onClick={() => {
+                    setSelectedFolder(folder.id);
+                    setShowArchivedNotes(false);
+                  }}
                 >
                   <Folder size={13} />
                   {folder.name}
@@ -3632,6 +3671,23 @@ export default function NotesView({ vault, onVaultChange }) {
                 {activeReminderCount}
               </span>
             )}
+          </button>
+          <button
+            type="button"
+            style={{
+              ...styles.secondaryButton,
+              ...(showArchivedNotes ? styles.archiveButtonActive : {}),
+            }}
+            onClick={() => {
+              setShowArchivedNotes((value) => !value);
+              setSelectedFolder("all");
+              setSelectedTag("all");
+              setSelectedId(null);
+            }}
+            title="Show archived notes"
+          >
+            <Archive size={14} />
+            {showArchivedNotes ? "Archived" : "Archive"}
           </button>
 
           <button
@@ -3935,6 +3991,10 @@ export default function NotesView({ vault, onVaultChange }) {
                     {selected.reminderAt && selected.notifyTelegram && (
                       <span style={styles.telegramBadge}>Telegram</span>
                     )}
+
+                    {selected.archived && (
+                      <span style={styles.archivedBadge}>Archived</span>
+                    )}
                   </div>
                 </div>
 
@@ -3971,6 +4031,15 @@ export default function NotesView({ vault, onVaultChange }) {
                       </option>
                     ))}
                   </select>
+
+                  <button
+                    type="button"
+                    style={styles.iconButton}
+                    onClick={() => toggleArchive(selected.id)}
+                    title={selected.archived ? "Unarchive" : "Archive"}
+                  >
+                    {selected.archived ? "↗" : "→"}
+                  </button>
 
                   <button
                     type="button"
@@ -6619,6 +6688,14 @@ const styles = {
     fontSize: 10,
   },
 
+  archivedBadge: {
+    padding: "4px 6px",
+    borderRadius: 5,
+    background: "#2A2E33",
+    color: "#A7AFB9",
+    fontSize: 9,
+  },
+
   reminderCenterEmpty: {
     minHeight: 210,
     display: "flex",
@@ -7067,6 +7144,12 @@ const styles = {
   templateMenuItemDetail: {
     color: "#6F7782",
     fontSize: 9,
+  },
+
+  archiveButtonActive: {
+    border: "1px solid #3E6D48",
+    background: "#203225",
+    color: "#72C681",
   },
 
   exportWrap: {
