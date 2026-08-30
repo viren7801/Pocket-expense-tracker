@@ -523,6 +523,8 @@ export default function NotesView({ vault, onVaultChange }) {
   const [reminderHistory, setReminderHistory] = useState([]);
   const [reminderHistoryLoading, setReminderHistoryLoading] = useState(false);
   const [reminderHistoryError, setReminderHistoryError] = useState("");
+  const [reminderHistoryQuery, setReminderHistoryQuery] = useState("");
+  const [reminderHistoryFilter, setReminderHistoryFilter] = useState("all");
   const [reminderQuery, setReminderQuery] = useState("");
   const [reminderFilter, setReminderFilter] = useState("all");
   const [reminderSort, setReminderSort] = useState("soonest");
@@ -770,6 +772,21 @@ export default function NotesView({ vault, onVaultChange }) {
       return !Number.isNaN(time) && time >= now && time <= sevenDays;
     }).length;
   }, [notes]);
+
+  const filteredReminderHistory = useMemo(() => {
+    const query = reminderHistoryQuery.trim().toLowerCase();
+
+    return reminderHistory.filter((item) => {
+      const actionMatch =
+        reminderHistoryFilter === "all" ||
+        item.action === reminderHistoryFilter;
+
+      const text =
+        `${item.title || ""} ${item.detail || ""} ${item.note_id || ""}`.toLowerCase();
+
+      return actionMatch && (!query || text.includes(query));
+    });
+  }, [reminderHistory, reminderHistoryQuery, reminderHistoryFilter]);
 
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -3127,6 +3144,45 @@ export default function NotesView({ vault, onVaultChange }) {
 
             <p style={styles.copy}>Recent Telegram reminder activity.</p>
 
+            <p style={styles.copy}>Recent Telegram reminder activity.</p>
+
+            <div style={styles.historyControls}>
+              <div style={styles.historySearch}>
+                <Search size={14} color="#626873" />
+                <input
+                  value={reminderHistoryQuery}
+                  onChange={(e) => setReminderHistoryQuery(e.target.value)}
+                  placeholder="Search history…"
+                  style={styles.historySearchInput}
+                />
+              </div>
+
+              <div style={styles.historyFilters}>
+                {[
+                  ["all", "All"],
+                  ["sent", "Sent"],
+                  ["snoozed", "Snoozed"],
+                  ["failed", "Failed"],
+                  ["cancelled", "Cancelled"],
+                  ["scheduled", "Scheduled"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    style={{
+                      ...styles.historyFilterButton,
+                      ...(reminderHistoryFilter === value
+                        ? styles.historyFilterButtonActive
+                        : {}),
+                    }}
+                    onClick={() => setReminderHistoryFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {reminderHistoryLoading ? (
               <div style={styles.historyState}>Loading history…</div>
             ) : reminderHistoryError ? (
@@ -3139,9 +3195,15 @@ export default function NotesView({ vault, onVaultChange }) {
                   Sent, snoozed and failed reminder activity will appear here.
                 </span>
               </div>
+            ) : filteredReminderHistory.length === 0 ? (
+              <div style={styles.reminderCenterEmpty}>
+                <Bell size={26} />
+                <strong>No matching history</strong>
+                <span>Try another search or filter.</span>
+              </div>
             ) : (
               <div style={styles.historyList}>
-                {reminderHistory.map((item) => {
+                {filteredReminderHistory.map((item) => {
                   const date = new Date(item.created_at);
 
                   const symbol =
@@ -5058,6 +5120,57 @@ const styles = {
 
   reminderDeleteButton: {
     color: "#C37A6A",
+  },
+
+  historyControls: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    marginTop: 12,
+    marginBottom: 10,
+  },
+
+  historySearch: {
+    height: 32,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "0 10px",
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    background: "#181B20",
+  },
+
+  historySearchInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#D9D7D0",
+    fontSize: 11,
+  },
+
+  historyFilters: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+
+  historyFilterButton: {
+    border: "1px solid #2D323B",
+    borderRadius: 6,
+    background: "#181B20",
+    color: "#7F8792",
+    padding: "5px 8px",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  historyFilterButtonActive: {
+    border: "1px solid #3E6D48",
+    background: "#203225",
+    color: "#72C681",
   },
 
   historyState: {
