@@ -2875,7 +2875,7 @@ export default function NotesView({ vault, onVaultChange }) {
               await loadReminderHistory();
             }}
           >
-            <History size={14} />
+            <CalendarDays size={14} />
             History
           </button>
 
