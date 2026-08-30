@@ -166,6 +166,33 @@ function nextRecurringDate(
   return null;
 }
 
+async function logReminderHistory(
+  supabase,
+  { reminderId = null, noteId = null, title = null, action, detail = null },
+) {
+  try {
+    const { error } = await supabase.from("telegram_reminder_history").insert({
+      reminder_id: reminderId,
+
+      note_id: noteId,
+
+      title,
+
+      action,
+
+      detail,
+
+      created_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      console.error("Reminder history insert failed:", error);
+    }
+  } catch (error) {
+    console.error("Reminder history error:", error);
+  }
+}
+
 async function telegramRequest(method, payload) {
   const token = env("TELEGRAM_BOT_TOKEN");
 
@@ -621,6 +648,13 @@ export default async function handler(req, res) {
               .eq("id", reminder.id);
           }
 
+          await logReminderHistory(supabase, {
+            reminderId: reminder.id,
+            noteId: reminder.note_id,
+            title: reminder.title,
+            action: "sent",
+          });
+
           sent += 1;
         } catch (sendError) {
           /*
@@ -636,6 +670,14 @@ export default async function handler(req, res) {
               last_error: String(sendError.message || sendError).slice(0, 1000),
             })
             .eq("id", reminder.id);
+
+          await logReminderHistory(supabase, {
+            reminderId: reminder.id,
+            noteId: reminder.note_id,
+            title: reminder.title,
+            action: "failed",
+            detail: String(sendError.message || sendError).slice(0, 500),
+          });
 
           failed += 1;
         }
@@ -779,6 +821,45 @@ export default async function handler(req, res) {
 
       return json(res, 200, {
         connected: false,
+      });
+    }
+
+    /*
+     * =========================================================
+     * REMINDER HISTORY
+     * =========================================================
+     */
+
+    if (action === "history") {
+      if (req.method !== "GET") {
+        return json(res, 405, {
+          error: "Method not allowed",
+        });
+      }
+
+      const requestedNoteId =
+        typeof req.query?.noteId === "string" ? req.query.noteId.trim() : "";
+
+      let query = supabase
+        .from("telegram_reminder_history")
+        .select("id, reminder_id, note_id, title, action, detail, created_at")
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(200);
+
+      if (requestedNoteId) {
+        query = query.eq("note_id", requestedNoteId);
+      }
+
+      const { data: history, error } = await query;
+
+      if (error) {
+        throw error;
+      }
+
+      return json(res, 200, {
+        history: history || [],
       });
     }
 
@@ -963,6 +1044,17 @@ export default async function handler(req, res) {
       if (error) {
         throw error;
       }
+
+      await logReminderHistory(supabase, {
+        reminderId: reminder.id,
+        noteId: noteId,
+        title: title,
+        action: "scheduled",
+        detail:
+          recurrence === "custom"
+            ? `Every ${recurrenceInterval} ${recurrenceUnit}`
+            : recurrence,
+      });
 
       return json(res, 200, {
         scheduled: true,

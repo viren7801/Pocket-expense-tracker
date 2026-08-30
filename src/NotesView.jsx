@@ -499,6 +499,50 @@ function recurrenceIntervalLabel(recurrence, interval, unit) {
   return `Every ${amount} ${label}`;
 }
 
+function historyActionLabel(action) {
+  const labels = {
+    scheduled: "Scheduled",
+    sent: "Sent",
+    snoozed: "Snoozed",
+    paused: "Paused",
+    resumed: "Resumed",
+    cancelled: "Cancelled",
+    failed: "Failed",
+  };
+
+  return labels[action] || "Updated";
+}
+
+function historyActionSymbol(action) {
+  const symbols = {
+    scheduled: "•",
+    sent: "✓",
+    snoozed: "◷",
+    paused: "Ⅱ",
+    resumed: "▶",
+    cancelled: "×",
+    failed: "!",
+  };
+
+  return symbols[action] || "•";
+}
+
+function appendReminderHistory(current, entry) {
+  const id =
+    typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return [
+    {
+      id,
+      ...entry,
+      at: entry.at || new Date().toISOString(),
+    },
+    ...(Array.isArray(current) ? current : []),
+  ].slice(0, 200);
+}
+
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -519,9 +563,11 @@ export default function NotesView({ vault, onVaultChange }) {
   const [showSortMenu, setShowSortMenu] = useState(false);
 
   const [showReminderCenter, setShowReminderCenter] = useState(false);
+  const [showReminderHistory, setShowReminderHistory] = useState(false);
   const [reminderQuery, setReminderQuery] = useState("");
   const [reminderFilter, setReminderFilter] = useState("all");
   const [reminderSort, setReminderSort] = useState("soonest");
+  const [reminderHistory, setReminderHistory] = useState([]);
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     typeof window !== "undefined" &&
@@ -1078,6 +1124,9 @@ export default function NotesView({ vault, onVaultChange }) {
       sessionPasswordRef.current = password;
 
       setNotes(decrypted);
+      setReminderHistory(
+        Array.isArray(vault?.reminderHistory) ? vault.reminderHistory : [],
+      );
       setFolders(
         Array.isArray(vault?.folders)
           ? vault.folders
@@ -1104,11 +1153,42 @@ export default function NotesView({ vault, onVaultChange }) {
     recoveredDataKeyRef.current = null;
 
     setNotes([]);
+    setReminderHistory([]);
     setSelectedId(null);
     setShowForm(false);
     setEditing(null);
     setError("");
     setPhase("locked");
+  }
+
+  async function recordReminderHistory(entry) {
+    const nextHistory = appendReminderHistory(reminderHistory, entry);
+
+    setReminderHistory(nextHistory);
+
+    const activePassword = sessionPasswordRef.current;
+
+    if (!activePassword || vault?.version !== 2) {
+      return;
+    }
+
+    try {
+      const dataKey = await unwrapDataKeyWithPassword(
+        vault.passwordWrap,
+        activePassword,
+      );
+
+      const data = await encryptNotesWithDataKey(notes, dataKey);
+
+      onVaultChange({
+        ...vault,
+        data,
+        folders,
+        reminderHistory: nextHistory,
+      });
+    } catch {
+      // Do not block the user action if history cannot be persisted.
+    }
   }
 
   async function persistNotes(nextNotes) {
@@ -1135,6 +1215,7 @@ export default function NotesView({ vault, onVaultChange }) {
           ...vault,
           data,
           folders,
+          reminderHistory,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -1296,6 +1377,7 @@ export default function NotesView({ vault, onVaultChange }) {
           ...vault,
           data,
           folders,
+          reminderHistory,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -1414,6 +1496,13 @@ export default function NotesView({ vault, onVaultChange }) {
     );
 
     await persistNotes(nextNotes);
+
+    await recordReminderHistory({
+      noteId: note.id,
+      title: note.title,
+      action: "paused",
+    });
+
     await fetch("/api/telegram?action=cancel-reminder", {
       method: "POST",
       headers: {
@@ -1456,6 +1545,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
     await persistNotes(nextNotes);
     await syncTelegramReminder(nextNote);
+
+    await recordReminderHistory({
+      noteId: note.id,
+      title: note.title,
+      action: "resumed",
+    });
+
     setError("");
   }
 
@@ -1521,6 +1617,12 @@ export default function NotesView({ vault, onVaultChange }) {
       body: JSON.stringify({
         noteId: note.id,
       }),
+    });
+
+    await recordReminderHistory({
+      noteId: note.id,
+      title: note.title,
+      action: "cancelled",
     });
 
     setError("");
@@ -2840,6 +2942,20 @@ export default function NotesView({ vault, onVaultChange }) {
           <button
             type="button"
             style={styles.secondaryButton}
+            onClick={() => setShowReminderHistory(true)}
+          >
+            <Bell size={14} />
+            History
+            {reminderHistory.length > 0 && (
+              <span style={styles.reminderCountPill}>
+                {reminderHistory.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            style={styles.secondaryButton}
             onClick={
               telegramConnected
                 ? () => setShowTelegramConnect(true)
@@ -3715,6 +3831,119 @@ export default function NotesView({ vault, onVaultChange }) {
             >
               Create folder
             </button>
+          </div>
+        </div>
+      )}
+
+      {showReminderHistory && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 760,
+            }}
+          >
+            <div style={styles.formHeader}>
+              <div>
+                <div style={styles.formTitle}>Reminder History</div>
+                <div style={styles.formSubtitle}>Recent reminder activity</div>
+              </div>
+
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowReminderHistory(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {reminderHistory.length === 0 ? (
+              <div style={styles.reminderCenterEmpty}>
+                <Bell size={24} />
+                <strong>No reminder history yet</strong>
+                <span>Reminder activity will appear here.</span>
+              </div>
+            ) : (
+              <>
+                <div style={styles.historyList}>
+                  {reminderHistory.map((item) => {
+                    const date = new Date(item.at);
+
+                    return (
+                      <div key={item.id} style={styles.historyRow}>
+                        <div
+                          style={{
+                            ...styles.historyIcon,
+                            ...(item.action === "failed"
+                              ? styles.historyIconFailed
+                              : item.action === "cancelled"
+                                ? styles.historyIconCancelled
+                                : {}),
+                          }}
+                        >
+                          {historyActionSymbol(item.action)}
+                        </div>
+
+                        <div style={styles.historyBody}>
+                          <div style={styles.historyTitle}>
+                            <strong>{item.title || "Untitled reminder"}</strong>
+
+                            <span style={styles.historyAction}>
+                              {historyActionLabel(item.action)}
+                            </span>
+                          </div>
+
+                          <div style={styles.historyMeta}>
+                            {Number.isNaN(date.getTime())
+                              ? "Unknown time"
+                              : date.toLocaleString(undefined, {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                })}
+
+                            {item.detail ? ` · ${item.detail}` : ""}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  style={styles.secondaryFullButton}
+                  onClick={async () => {
+                    setReminderHistory([]);
+
+                    if (vault?.version === 2 && sessionPasswordRef.current) {
+                      try {
+                        const dataKey = await unwrapDataKeyWithPassword(
+                          vault.passwordWrap,
+                          sessionPasswordRef.current,
+                        );
+
+                        const data = await encryptNotesWithDataKey(
+                          notes,
+                          dataKey,
+                        );
+
+                        onVaultChange({
+                          ...vault,
+                          data,
+                          folders,
+                          reminderHistory: [],
+                        });
+                      } catch {
+                        setError("Could not clear reminder history.");
+                      }
+                    }
+                  }}
+                >
+                  Clear history
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -4905,6 +5134,74 @@ const styles = {
 
   reminderDeleteButton: {
     color: "#C37A6A",
+  },
+
+  historyList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+    marginTop: 12,
+    maxHeight: 500,
+    overflowY: "auto",
+  },
+
+  historyRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "11px 10px",
+    borderBottom: "1px solid #242830",
+  },
+
+  historyIcon: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#203225",
+    color: "#76C888",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+
+  historyIconFailed: {
+    background: "#39231F",
+    color: "#D67D6D",
+  },
+
+  historyIconCancelled: {
+    background: "#33262A",
+    color: "#C98B99",
+  },
+
+  historyBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  historyTitle: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  historyAction: {
+    flexShrink: 0,
+    padding: "3px 6px",
+    borderRadius: 5,
+    background: "#20242B",
+    color: "#89919C",
+    fontSize: 9,
+  },
+
+  historyMeta: {
+    marginTop: 4,
+    color: "#6E7682",
+    fontSize: 10,
   },
 
   reminderCenterEmpty: {
