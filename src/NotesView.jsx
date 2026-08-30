@@ -36,6 +36,7 @@ import {
   Play,
   Upload,
   Download,
+  Share2,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -577,6 +578,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareAccess, setShareAccess] = useState("link");
+  const [sharePermission, setSharePermission] = useState("read-only");
+  const [shareExpiration, setShareExpiration] = useState("never");
+  const [shareCreated, setShareCreated] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [customTemplates, setCustomTemplates] = useState([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
@@ -2225,6 +2233,134 @@ export default function NotesView({ vault, onVaultChange }) {
     setError("");
     setShowTemplateMenu(false);
     setShowForm(true);
+  }
+
+  function bytesToBase64UrlLocal(bytes) {
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 1) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+
+    return btoa(binary)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+  }
+
+  async function createEncryptedShare() {
+    if (!selected || selected.trashed) {
+      setError("This note cannot be shared.");
+      return;
+    }
+
+    setShareBusy(true);
+    setError("");
+    setShareCreated(false);
+    setShareUrl("");
+
+    try {
+      if (selected.archived) {
+        throw new Error("Unarchive the note before creating a share link.");
+      }
+
+      const shareKey = crypto.getRandomValues(new Uint8Array(32));
+
+      const key = await crypto.subtle.importKey(
+        "raw",
+        shareKey,
+        {
+          name: "AES-GCM",
+        },
+        false,
+        ["encrypt"],
+      );
+
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+
+      const payload = {
+        title: selected.title || "",
+        content: selected.content || "",
+        tags: Array.isArray(selected.tags) ? selected.tags : [],
+        permission: "read-only",
+      };
+
+      const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+
+      const ciphertext = await crypto.subtle.encrypt(
+        {
+          name: "AES-GCM",
+          iv,
+        },
+        key,
+        plaintext,
+      );
+
+      const response = await fetch("/api/share-note", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ciphertext: bytesToBase64UrlLocal(new Uint8Array(ciphertext)),
+          iv: bytesToBase64UrlLocal(iv),
+          expiresIn: shareExpiration,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not create share link.");
+      }
+
+      const url = `${window.location.origin}/share/${encodeURIComponent(
+        data.shareId,
+      )}#${bytesToBase64UrlLocal(shareKey)}`;
+
+      setShareUrl(url);
+      setShareCreated(true);
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not create share link.");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function copyShareUrl() {
+    if (!shareUrl) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setError("");
+    } catch {
+      setError("Could not copy the share link.");
+    }
+  }
+
+  function openShareModal() {
+    if (!selected || selected.trashed) {
+      setError("Select a normal note before sharing.");
+      return;
+    }
+
+    setShareAccess("link");
+    setSharePermission("read-only");
+    setShareExpiration("never");
+    setShareCreated(false);
+    setShowShareModal(true);
+    setError("");
+  }
+
+  function closeShareModal() {
+    setShowShareModal(false);
+    setShareCreated(false);
+  }
+
+  async function prepareShareLink() {
+    await createEncryptedShare();
   }
 
   function downloadExportFile(filename, content, mimeType) {
@@ -4225,6 +4361,17 @@ export default function NotesView({ vault, onVaultChange }) {
                     <Pencil size={15} />
                   </button>
 
+                  {!showTrash && !selected.archived && (
+                    <button
+                      type="button"
+                      style={styles.iconButton}
+                      onClick={openShareModal}
+                      title="Share note"
+                    >
+                      <Share2 size={15} />
+                    </button>
+                  )}
+
                   <select
                     value={selected.folderId || ""}
                     onChange={(e) => moveSelectedNote(e.target.value || "all")}
@@ -4449,6 +4596,150 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={saveCustomTemplate}
               >
                 {templateEditingId ? "Save changes" : "Create template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShareModal && selected && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 560,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={closeShareModal}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>SHARE NOTE</div>
+
+            <h2 style={styles.formTitle}>
+              Share “{selected.title || "Untitled note"}”
+            </h2>
+
+            <p style={styles.copy}>
+              Share only this note. Your main Notes vault remains private.
+            </p>
+
+            <div style={styles.shareOptionGroup}>
+              <div style={styles.importSectionTitle}>Access</div>
+
+              <label style={styles.shareOption}>
+                <input
+                  type="radio"
+                  name="share-access"
+                  value="link"
+                  checked={shareAccess === "link"}
+                  onChange={() => setShareAccess("link")}
+                />
+                <span>
+                  <strong>Anyone with the link</strong>
+                  <span style={styles.shareOptionDetail}>
+                    The recipient can open this note only.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div style={styles.shareOptionGroup}>
+              <div style={styles.importSectionTitle}>Permission</div>
+
+              <label style={styles.shareOption}>
+                <input
+                  type="radio"
+                  name="share-permission"
+                  value="read-only"
+                  checked={sharePermission === "read-only"}
+                  onChange={() => setSharePermission("read-only")}
+                />
+                <span>
+                  <strong>Read only</strong>
+                  <span style={styles.shareOptionDetail}>
+                    Recipients cannot edit the note.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div style={styles.shareOptionGroup}>
+              <div style={styles.importSectionTitle}>Expires</div>
+
+              <select
+                value={shareExpiration}
+                onChange={(e) => setShareExpiration(e.target.value)}
+                style={styles.input}
+              >
+                <option value="never">Never</option>
+                <option value="1h">In 1 hour</option>
+                <option value="1d">In 1 day</option>
+                <option value="7d">In 7 days</option>
+                <option value="30d">In 30 days</option>
+              </select>
+            </div>
+
+            <div style={styles.shareSecurityNotice}>
+              <ShieldCheck size={15} />
+              <span>
+                Sharing will use a separate encrypted share record, not your
+                vault password.
+              </span>
+            </div>
+
+            {shareCreated && shareUrl && (
+              <div style={styles.shareCreatedBox}>
+                <div style={styles.shareCreatedLabel}>
+                  Secure read-only link
+                </div>
+                <input
+                  readOnly
+                  value={shareUrl}
+                  style={styles.shareLinkInput}
+                  onFocus={(e) => e.target.select()}
+                />
+                <button
+                  type="button"
+                  style={styles.secondaryFullButton}
+                  onClick={copyShareUrl}
+                >
+                  Copy share link
+                </button>
+                <div style={styles.shareCreatedHint}>
+                  The encryption key is kept in the URL fragment and is never
+                  sent to the server.
+                </div>
+              </div>
+            )}
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.linkButton}
+                onClick={closeShareModal}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={prepareShareLink}
+                disabled={shareBusy}
+              >
+                <Share2 size={14} />
+                {shareBusy
+                  ? "Creating…"
+                  : shareCreated
+                    ? "Create another link"
+                    : "Create secure link"}
               </button>
             </div>
           </div>
@@ -6806,6 +7097,55 @@ const styles = {
     borderRadius: 6,
     background: "#20242B",
     color: "#8A929C",
+    fontSize: 9,
+  },
+
+  shareOptionGroup: {
+    marginTop: 12,
+    padding: "10px 0 0",
+  },
+
+  shareOption: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "8px 0",
+    color: "#D9D7D0",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+
+  shareOptionDetail: {
+    display: "block",
+    marginTop: 3,
+    color: "#69717B",
+    fontSize: 9,
+  },
+
+  shareSecurityNotice: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 7,
+    marginTop: 14,
+    padding: "9px 10px",
+    border: "1px solid #27352D",
+    borderRadius: 8,
+    background: "#151A17",
+    color: "#78907D",
+    fontSize: 9,
+    lineHeight: 1.4,
+  },
+
+  sharePending: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    marginTop: 10,
+    padding: "9px 10px",
+    border: "1px solid #3A3F28",
+    borderRadius: 8,
+    background: "#211F16",
+    color: "#B5A66E",
     fontSize: 9,
   },
 

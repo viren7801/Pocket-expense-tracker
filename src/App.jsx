@@ -53,6 +53,7 @@ import {
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
 import NotesView from "./NotesView";
+import ShareView from "./ShareView";
 
 const SEED_CATEGORIES = {
   income: ["Salary", "Business", "Freelance", "Investment", "Other Income"],
@@ -514,6 +515,14 @@ export default function LedgerApp() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  const isShareRoute =
+    typeof window !== "undefined" &&
+    window.location.pathname.startsWith("/share/");
+
+  if (isShareRoute) {
+    return <ShareView />;
+  }
 
   if (!loaded) {
     return (
