@@ -33,6 +33,7 @@ import {
   Repeat,
   Pause,
   Play,
+  FileOutput,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -517,6 +518,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [sortMode, setSortMode] = useState("updated");
 
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const [showReminderCenter, setShowReminderCenter] = useState(false);
   const [showReminderHistory, setShowReminderHistory] = useState(false);
@@ -1578,6 +1580,134 @@ export default function NotesView({ vault, onVaultChange }) {
     } finally {
       setReminderHistoryLoading(false);
     }
+  }
+
+  function downloadExportFile(filename, content, mimeType) {
+    const blob = new Blob([content], { type: mimeType });
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = filename;
+
+    document.body.appendChild(link);
+
+    link.click();
+
+    link.remove();
+
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function escapeCsvCell(value) {
+    const text = value === null || value === undefined ? "" : String(value);
+
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function exportNotes(format) {
+    if (!Array.isArray(notes) || notes.length === 0) {
+      setError("There are no notes to export.");
+      setShowExportMenu(false);
+      return;
+    }
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    if (format === "json") {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        folders,
+        notes,
+      };
+
+      downloadExportFile(
+        `pocket-notes-${dateStamp}.json`,
+        JSON.stringify(payload, null, 2),
+        "application/json;charset=utf-8",
+      );
+    }
+
+    if (format === "markdown") {
+      const content = notes
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.createdAt || 0).getTime() -
+            new Date(a.updatedAt || a.createdAt || 0).getTime(),
+        )
+        .map((note) => {
+          const tags =
+            Array.isArray(note.tags) && note.tags.length
+              ? `\n\n**Tags:** ${note.tags.map((tag) => `#${tag}`).join(", ")}`
+              : "";
+
+          const reminder = note.reminderAt
+            ? `\n\n**Reminder:** ${new Date(note.reminderAt).toLocaleString()}`
+            : "";
+
+          return `# ${note.title || "Untitled note"}\n\n${
+            note.content || ""
+          }${tags}${reminder}\n\n---`;
+        })
+        .join("\n\n");
+
+      downloadExportFile(
+        `pocket-notes-${dateStamp}.md`,
+        `# Pocket Notes Export\n\nExported: ${new Date().toLocaleString()}\n\n${content}\n`,
+        "text/markdown;charset=utf-8",
+      );
+    }
+
+    if (format === "csv") {
+      const rows = [
+        [
+          "Title",
+          "Content",
+          "Tags",
+          "Reminder",
+          "Recurrence",
+          "Telegram",
+          "Pinned",
+          "Folder",
+          "Created",
+          "Updated",
+        ],
+        ...notes.map((note) => {
+          const folderName =
+            folders.find((folder) => folder.id === note.folderId)?.name || "";
+
+          return [
+            note.title || "",
+            note.content || "",
+            Array.isArray(note.tags) ? note.tags.join(", ") : "",
+            note.reminderAt || "",
+            note.recurrence || "none",
+            note.notifyTelegram ? "Yes" : "No",
+            note.pinned ? "Yes" : "No",
+            folderName,
+            note.createdAt || "",
+            note.updatedAt || "",
+          ];
+        }),
+      ];
+
+      const csv = rows
+        .map((row) => row.map(escapeCsvCell).join(","))
+        .join("\n");
+
+      downloadExportFile(
+        `pocket-notes-${dateStamp}.csv`,
+        csv,
+        "text/csv;charset=utf-8",
+      );
+    }
+
+    setShowExportMenu(false);
+    setError("");
   }
 
   async function syncTelegramReminder(note) {
@@ -2895,6 +3025,51 @@ export default function NotesView({ vault, onVaultChange }) {
             <CalendarDays size={14} />
             History
           </button>
+
+          <div style={styles.exportWrap}>
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => setShowExportMenu((value) => !value)}
+              title="Export notes"
+            >
+              <FileOutput size={14} />
+              Export
+            </button>
+
+            {showExportMenu && (
+              <div style={styles.exportMenu}>
+                <div style={styles.exportMenuTitle}>Export notes</div>
+
+                <button
+                  type="button"
+                  style={styles.exportMenuItem}
+                  onClick={() => exportNotes("json")}
+                >
+                  <strong>JSON</strong>
+                  <span>Backup with all note data</span>
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.exportMenuItem}
+                  onClick={() => exportNotes("markdown")}
+                >
+                  <strong>Markdown</strong>
+                  <span>Readable notes document</span>
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.exportMenuItem}
+                  onClick={() => exportNotes("csv")}
+                >
+                  <strong>CSV</strong>
+                  <span>Spreadsheet-friendly</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
@@ -5587,6 +5762,48 @@ const styles = {
     alignItems: "flex-end",
     gap: 16,
     marginBottom: 16,
+  },
+
+  exportWrap: {
+    position: "relative",
+  },
+
+  exportMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    width: 210,
+    zIndex: 50,
+    padding: 6,
+    border: "1px solid #2D323B",
+    borderRadius: 9,
+    background: "#15181D",
+    boxShadow: "0 16px 35px rgba(0,0,0,0.35)",
+  },
+
+  exportMenuTitle: {
+    padding: "6px 7px 8px",
+    color: "#E1DED6",
+    fontSize: 10,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+
+  exportMenuItem: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 2,
+    padding: "8px 7px",
+    border: "none",
+    borderRadius: 7,
+    background: "#15181D",
+    color: "#D9D7D0",
+    cursor: "pointer",
+    textAlign: "left",
+    fontSize: 10,
   },
 
   headerActions: {
