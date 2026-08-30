@@ -499,50 +499,6 @@ function recurrenceIntervalLabel(recurrence, interval, unit) {
   return `Every ${amount} ${label}`;
 }
 
-function historyActionLabel(action) {
-  const labels = {
-    scheduled: "Scheduled",
-    sent: "Sent",
-    snoozed: "Snoozed",
-    paused: "Paused",
-    resumed: "Resumed",
-    cancelled: "Cancelled",
-    failed: "Failed",
-  };
-
-  return labels[action] || "Updated";
-}
-
-function historyActionSymbol(action) {
-  const symbols = {
-    scheduled: "•",
-    sent: "✓",
-    snoozed: "◷",
-    paused: "Ⅱ",
-    resumed: "▶",
-    cancelled: "×",
-    failed: "!",
-  };
-
-  return symbols[action] || "•";
-}
-
-function appendReminderHistory(current, entry) {
-  const id =
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-  return [
-    {
-      id,
-      ...entry,
-      at: entry.at || new Date().toISOString(),
-    },
-    ...(Array.isArray(current) ? current : []),
-  ].slice(0, 200);
-}
-
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -564,10 +520,12 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showReminderCenter, setShowReminderCenter] = useState(false);
   const [showReminderHistory, setShowReminderHistory] = useState(false);
+  const [reminderHistory, setReminderHistory] = useState([]);
+  const [reminderHistoryLoading, setReminderHistoryLoading] = useState(false);
+  const [reminderHistoryError, setReminderHistoryError] = useState("");
   const [reminderQuery, setReminderQuery] = useState("");
   const [reminderFilter, setReminderFilter] = useState("all");
   const [reminderSort, setReminderSort] = useState("soonest");
-  const [reminderHistory, setReminderHistory] = useState([]);
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     typeof window !== "undefined" &&
@@ -1124,9 +1082,6 @@ export default function NotesView({ vault, onVaultChange }) {
       sessionPasswordRef.current = password;
 
       setNotes(decrypted);
-      setReminderHistory(
-        Array.isArray(vault?.reminderHistory) ? vault.reminderHistory : [],
-      );
       setFolders(
         Array.isArray(vault?.folders)
           ? vault.folders
@@ -1153,90 +1108,11 @@ export default function NotesView({ vault, onVaultChange }) {
     recoveredDataKeyRef.current = null;
 
     setNotes([]);
-    setReminderHistory([]);
     setSelectedId(null);
     setShowForm(false);
     setEditing(null);
     setError("");
     setPhase("locked");
-  }
-
-  async function loadReminderHistory() {
-    try {
-      const response = await fetch("/api/telegram?action=history", {
-        method: "GET",
-        cache: "no-store",
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Could not load reminder history.");
-      }
-
-      const remote = Array.isArray(data.history)
-        ? data.history.map((item) => ({
-            id: `server-${item.id}`,
-            noteId: item.note_id || null,
-            title: item.title || "",
-            action: item.action,
-            detail: item.detail || null,
-            at: item.created_at,
-          }))
-        : [];
-
-      setReminderHistory((current) => {
-        const local = Array.isArray(current) ? current : [];
-        const combined = [...remote, ...local];
-        const seen = new Set();
-
-        return combined
-          .sort(
-            (a, b) =>
-              new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime(),
-          )
-          .filter((item) => {
-            const key = `${item.noteId || ""}|${item.action || ""}|${item.at || ""}|${item.detail || ""}`;
-
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          })
-          .slice(0, 200);
-      });
-    } catch (e) {
-      setError(e.message || "Could not load reminder history.");
-    }
-  }
-
-  async function recordReminderHistory(entry) {
-    const nextHistory = appendReminderHistory(reminderHistory, entry);
-
-    setReminderHistory(nextHistory);
-
-    const activePassword = sessionPasswordRef.current;
-
-    if (!activePassword || vault?.version !== 2) {
-      return;
-    }
-
-    try {
-      const dataKey = await unwrapDataKeyWithPassword(
-        vault.passwordWrap,
-        activePassword,
-      );
-
-      const data = await encryptNotesWithDataKey(notes, dataKey);
-
-      onVaultChange({
-        ...vault,
-        data,
-        folders,
-        reminderHistory: nextHistory,
-      });
-    } catch {
-      // Do not block the user action if history cannot be persisted.
-    }
   }
 
   async function persistNotes(nextNotes) {
@@ -1263,7 +1139,6 @@ export default function NotesView({ vault, onVaultChange }) {
           ...vault,
           data,
           folders,
-          reminderHistory,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -1425,7 +1300,6 @@ export default function NotesView({ vault, onVaultChange }) {
           ...vault,
           data,
           folders,
-          reminderHistory,
         });
       } else {
         const envelope = await encryptLegacyNotes(
@@ -1544,13 +1418,6 @@ export default function NotesView({ vault, onVaultChange }) {
     );
 
     await persistNotes(nextNotes);
-
-    await recordReminderHistory({
-      noteId: note.id,
-      title: note.title,
-      action: "paused",
-    });
-
     await fetch("/api/telegram?action=cancel-reminder", {
       method: "POST",
       headers: {
@@ -1593,13 +1460,6 @@ export default function NotesView({ vault, onVaultChange }) {
 
     await persistNotes(nextNotes);
     await syncTelegramReminder(nextNote);
-
-    await recordReminderHistory({
-      noteId: note.id,
-      title: note.title,
-      action: "resumed",
-    });
-
     setError("");
   }
 
@@ -1667,12 +1527,6 @@ export default function NotesView({ vault, onVaultChange }) {
       }),
     });
 
-    await recordReminderHistory({
-      noteId: note.id,
-      title: note.title,
-      action: "cancelled",
-    });
-
     setError("");
   }
 
@@ -1681,6 +1535,32 @@ export default function NotesView({ vault, onVaultChange }) {
     setSelectedFolder("all");
     setSelectedTag("all");
     setShowReminderCenter(false);
+  }
+
+  async function loadReminderHistory() {
+    setReminderHistoryLoading(true);
+    setReminderHistoryError("");
+
+    try {
+      const response = await fetch("/api/telegram?action=history", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not load reminder history.");
+      }
+
+      setReminderHistory(Array.isArray(data.history) ? data.history : []);
+    } catch (error) {
+      setReminderHistoryError(
+        error.message || "Could not load reminder history.",
+      );
+    } finally {
+      setReminderHistoryLoading(false);
+    }
   }
 
   async function syncTelegramReminder(note) {
@@ -2990,15 +2870,13 @@ export default function NotesView({ vault, onVaultChange }) {
           <button
             type="button"
             style={styles.secondaryButton}
-            onClick={() => setShowReminderHistory(true)}
+            onClick={async () => {
+              setShowReminderHistory(true);
+              await loadReminderHistory();
+            }}
           >
-            <Bell size={14} />
+            <History size={14} />
             History
-            {reminderHistory.length > 0 && (
-              <span style={styles.reminderCountPill}>
-                {reminderHistory.length}
-              </span>
-            )}
           </button>
 
           <button
@@ -3225,6 +3103,117 @@ export default function NotesView({ vault, onVaultChange }) {
           )}
         </div>
       </div>
+
+      {showReminderHistory && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 760,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowReminderHistory(false)}
+              aria-label="Close reminder history"
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>REMINDER HISTORY</div>
+
+            <h2 style={styles.formTitle}>Reminder History</h2>
+
+            <p style={styles.copy}>Recent Telegram reminder activity.</p>
+
+            {reminderHistoryLoading ? (
+              <div style={styles.historyState}>Loading history…</div>
+            ) : reminderHistoryError ? (
+              <div style={styles.error}>{reminderHistoryError}</div>
+            ) : reminderHistory.length === 0 ? (
+              <div style={styles.reminderCenterEmpty}>
+                <Bell size={26} />
+                <strong>No reminder history yet</strong>
+                <span>
+                  Sent, snoozed and failed reminder activity will appear here.
+                </span>
+              </div>
+            ) : (
+              <div style={styles.historyList}>
+                {reminderHistory.map((item) => {
+                  const date = new Date(item.created_at);
+
+                  const symbol =
+                    item.action === "sent"
+                      ? "✓"
+                      : item.action === "snoozed"
+                        ? "◷"
+                        : item.action === "failed"
+                          ? "!"
+                          : item.action === "cancelled"
+                            ? "×"
+                            : item.action === "paused"
+                              ? "Ⅱ"
+                              : item.action === "resumed"
+                                ? "▶"
+                                : "•";
+
+                  return (
+                    <div key={item.id} style={styles.historyRow}>
+                      <div
+                        style={{
+                          ...styles.historyIcon,
+                          ...(item.action === "failed"
+                            ? styles.historyIconFailed
+                            : item.action === "cancelled"
+                              ? styles.historyIconCancelled
+                              : {}),
+                        }}
+                      >
+                        {symbol}
+                      </div>
+
+                      <div style={styles.historyBody}>
+                        <div style={styles.historyTitle}>
+                          <strong>{item.title || "Untitled reminder"}</strong>
+
+                          <span style={styles.historyAction}>
+                            {String(item.action || "updated")
+                              .charAt(0)
+                              .toUpperCase() +
+                              String(item.action || "updated").slice(1)}
+                          </span>
+                        </div>
+
+                        <div style={styles.historyMeta}>
+                          {Number.isNaN(date.getTime())
+                            ? "Unknown time"
+                            : date.toLocaleString(undefined, {
+                                dateStyle: "medium",
+                                timeStyle: "short",
+                              })}
+
+                          {item.detail ? ` · ${item.detail}` : ""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <button
+              type="button"
+              style={styles.secondaryFullButton}
+              onClick={loadReminderHistory}
+              disabled={reminderHistoryLoading}
+            >
+              Refresh history
+            </button>
+          </div>
+        </div>
+      )}
 
       {showReminderCenter && (
         <div style={styles.overlay}>
@@ -3879,119 +3868,6 @@ export default function NotesView({ vault, onVaultChange }) {
             >
               Create folder
             </button>
-          </div>
-        </div>
-      )}
-
-      {showReminderHistory && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 760,
-            }}
-          >
-            <div style={styles.formHeader}>
-              <div>
-                <div style={styles.formTitle}>Reminder History</div>
-                <div style={styles.formSubtitle}>Recent reminder activity</div>
-              </div>
-
-              <button
-                type="button"
-                style={styles.modalClose}
-                onClick={() => setShowReminderHistory(false)}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {reminderHistory.length === 0 ? (
-              <div style={styles.reminderCenterEmpty}>
-                <Bell size={24} />
-                <strong>No reminder history yet</strong>
-                <span>Reminder activity will appear here.</span>
-              </div>
-            ) : (
-              <>
-                <div style={styles.historyList}>
-                  {reminderHistory.map((item) => {
-                    const date = new Date(item.at);
-
-                    return (
-                      <div key={item.id} style={styles.historyRow}>
-                        <div
-                          style={{
-                            ...styles.historyIcon,
-                            ...(item.action === "failed"
-                              ? styles.historyIconFailed
-                              : item.action === "cancelled"
-                                ? styles.historyIconCancelled
-                                : {}),
-                          }}
-                        >
-                          {historyActionSymbol(item.action)}
-                        </div>
-
-                        <div style={styles.historyBody}>
-                          <div style={styles.historyTitle}>
-                            <strong>{item.title || "Untitled reminder"}</strong>
-
-                            <span style={styles.historyAction}>
-                              {historyActionLabel(item.action)}
-                            </span>
-                          </div>
-
-                          <div style={styles.historyMeta}>
-                            {Number.isNaN(date.getTime())
-                              ? "Unknown time"
-                              : date.toLocaleString(undefined, {
-                                  dateStyle: "medium",
-                                  timeStyle: "short",
-                                })}
-
-                            {item.detail ? ` · ${item.detail}` : ""}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <button
-                  type="button"
-                  style={styles.secondaryFullButton}
-                  onClick={async () => {
-                    setReminderHistory([]);
-
-                    if (vault?.version === 2 && sessionPasswordRef.current) {
-                      try {
-                        const dataKey = await unwrapDataKeyWithPassword(
-                          vault.passwordWrap,
-                          sessionPasswordRef.current,
-                        );
-
-                        const data = await encryptNotesWithDataKey(
-                          notes,
-                          dataKey,
-                        );
-
-                        onVaultChange({
-                          ...vault,
-                          data,
-                          folders,
-                          reminderHistory: [],
-                        });
-                      } catch {
-                        setError("Could not clear reminder history.");
-                      }
-                    }
-                  }}
-                >
-                  Clear history
-                </button>
-              </>
-            )}
           </div>
         </div>
       )}
@@ -5184,6 +5060,15 @@ const styles = {
     color: "#C37A6A",
   },
 
+  historyState: {
+    minHeight: 180,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#69717B",
+    fontSize: 12,
+  },
+
   historyList: {
     display: "flex",
     flexDirection: "column",
@@ -5191,6 +5076,8 @@ const styles = {
     marginTop: 12,
     maxHeight: 500,
     overflowY: "auto",
+    borderTop: "1px solid #242830",
+    borderBottom: "1px solid #242830",
   },
 
   historyRow: {
