@@ -476,6 +476,29 @@ function weekdayList(days) {
     : "";
 }
 
+function recurrenceIntervalLabel(recurrence, interval, unit) {
+  if (recurrence !== "custom") {
+    return "";
+  }
+
+  const amount = Math.max(1, Number(interval) || 1);
+
+  const label =
+    unit === "weeks"
+      ? amount === 1
+        ? "week"
+        : "weeks"
+      : unit === "months"
+        ? amount === 1
+          ? "month"
+          : "months"
+        : amount === 1
+          ? "day"
+          : "days";
+
+  return `Every ${amount} ${label}`;
+}
+
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -496,6 +519,9 @@ export default function NotesView({ vault, onVaultChange }) {
   const [showSortMenu, setShowSortMenu] = useState(false);
 
   const [showReminderCenter, setShowReminderCenter] = useState(false);
+  const [reminderQuery, setReminderQuery] = useState("");
+  const [reminderFilter, setReminderFilter] = useState("all");
+  const [reminderSort, setReminderSort] = useState("soonest");
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     typeof window !== "undefined" &&
@@ -535,6 +561,10 @@ export default function NotesView({ vault, onVaultChange }) {
   const [formRecurrence, setFormRecurrence] = useState("none");
   const [formRecurrenceDay, setFormRecurrenceDay] = useState("");
   const [formRecurrenceDays, setFormRecurrenceDays] = useState([]);
+
+  const [formRecurrenceInterval, setFormRecurrenceInterval] = useState(1);
+
+  const [formRecurrenceUnit, setFormRecurrenceUnit] = useState("days");
 
   const [formNotifyTelegram, setFormNotifyTelegram] = useState(false);
 
@@ -639,6 +669,91 @@ export default function NotesView({ vault, onVaultChange }) {
   const activeReminderCount = reminderCenterItems.filter(
     (note) => !note.reminderPaused,
   ).length;
+
+  const reminderCenterFilteredItems = useMemo(() => {
+    const now = Date.now();
+    const todayEnd = (() => {
+      const date = new Date();
+      date.setHours(23, 59, 59, 999);
+      return date.getTime();
+    })();
+
+    const query = reminderQuery.trim().toLowerCase();
+
+    let items = reminderCenterItems.filter((note) => {
+      const reminderTime = new Date(note.reminderAt).getTime();
+
+      const channel = note.notifyTelegram ? "telegram" : "browser";
+
+      const paused = Boolean(note.reminderPaused);
+
+      if (
+        query &&
+        ![note.title, note.content]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      ) {
+        return false;
+      }
+
+      if (reminderFilter === "today") {
+        if (Number.isNaN(reminderTime) || reminderTime > todayEnd) {
+          return false;
+        }
+
+        const day = new Date(reminderTime);
+
+        const nowDate = new Date();
+
+        return (
+          day.getFullYear() === nowDate.getFullYear() &&
+          day.getMonth() === nowDate.getMonth() &&
+          day.getDate() === nowDate.getDate()
+        );
+      }
+
+      if (reminderFilter === "upcoming") {
+        return !Number.isNaN(reminderTime) && reminderTime >= now;
+      }
+
+      if (reminderFilter === "paused") {
+        return paused;
+      }
+
+      if (reminderFilter === "telegram") {
+        return channel === "telegram";
+      }
+
+      if (reminderFilter === "browser") {
+        return channel === "browser";
+      }
+
+      return true;
+    });
+
+    return items.sort((a, b) => {
+      if (reminderSort === "latest") {
+        return (
+          new Date(b.reminderAt).getTime() - new Date(a.reminderAt).getTime()
+        );
+      }
+
+      if (reminderSort === "recurring") {
+        const aRecurring = a.recurrence && a.recurrence !== "none" ? 0 : 1;
+        const bRecurring = b.recurrence && b.recurrence !== "none" ? 0 : 1;
+
+        if (aRecurring !== bRecurring) {
+          return aRecurring - bRecurring;
+        }
+      }
+
+      return (
+        new Date(a.reminderAt).getTime() - new Date(b.reminderAt).getTime()
+      );
+    });
+  }, [reminderCenterItems, reminderQuery, reminderFilter, reminderSort]);
 
   const upcomingReminderCount = useMemo(() => {
     const now = Date.now();
@@ -1151,6 +1266,15 @@ export default function NotesView({ vault, onVaultChange }) {
                       : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
                   )
                 : [],
+            recurrenceInterval:
+              formReminder && formRecurrence === "custom"
+                ? Math.max(1, Number(formRecurrenceInterval) || 1)
+                : null,
+            recurrenceUnit:
+              formReminder && formRecurrence === "custom"
+                ? formRecurrenceUnit
+                : null,
+
             notifyTelegram: Boolean(formReminder && formNotifyTelegram),
             updatedAt,
           }
@@ -1390,6 +1514,8 @@ export default function NotesView({ vault, onVaultChange }) {
             recurrence: note.recurrence || "none",
             recurrenceDay: note.recurrenceDay ?? null,
             recurrenceDays: normalizeRecurrenceDays(note.recurrenceDays),
+            recurrenceInterval: note.recurrenceInterval ?? null,
+            recurrenceUnit: note.recurrenceUnit ?? null,
           }),
         });
 
@@ -1494,6 +1620,16 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
+    if (
+      formRecurrence === "custom" &&
+      (!Number.isInteger(Number(formRecurrenceInterval)) ||
+        Number(formRecurrenceInterval) < 1 ||
+        Number(formRecurrenceInterval) > 3650)
+    ) {
+      setError("Choose a custom interval from 1 to 3650.");
+      return;
+    }
+
     const finalRecurrenceDay =
       formRecurrence === "monthly" ? Number(recurrenceDay) : null;
 
@@ -1505,6 +1641,14 @@ export default function NotesView({ vault, onVaultChange }) {
               : [Number(recurrenceDay)],
           )
         : [];
+
+    const finalRecurrenceInterval =
+      formRecurrence === "custom"
+        ? Math.max(1, Number(formRecurrenceInterval) || 1)
+        : null;
+
+    const finalRecurrenceUnit =
+      formRecurrence === "custom" ? formRecurrenceUnit : null;
 
     const now = new Date().toISOString();
 
@@ -1520,6 +1664,8 @@ export default function NotesView({ vault, onVaultChange }) {
       reminderAt: normalizedReminderAt,
       recurrence: normalizedReminderAt ? formRecurrence : "none",
       recurrenceDay: normalizedReminderAt ? finalRecurrenceDay : null,
+      recurrenceInterval: normalizedReminderAt ? finalRecurrenceInterval : null,
+      recurrenceUnit: normalizedReminderAt ? finalRecurrenceUnit : null,
       notifyTelegram: telegramReminderEnabled,
       reminderPaused: false,
       updatedAt: now,
@@ -1571,6 +1717,8 @@ export default function NotesView({ vault, onVaultChange }) {
     setFormRecurrence("none");
     setFormRecurrenceDay("");
     setFormRecurrenceDays([]);
+    setFormRecurrenceInterval(1);
+    setFormRecurrenceUnit("days");
     setFormNotifyTelegram(false);
     setTagInput("");
     setEditorStatus("Saved");
@@ -1635,6 +1783,10 @@ export default function NotesView({ vault, onVaultChange }) {
     );
 
     setFormRecurrenceDays(normalizeRecurrenceDays(note.recurrenceDays));
+
+    setFormRecurrenceInterval(note.recurrenceInterval || 1);
+
+    setFormRecurrenceUnit(note.recurrenceUnit || "days");
 
     setFormNotifyTelegram(Boolean(note.notifyTelegram));
 
@@ -2884,7 +3036,12 @@ export default function NotesView({ vault, onVaultChange }) {
             <button
               type="button"
               style={styles.modalClose}
-              onClick={() => setShowReminderCenter(false)}
+              onClick={() => {
+                setShowReminderCenter(false);
+                setReminderQuery("");
+                setReminderFilter("all");
+                setReminderSort("soonest");
+              }}
             >
               <X size={17} />
             </button>
@@ -2899,6 +3056,78 @@ export default function NotesView({ vault, onVaultChange }) {
 
             {error && <div style={styles.error}>{error}</div>}
 
+            {reminderCenterItems.length > 0 && (
+              <>
+                <div style={styles.reminderCenterSearch}>
+                  <Search size={14} color="#69717B" />
+                  <input
+                    value={reminderQuery}
+                    onChange={(e) => setReminderQuery(e.target.value)}
+                    placeholder="Search reminders…"
+                    style={styles.reminderCenterSearchInput}
+                  />
+                  {reminderQuery && (
+                    <button
+                      type="button"
+                      style={styles.reminderCenterClearSearch}
+                      onClick={() => setReminderQuery("")}
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                <div style={styles.reminderCenterToolbar}>
+                  <div style={styles.reminderFilterScroll}>
+                    {[
+                      ["all", "All"],
+                      ["today", "Today"],
+                      ["upcoming", "Upcoming"],
+                      ["paused", "Paused"],
+                      ["telegram", "Telegram"],
+                      ["browser", "Browser"],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        style={{
+                          ...styles.reminderFilterChip,
+                          ...(reminderFilter === value
+                            ? styles.reminderFilterChipActive
+                            : {}),
+                        }}
+                        onClick={() => setReminderFilter(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={styles.reminderSortWrap}>
+                    <SlidersHorizontal size={13} color="#69717B" />
+                    <select
+                      value={reminderSort}
+                      onChange={(e) => setReminderSort(e.target.value)}
+                      style={styles.reminderSortSelect}
+                    >
+                      <option value="soonest">Soonest</option>
+                      <option value="latest">Latest</option>
+                      <option value="recurring">Recurring</option>
+                    </select>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {reminderCenterItems.length > 0 &&
+            reminderCenterFilteredItems.length === 0 ? (
+              <div style={styles.reminderCenterEmpty}>
+                <Search size={24} />
+                <strong>No matching reminders</strong>
+                <span>Try another search or filter.</span>
+              </div>
+            ) : null}
+
             {reminderCenterItems.length === 0 ? (
               <div style={styles.reminderCenterEmpty}>
                 <CalendarDays size={28} />
@@ -2907,7 +3136,7 @@ export default function NotesView({ vault, onVaultChange }) {
               </div>
             ) : (
               <div style={styles.reminderCenterList}>
-                {reminderCenterItems.map((note) => {
+                {reminderCenterFilteredItems.map((note) => {
                   const date = new Date(note.reminderAt);
                   const paused = Boolean(note.reminderPaused);
 
@@ -3496,6 +3725,8 @@ export default function NotesView({ vault, onVaultChange }) {
                     setFormRecurrence("none");
                     setFormRecurrenceDay("");
                     setFormRecurrenceDays([]);
+                    setFormRecurrenceInterval(1);
+                    setFormRecurrenceUnit("days");
                   }}
                 >
                   Clear
@@ -3530,6 +3761,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 <option value="daily">Every day</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Every month</option>
+                <option value="custom">Custom interval</option>
               </select>
             </div>
 
@@ -3630,13 +3862,49 @@ export default function NotesView({ vault, onVaultChange }) {
               </div>
             )}
 
+            {formReminder && formRecurrence === "custom" && (
+              <div style={styles.customRecurrenceRow}>
+                <span style={styles.recurrenceExtraLabel}>Every</span>
+
+                <input
+                  type="number"
+                  min="1"
+                  max="3650"
+                  step="1"
+                  value={formRecurrenceInterval}
+                  onChange={(e) =>
+                    setFormRecurrenceInterval(
+                      Math.max(1, Math.min(3650, Number(e.target.value) || 1)),
+                    )
+                  }
+                  style={styles.customIntervalInput}
+                />
+
+                <select
+                  value={formRecurrenceUnit}
+                  onChange={(e) => setFormRecurrenceUnit(e.target.value)}
+                  style={styles.recurrenceSmallSelect}
+                >
+                  <option value="days">days</option>
+                  <option value="weeks">weeks</option>
+                  <option value="months">months</option>
+                </select>
+              </div>
+            )}
+
             {formReminder && (
               <div style={styles.recurrenceHint}>
-                {recurrenceLabel(
-                  formRecurrence,
-                  formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, formRecurrence),
-                )}
+                {formRecurrence === "custom"
+                  ? recurrenceIntervalLabel(
+                      formRecurrence,
+                      formRecurrenceInterval,
+                      formRecurrenceUnit,
+                    )
+                  : recurrenceLabel(
+                      formRecurrence,
+                      formRecurrenceDay ||
+                        defaultRecurrenceDay(formReminder, formRecurrence),
+                    )}
               </div>
             )}
 
@@ -4317,6 +4585,89 @@ const styles = {
     color: "#B5C9BA",
   },
 
+  reminderCenterSearch: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    border: "1px solid #2C3038",
+    borderRadius: 8,
+    background: "#15181D",
+    padding: "8px 9px",
+    marginTop: 12,
+  },
+
+  reminderCenterSearchInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#DAD7D0",
+    fontSize: 11,
+  },
+
+  reminderCenterClearSearch: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "none",
+    background: "transparent",
+    color: "#717984",
+    cursor: "pointer",
+    padding: 2,
+  },
+
+  reminderCenterToolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+
+  reminderFilterScroll: {
+    display: "flex",
+    gap: 5,
+    flex: 1,
+    overflowX: "auto",
+    paddingBottom: 2,
+  },
+
+  reminderFilterChip: {
+    flexShrink: 0,
+    border: "1px solid #2C3038",
+    borderRadius: 999,
+    background: "#181B20",
+    color: "#7F8791",
+    fontSize: 9,
+    padding: "6px 9px",
+    cursor: "pointer",
+  },
+
+  reminderFilterChipActive: {
+    background: "#202A22",
+    border: "1px solid #38563F",
+    color: "#83B48D",
+  },
+
+  reminderSortWrap: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    border: "1px solid #2C3038",
+    borderRadius: 7,
+    padding: "4px 7px",
+    background: "#181B20",
+  },
+
+  reminderSortSelect: {
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#A3A9B1",
+    fontSize: 9,
+  },
+
   reminderCountPill: {
     minWidth: 17,
     height: 17,
@@ -4459,6 +4810,24 @@ const styles = {
     border: "1px dashed #30343D",
     borderRadius: 10,
     color: "#69717B",
+  },
+
+  customRecurrenceRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 7,
+  },
+
+  customIntervalInput: {
+    width: 70,
+    boxSizing: "border-box",
+    border: "1px solid #2C3038",
+    borderRadius: 6,
+    background: "#181B20",
+    color: "#D9D7D0",
+    padding: "6px 8px",
+    fontSize: 10,
   },
 
   recurrenceControl: {
