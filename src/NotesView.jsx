@@ -902,9 +902,9 @@ export default function NotesView({ vault, onVaultChange }) {
         return false;
       }
 
-      const inArchive = Boolean(note.archived) === showArchivedNotes;
-
-      if (!showTrash && !inArchive) {
+      // All Notes = every non-trashed note, including archived notes.
+      // Archived = only archived, non-trashed notes.
+      if (showArchivedNotes && !note.archived) {
         return false;
       }
 
@@ -974,7 +974,15 @@ export default function NotesView({ vault, onVaultChange }) {
         new Date(a.updatedAt || a.createdAt || 0).getTime()
       );
     });
-  }, [notes, query, selectedFolder, selectedTag, sortMode]);
+  }, [
+    notes,
+    query,
+    selectedFolder,
+    selectedTag,
+    sortMode,
+    showArchivedNotes,
+    showTrash,
+  ]);
 
   const selected = notes.find((note) => note.id === selectedId) || null;
 
@@ -2709,6 +2717,7 @@ export default function NotesView({ vault, onVaultChange }) {
     setSelectedFolder("all");
     setSelectedTag("all");
     setSelectedId(id);
+    setQuery("");
     setError("");
   }
 
@@ -3790,6 +3799,24 @@ export default function NotesView({ vault, onVaultChange }) {
           <div style={styles.eyebrow}>PRIVATE NOTES</div>
 
           <h1 style={styles.titleSmall}>Notes</h1>
+
+          <div style={styles.currentNotesView}>
+            <span style={styles.currentNotesViewBadge}>
+              {showTrash
+                ? "Trash"
+                : showArchivedNotes
+                  ? "Archived"
+                  : "All Notes"}
+            </span>
+
+            <span style={styles.currentNotesViewDetail}>
+              {showTrash
+                ? "Deleted notes"
+                : showArchivedNotes
+                  ? "Archived notes"
+                  : "Active notes"}
+            </span>
+          </div>
 
           <div style={styles.subtle}>{notes.length} saved notes</div>
         </div>
@@ -5968,6 +5995,28 @@ const styles = {
     margin: "8px 0 6px",
     fontFamily: "'Space Grotesk', sans-serif",
     fontSize: 30,
+  },
+
+  currentNotesView: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 7,
+    padding: "5px 8px",
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    background: "#181B20",
+  },
+
+  currentNotesViewBadge: {
+    color: "#D9D7D0",
+    fontSize: 9,
+    fontWeight: 700,
+  },
+
+  currentNotesViewDetail: {
+    color: "#69717B",
+    fontSize: 9,
   },
 
   titleSmall: {
