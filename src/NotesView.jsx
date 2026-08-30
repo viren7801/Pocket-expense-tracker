@@ -3818,7 +3818,20 @@ export default function NotesView({ vault, onVaultChange }) {
             </span>
           </div>
 
-          <div style={styles.subtle}>{notes.length} saved notes</div>
+          <div style={styles.subtle}>
+            {showTrash
+              ? notes.filter((note) => Boolean(note.trashed)).length
+              : showArchivedNotes
+                ? notes.filter(
+                    (note) => Boolean(note.archived) && !note.trashed,
+                  ).length
+                : notes.filter((note) => !note.trashed).length}{" "}
+            {showTrash
+              ? "notes in Trash"
+              : showArchivedNotes
+                ? "archived notes"
+                : "notes"}
+          </div>
         </div>
 
         <div style={styles.headerActions}>
