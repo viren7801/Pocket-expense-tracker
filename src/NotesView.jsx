@@ -571,6 +571,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [selectedTag, setSelectedTag] = useState("all");
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
 
   const [sortMode, setSortMode] = useState("updated");
 
@@ -893,9 +894,17 @@ export default function NotesView({ vault, onVaultChange }) {
     const q = query.trim().toLowerCase();
 
     const result = notes.filter((note) => {
+      if (showTrash) {
+        if (!note.trashed) {
+          return false;
+        }
+      } else if (note.trashed) {
+        return false;
+      }
+
       const inArchive = Boolean(note.archived) === showArchivedNotes;
 
-      if (!inArchive) {
+      if (!showTrash && !inArchive) {
         return false;
       }
 
@@ -2529,6 +2538,8 @@ export default function NotesView({ vault, onVaultChange }) {
             reminderPaused: false,
             pinned: false,
             archived: false,
+            trashed: false,
+            trashedAt: null,
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
                 ? null
@@ -2650,14 +2661,67 @@ export default function NotesView({ vault, onVaultChange }) {
         }),
       });
     } catch {
-      // Deleting the note can still proceed.
+      // Move to Trash even if Telegram cancellation fails.
     }
 
-    const next = notes.filter((note) => note.id !== id);
+    const now = new Date().toISOString();
 
-    setSelectedId(next[0]?.id || null);
+    const next = notes.map((note) =>
+      note.id === id
+        ? {
+            ...note,
+            trashed: true,
+            trashedAt: now,
+            reminderAt: null,
+            reminderPaused: false,
+            notifyTelegram: false,
+            updatedAt: now,
+          }
+        : note,
+    );
 
     await persistNotes(next);
+
+    setSelectedId(
+      next.find((note) => !note.trashed && !note.archived)?.id || null,
+    );
+
+    setError("");
+  }
+
+  async function restoreNote(id) {
+    const next = notes.map((note) =>
+      note.id === id
+        ? {
+            ...note,
+            trashed: false,
+            trashedAt: null,
+            archived: false,
+            updatedAt: new Date().toISOString(),
+          }
+        : note,
+    );
+
+    await persistNotes(next);
+
+    setShowTrash(false);
+    setShowArchivedNotes(false);
+    setSelectedFolder("all");
+    setSelectedTag("all");
+    setSelectedId(id);
+    setError("");
+  }
+
+  async function permanentlyDeleteNote(id) {
+    const next = notes.filter((note) => note.id !== id);
+
+    await persistNotes(next);
+
+    setSelectedId(
+      next.find((note) => !note.trashed && !note.archived)?.id || null,
+    );
+
+    setError("");
   }
 
   async function toggleArchive(id) {
@@ -3326,6 +3390,87 @@ export default function NotesView({ vault, onVaultChange }) {
             </div>
           )}
 
+          <div style={styles.noteViewSwitcher}>
+            <div style={styles.noteViewLabel}>VIEW</div>
+
+            <button
+              type="button"
+              style={{
+                ...styles.noteViewTab,
+                ...(!showArchivedNotes && !showTrash
+                  ? styles.noteViewTabActive
+                  : {}),
+              }}
+              onClick={() => {
+                setShowArchivedNotes(false);
+                setShowTrash(false);
+                setSelectedFolder("all");
+                setSelectedTag("all");
+                setSelectedId(null);
+              }}
+            >
+              <FileText size={13} />
+              All Notes
+              <span style={styles.noteViewCount}>
+                {notes.filter((note) => !note.archived && !note.trashed).length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              style={{
+                ...styles.noteViewTab,
+                ...(showArchivedNotes ? styles.noteViewTabActive : {}),
+              }}
+              onClick={() => {
+                setShowArchivedNotes(true);
+                setShowTrash(false);
+                setSelectedFolder("all");
+                setSelectedTag("all");
+                setSelectedId(null);
+              }}
+            >
+              <Archive size={13} />
+              Archived
+              <span style={styles.noteViewCount}>
+                {
+                  notes.filter(
+                    (note) => Boolean(note.archived) && !note.trashed,
+                  ).length
+                }
+              </span>
+            </button>
+
+            <button
+              type="button"
+              style={{
+                ...styles.noteViewTab,
+                ...(showTrash ? styles.noteViewTabTrashActive : {}),
+              }}
+              onClick={() => {
+                setShowTrash(true);
+                setShowArchivedNotes(false);
+                setSelectedFolder("all");
+                setSelectedTag("all");
+                setSelectedId(null);
+              }}
+            >
+              <Trash2 size={13} />
+              Trash
+              <span style={styles.noteViewCount}>
+                {notes.filter((note) => Boolean(note.trashed)).length}
+              </span>
+            </button>
+
+            <div style={styles.noteViewStatus}>
+              {showTrash
+                ? "Showing deleted notes"
+                : showArchivedNotes
+                  ? "Showing archived notes"
+                  : "Showing active notes"}
+            </div>
+          </div>
+
           <div style={styles.folderBar}>
             <div style={styles.folderScroll}>
               <button
@@ -3337,6 +3482,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={() => {
                   setSelectedFolder("all");
                   setShowArchivedNotes(false);
+                  setShowTrash(false);
                 }}
               >
                 <FileText size={13} />
@@ -3370,6 +3516,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   onClick={() => {
                     setSelectedFolder(folder.id);
                     setShowArchivedNotes(false);
+                    setShowTrash(false);
                   }}
                 >
                   <Folder size={13} />
@@ -3689,6 +3836,24 @@ export default function NotesView({ vault, onVaultChange }) {
             <Archive size={14} />
             {showArchivedNotes ? "Archived" : "Archive"}
           </button>
+          <button
+            type="button"
+            style={{
+              ...styles.secondaryButton,
+              ...(showTrash ? styles.trashButtonActive : {}),
+            }}
+            onClick={() => {
+              setShowTrash((value) => !value);
+              setShowArchivedNotes(false);
+              setSelectedFolder("all");
+              setSelectedTag("all");
+              setSelectedId(null);
+            }}
+            title="Show trashed notes"
+          >
+            <Trash2 size={14} />
+            Trash
+          </button>
 
           <button
             type="button"
@@ -3995,6 +4160,9 @@ export default function NotesView({ vault, onVaultChange }) {
                     {selected.archived && (
                       <span style={styles.archivedBadge}>Archived</span>
                     )}
+                    {selected.trashed && (
+                      <span style={styles.trashBadge}>Trash</span>
+                    )}
                   </div>
                 </div>
 
@@ -4032,23 +4200,58 @@ export default function NotesView({ vault, onVaultChange }) {
                     ))}
                   </select>
 
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={() => toggleArchive(selected.id)}
-                    title={selected.archived ? "Unarchive" : "Archive"}
-                  >
-                    {selected.archived ? "↗" : "→"}
-                  </button>
+                  {!showTrash && (
+                    <button
+                      type="button"
+                      style={styles.iconButton}
+                      onClick={() => toggleArchive(selected.id)}
+                      title={selected.archived ? "Unarchive" : "Archive"}
+                    >
+                      {selected.archived ? "↗" : "→"}
+                    </button>
+                  )}
 
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={() => deleteNote(selected.id)}
-                    title="Delete"
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {showTrash ? (
+                    <>
+                      <button
+                        type="button"
+                        style={styles.iconButton}
+                        onClick={() => restoreNote(selected.id)}
+                        title="Restore"
+                      >
+                        ↶
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.iconButton,
+                          ...styles.reminderDeleteButton,
+                        }}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Permanently delete this note? This cannot be undone.",
+                            )
+                          ) {
+                            permanentlyDeleteNote(selected.id);
+                          }
+                        }}
+                        title="Delete permanently"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      style={styles.iconButton}
+                      onClick={() => deleteNote(selected.id)}
+                      title="Move to Trash"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -6069,6 +6272,70 @@ const styles = {
     fontSize: 11,
   },
 
+  noteViewSwitcher: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+    marginTop: 12,
+    marginBottom: 8,
+    padding: 5,
+    border: "1px solid #2D323B",
+    borderRadius: 9,
+    background: "#15181D",
+  },
+
+  noteViewLabel: {
+    padding: "0 5px",
+    color: "#5F6772",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.8,
+  },
+
+  noteViewTab: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 9px",
+    border: "1px solid transparent",
+    borderRadius: 7,
+    background: "transparent",
+    color: "#858D98",
+    cursor: "pointer",
+    fontSize: 10,
+    fontWeight: 600,
+  },
+
+  noteViewTabActive: {
+    border: "1px solid #3E6D48",
+    background: "#203225",
+    color: "#78C887",
+  },
+
+  noteViewTabTrashActive: {
+    border: "1px solid #714046",
+    background: "#302126",
+    color: "#D9919A",
+  },
+
+  noteViewCount: {
+    minWidth: 18,
+    padding: "2px 5px",
+    borderRadius: 8,
+    background: "#20242B",
+    color: "#7D8590",
+    fontSize: 8,
+    textAlign: "center",
+  },
+
+  noteViewStatus: {
+    marginLeft: "auto",
+    padding: "0 6px",
+    color: "#606873",
+    fontSize: 9,
+  },
+
   folderBar: {
     marginBottom: 12,
   },
@@ -7143,6 +7410,20 @@ const styles = {
 
   templateMenuItemDetail: {
     color: "#6F7782",
+    fontSize: 9,
+  },
+
+  trashButtonActive: {
+    border: "1px solid #714046",
+    background: "#302126",
+    color: "#D9919A",
+  },
+
+  trashBadge: {
+    padding: "4px 6px",
+    borderRadius: 5,
+    background: "#302126",
+    color: "#D9919A",
     fontSize: 9,
   },
 
