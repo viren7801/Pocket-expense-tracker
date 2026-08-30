@@ -1459,6 +1459,44 @@ export default function NotesView({ vault, onVaultChange }) {
     setError("");
   }
 
+  async function snoozeReminder(note, minutes) {
+    if (!note?.id) return;
+
+    try {
+      const response = await fetch("/api/telegram?action=snooze-reminder", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          noteId: note.id,
+          minutes,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not snooze reminder.");
+      }
+
+      const nextNotes = notes.map((current) =>
+        current.id === note.id
+          ? {
+              ...current,
+              reminderAt: data.reminderAt,
+              updatedAt: new Date().toISOString(),
+            }
+          : current,
+      );
+
+      await persistNotes(nextNotes);
+      setError("");
+    } catch (e) {
+      setError(e.message || "Could not snooze reminder.");
+    }
+  }
+
   async function cancelReminder(note) {
     const nextNotes = notes.map((current) =>
       current.id === note.id
@@ -3199,6 +3237,62 @@ export default function NotesView({ vault, onVaultChange }) {
                           <Pencil size={14} />
                         </button>
 
+                        {!paused && note.notifyTelegram && (
+                          <select
+                            defaultValue=""
+                            style={styles.snoozeSelect}
+                            onChange={async (e) => {
+                              const value = e.target.value;
+
+                              if (!value) {
+                                return;
+                              }
+
+                              if (value === "custom") {
+                                const input = window.prompt(
+                                  "Snooze for how many minutes?",
+                                  "30",
+                                );
+
+                                if (input === null) {
+                                  e.target.value = "";
+                                  return;
+                                }
+
+                                const minutes = Number(input);
+
+                                if (
+                                  !Number.isFinite(minutes) ||
+                                  minutes < 1 ||
+                                  minutes > 10080
+                                ) {
+                                  setError(
+                                    "Enter a snooze time between 1 and 10080 minutes.",
+                                  );
+                                  e.target.value = "";
+                                  return;
+                                }
+
+                                await snoozeReminder(note, Math.round(minutes));
+                              } else {
+                                await snoozeReminder(note, Number(value));
+                              }
+
+                              e.target.value = "";
+                            }}
+                            title="Snooze reminder"
+                            aria-label="Snooze reminder"
+                          >
+                            <option value="">Snooze</option>
+                            <option value="5">5 min</option>
+                            <option value="15">15 min</option>
+                            <option value="30">30 min</option>
+                            <option value="60">1 hour</option>
+                            <option value="1440">Tomorrow</option>
+                            <option value="custom">Custom…</option>
+                          </select>
+                        )}
+
                         <button
                           type="button"
                           style={styles.reminderActionButton}
@@ -4782,7 +4876,21 @@ const styles = {
     flexShrink: 0,
   },
 
+  snoozeSelect: {
+    minWidth: 72,
+    height: 30,
+    border: "1px solid #2D323B",
+    borderRadius: 7,
+    background: "#181B20",
+    color: "#8D949E",
+    padding: "0 8px",
+    fontSize: 10,
+    cursor: "pointer",
+    outline: "none",
+  },
+
   reminderActionButton: {
+    minWidth: 30,
     width: 30,
     height: 30,
     display: "flex",
