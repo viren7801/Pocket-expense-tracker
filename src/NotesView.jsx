@@ -27,6 +27,7 @@ import {
   Redo2,
   Bell,
   Folder,
+  FolderPlus,
   CalendarDays,
   SlidersHorizontal,
   Repeat,
@@ -500,6 +501,60 @@ function recurrenceIntervalLabel(recurrence, interval, unit) {
   return `Every ${amount} ${label}`;
 }
 
+const NOTE_TEMPLATES = [
+  {
+    id: "blank",
+    name: "Blank note",
+    description: "Start from scratch",
+    title: "",
+    content: "",
+    tags: [],
+  },
+  {
+    id: "meeting",
+    name: "Meeting notes",
+    description: "Agenda, notes, decisions, actions",
+    title: "Meeting notes",
+    content:
+      "## Agenda\n\n- \n\n## Notes\n\n\n## Decisions\n\n- \n\n## Action items\n\n- [ ] ",
+    tags: ["meeting"],
+  },
+  {
+    id: "daily-log",
+    name: "Daily log",
+    description: "Quick daily reflection",
+    title: "Daily log",
+    content:
+      "## Today\n\n\n## Wins\n\n- \n\n## Blockers\n\n- \n\n## Tomorrow\n\n- ",
+    tags: ["daily"],
+  },
+  {
+    id: "checklist",
+    name: "Checklist",
+    description: "Simple reusable checklist",
+    title: "Checklist",
+    content: "## Checklist\n\n- [ ] \n- [ ] \n- [ ] ",
+    tags: ["checklist"],
+  },
+  {
+    id: "idea",
+    name: "Idea",
+    description: "Capture and develop an idea",
+    title: "Idea",
+    content: "## Idea\n\n\n## Why it matters\n\n\n## Next step\n\n- [ ] ",
+    tags: ["idea"],
+  },
+  {
+    id: "project",
+    name: "Project plan",
+    description: "Goal, tasks, risks, next steps",
+    title: "Project plan",
+    content:
+      "## Goal\n\n\n## Tasks\n\n- [ ] \n\n## Risks\n\n- \n\n## Next steps\n\n- [ ] ",
+    tags: ["project"],
+  },
+];
+
 export default function NotesView({ vault, onVaultChange }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -519,6 +574,14 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState([]);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [templateEditingId, setTemplateEditingId] = useState(null);
+  const [templateTitle, setTemplateTitle] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [templateTags, setTemplateTags] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [importPreview, setImportPreview] = useState([]);
   const [importFileName, setImportFileName] = useState("");
@@ -1135,6 +1198,10 @@ export default function NotesView({ vault, onVaultChange }) {
       sessionPasswordRef.current = password;
 
       setNotes(decrypted);
+      setCustomTemplates(
+        Array.isArray(vault?.customTemplates) ? vault.customTemplates : [],
+      );
+
       setFolders(
         Array.isArray(vault?.folders)
           ? vault.folders
@@ -1161,6 +1228,7 @@ export default function NotesView({ vault, onVaultChange }) {
     recoveredDataKeyRef.current = null;
 
     setNotes([]);
+    setCustomTemplates([]);
     setSelectedId(null);
     setShowForm(false);
     setEditing(null);
@@ -1975,6 +2043,163 @@ export default function NotesView({ vault, onVaultChange }) {
     } finally {
       setImportBusy(false);
     }
+  }
+
+  function openTemplateManager() {
+    setShowTemplateMenu(false);
+    setTemplateEditingId(null);
+    setTemplateName("");
+    setTemplateDescription("");
+    setTemplateTitle("");
+    setTemplateTags("");
+    setShowTemplateManager(true);
+    setError("");
+  }
+
+  function startEditCustomTemplate(template) {
+    setTemplateEditingId(template.id);
+    setTemplateName(template.name || "");
+    setTemplateDescription(template.description || "");
+    setTemplateTitle(template.title || "");
+    setTemplateTags(
+      Array.isArray(template.tags) ? template.tags.join(", ") : "",
+    );
+    setShowTemplateManager(true);
+    setShowTemplateMenu(false);
+    setError("");
+  }
+
+  async function saveCustomTemplate() {
+    const name = templateName.trim();
+
+    if (!name) {
+      setError("Enter a template name.");
+      return;
+    }
+
+    const title = templateTitle.trim();
+
+    const description = templateDescription.trim();
+
+    const tags = templateTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    let next;
+
+    if (templateEditingId) {
+      next = customTemplates.map((template) =>
+        template.id === templateEditingId
+          ? {
+              ...template,
+              name,
+              description,
+              title,
+              content: form.content || "",
+              tags,
+            }
+          : template,
+      );
+    } else {
+      next = [
+        ...customTemplates,
+        {
+          id: makeId(),
+          name,
+          description,
+          title,
+          content: form.content || "",
+          tags,
+        },
+      ];
+    }
+
+    setCustomTemplates(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        customTemplates: next,
+      });
+    }
+
+    setTemplateEditingId(null);
+    setTemplateName("");
+    setTemplateDescription("");
+    setTemplateTitle("");
+    setTemplateTags("");
+    setShowTemplateManager(false);
+    setError("");
+  }
+
+  async function deleteCustomTemplate(templateId) {
+    const next = customTemplates.filter(
+      (template) => template.id !== templateId,
+    );
+
+    setCustomTemplates(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        customTemplates: next,
+      });
+    }
+
+    setError("");
+  }
+
+  function createFromCustomTemplate(template) {
+    if (!template) {
+      return;
+    }
+
+    setForm({
+      title: template.title || "",
+      content: template.content || "",
+    });
+
+    setFormTags(Array.isArray(template.tags) ? template.tags : []);
+
+    setFormReminder("");
+    setFormRecurrence("none");
+    setFormRecurrenceDay("");
+    setFormRecurrenceDays([]);
+    setFormRecurrenceInterval(1);
+    setFormRecurrenceUnit("days");
+    setFormNotifyTelegram(false);
+    setShowTemplateMenu(false);
+    setShowForm(true);
+    setError("");
+  }
+
+  function applyNoteTemplate(templateId) {
+    const template =
+      NOTE_TEMPLATES.find((item) => item.id === templateId) ||
+      customTemplates.find((item) => item.id === templateId);
+
+    if (!template) {
+      return;
+    }
+
+    setForm({
+      title: template.title || "",
+      content: template.content || "",
+    });
+
+    setFormTags(Array.isArray(template.tags) ? template.tags : []);
+
+    setFormReminder("");
+    setFormRecurrence("none");
+    setFormRecurrenceDay("");
+    setFormRecurrenceDays([]);
+    setFormRecurrenceInterval(1);
+    setFormRecurrenceUnit("days");
+    setFormNotifyTelegram(false);
+    setError("");
+    setShowTemplateMenu(false);
+    setShowForm(true);
   }
 
   function downloadExportFile(filename, content, mimeType) {
@@ -3531,6 +3756,37 @@ export default function NotesView({ vault, onVaultChange }) {
             Lock
           </button>
 
+          <div style={styles.templateWrap}>
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => setShowTemplateMenu((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={showTemplateMenu}
+            >
+              <Repeat size={14} />
+              Templates
+            </button>
+
+            {showTemplateMenu && (
+              <div style={styles.templateMenu}>
+                <div style={styles.templateMenuTitle}>New from template</div>
+
+                {NOTE_TEMPLATES.map((template) => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    style={styles.templateMenuItem}
+                    onClick={() => applyNoteTemplate(template.id)}
+                  >
+                    <strong>{template.name}</strong>
+                    <span>{template.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             style={styles.primaryCompactButton}
@@ -3630,6 +3886,39 @@ export default function NotesView({ vault, onVaultChange }) {
                       ),
                     )}
 
+                    {customTemplates.length > 0 && (
+                      <>
+                        <div style={styles.templateMenuSection}>
+                          YOUR TEMPLATES
+                        </div>
+
+                        {customTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            style={styles.templateMenuItem}
+                            onClick={() => createFromCustomTemplate(template)}
+                          >
+                            <strong>{template.name}</strong>
+                            <span>
+                              {template.description || "Custom template"}
+                            </span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.templateMenuManage,
+                      }}
+                      onClick={openTemplateManager}
+                    >
+                      <FolderPlus size={14} />
+                      Manage templates
+                    </button>
+
                     {selected.reminderAt && (
                       <span style={styles.reminderBadge}>
                         <CalendarDays size={11} />
@@ -3715,6 +4004,144 @@ export default function NotesView({ vault, onVaultChange }) {
           )}
         </div>
       </div>
+
+      {showTemplateManager && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 760,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => {
+                setShowTemplateManager(false);
+                setTemplateEditingId(null);
+                setError("");
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>CUSTOM TEMPLATES</div>
+
+            <h2 style={styles.formTitle}>
+              {templateEditingId ? "Edit template" : "Create template"}
+            </h2>
+
+            <label style={styles.label}>Template name</label>
+            <input
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="e.g. Weekly review"
+              style={styles.input}
+              autoFocus
+            />
+
+            <label style={styles.label}>Description</label>
+            <input
+              value={templateDescription}
+              onChange={(e) => setTemplateDescription(e.target.value)}
+              placeholder="What is this template for?"
+              style={styles.input}
+            />
+
+            <label style={styles.label}>Note title</label>
+            <input
+              value={templateTitle}
+              onChange={(e) => setTemplateTitle(e.target.value)}
+              placeholder="Default note title"
+              style={styles.input}
+            />
+
+            <label style={styles.label}>Tags</label>
+            <input
+              value={templateTags}
+              onChange={(e) => setTemplateTags(e.target.value)}
+              placeholder="work, weekly, review"
+              style={styles.input}
+            />
+
+            <label style={styles.label}>Template content</label>
+            <textarea
+              value={form.content || ""}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  content: e.target.value,
+                })
+              }
+              placeholder="Write the reusable note structure here…"
+              style={{
+                ...styles.textarea,
+                minHeight: 180,
+              }}
+            />
+
+            {customTemplates.length > 0 && (
+              <div style={styles.customTemplateList}>
+                <div style={styles.templateListTitle}>Your templates</div>
+
+                {customTemplates.map((template) => (
+                  <div key={template.id} style={styles.customTemplateRow}>
+                    <div style={styles.customTemplateInfo}>
+                      <strong>{template.name}</strong>
+                      <span>{template.description || "No description"}</span>
+                    </div>
+
+                    <div style={styles.customTemplateActions}>
+                      <button
+                        type="button"
+                        style={styles.reminderActionButton}
+                        onClick={() => startEditCustomTemplate(template)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.reminderActionButton,
+                          ...styles.reminderDeleteButton,
+                        }}
+                        onClick={() => deleteCustomTemplate(template.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.linkButton}
+                onClick={() => {
+                  setShowTemplateManager(false);
+                  setTemplateEditingId(null);
+                  setError("");
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={saveCustomTemplate}
+              >
+                {templateEditingId ? "Save changes" : "Create template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showImportModal && (
         <div style={styles.overlay}>
@@ -6527,6 +6954,119 @@ const styles = {
     alignItems: "flex-end",
     gap: 16,
     marginBottom: 16,
+  },
+
+  templateWrap: {
+    position: "relative",
+  },
+
+  templateMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    width: 245,
+    zIndex: 50,
+    padding: 6,
+    border: "1px solid #2D323B",
+    borderRadius: 9,
+    background: "#15181D",
+    boxShadow: "0 16px 35px rgba(0,0,0,0.35)",
+  },
+
+  templateMenuTitle: {
+    padding: "6px 7px 8px",
+    color: "#E1DED6",
+    fontSize: 10,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+
+  templateMenuSection: {
+    padding: "8px 7px 5px",
+    color: "#59616D",
+    fontSize: 8,
+    fontWeight: 700,
+    letterSpacing: 0.7,
+  },
+
+  templateMenuManage: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 7,
+    marginTop: 5,
+    padding: "8px 7px",
+    borderTop: "1px solid #2D323B",
+    borderRight: "none",
+    borderBottom: "none",
+    borderLeft: "none",
+    background: "#15181D",
+    color: "#8C949F",
+    cursor: "pointer",
+    fontSize: 9,
+    textAlign: "left",
+  },
+
+  customTemplateList: {
+    marginTop: 14,
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+
+  templateListTitle: {
+    padding: "8px 10px",
+    color: "#8C949F",
+    background: "#181B20",
+    fontSize: 9,
+    fontWeight: 700,
+    textTransform: "uppercase",
+  },
+
+  customTemplateRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "9px 10px",
+    borderTop: "1px solid #242830",
+  },
+
+  customTemplateInfo: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    color: "#D9D7D0",
+    fontSize: 10,
+  },
+
+  customTemplateActions: {
+    display: "flex",
+    gap: 5,
+    flexShrink: 0,
+  },
+
+  templateMenuItem: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 3,
+    padding: "9px 8px",
+    border: "none",
+    borderRadius: 7,
+    background: "#15181D",
+    color: "#D9D7D0",
+    cursor: "pointer",
+    textAlign: "left",
+  },
+
+  templateMenuItemDetail: {
+    color: "#6F7782",
+    fontSize: 9,
   },
 
   exportWrap: {
