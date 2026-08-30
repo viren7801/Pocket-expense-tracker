@@ -782,6 +782,33 @@ export default function NotesView({ vault, onVaultChange }) {
     }).length;
   }, [notes]);
 
+  const importDuplicateCount = useMemo(() => {
+    if (!Array.isArray(importPreview) || !importPreview.length) {
+      return 0;
+    }
+
+    return importPreview.filter((note) =>
+      notes.some(
+        (existing) =>
+          String(existing.title || "")
+            .trim()
+            .toLowerCase() ===
+            String(note.title || "")
+              .trim()
+              .toLowerCase() &&
+          String(existing.content || "").trim() ===
+            String(note.content || "").trim(),
+      ),
+    ).length;
+  }, [importPreview, notes]);
+
+  const importNewCount = Math.max(
+    0,
+    importPreview.length - importDuplicateCount,
+  );
+
+  const importSelectedCount = importSelectedIds.length;
+
   const filteredReminderHistory = useMemo(() => {
     const query = reminderHistoryQuery.trim().toLowerCase();
 
@@ -3720,6 +3747,23 @@ export default function NotesView({ vault, onVaultChange }) {
               {importPreview.length === 1 ? "" : "s"}
             </p>
 
+            <div style={styles.importStats}>
+              <span style={styles.importStatNew}>✓ {importNewCount} new</span>
+              <span
+                style={{
+                  ...styles.importStatDuplicate,
+                  ...(importDuplicateCount === 0 ? styles.importStatZero : {}),
+                }}
+              >
+                {importDuplicateCount > 0 ? "⚠" : "✓"} {importDuplicateCount}{" "}
+                duplicate
+                {importDuplicateCount === 1 ? "" : "s"}
+              </span>
+              <span style={styles.importStatSelected}>
+                {importSelectedCount} selected
+              </span>
+            </div>
+
             <div style={styles.importDuplicateBox}>
               <div style={styles.importSectionTitle}>Duplicate handling</div>
 
@@ -3852,8 +3896,50 @@ export default function NotesView({ vault, onVaultChange }) {
               >
                 {importBusy
                   ? "Importing…"
-                  : `Import ${importSelectedIds.length} note${
-                      importSelectedIds.length === 1 ? "" : "s"
+                  : `Import ${Math.max(
+                      0,
+                      importSelectedCount -
+                        (importDuplicateMode === "skip"
+                          ? importPreview.filter(
+                              (note) =>
+                                importSelectedIds.includes(note.id) &&
+                                notes.some(
+                                  (existing) =>
+                                    String(existing.title || "")
+                                      .trim()
+                                      .toLowerCase() ===
+                                      String(note.title || "")
+                                        .trim()
+                                        .toLowerCase() &&
+                                    String(existing.content || "").trim() ===
+                                      String(note.content || "").trim(),
+                                ),
+                            ).length
+                          : 0),
+                    )} note${
+                      Math.max(
+                        0,
+                        importSelectedCount -
+                          (importDuplicateMode === "skip"
+                            ? importPreview.filter(
+                                (note) =>
+                                  importSelectedIds.includes(note.id) &&
+                                  notes.some(
+                                    (existing) =>
+                                      String(existing.title || "")
+                                        .trim()
+                                        .toLowerCase() ===
+                                        String(note.title || "")
+                                          .trim()
+                                          .toLowerCase() &&
+                                      String(existing.content || "").trim() ===
+                                        String(note.content || "").trim(),
+                                  ),
+                              ).length
+                            : 0),
+                      ) === 1
+                        ? ""
+                        : "s"
                     }`}
               </button>
             </div>
@@ -5860,6 +5946,42 @@ const styles = {
 
   reminderDeleteButton: {
     color: "#C37A6A",
+  },
+
+  importStats: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 7,
+    marginTop: 8,
+  },
+
+  importStatNew: {
+    padding: "4px 7px",
+    borderRadius: 6,
+    background: "#203225",
+    color: "#78C887",
+    fontSize: 9,
+  },
+
+  importStatDuplicate: {
+    padding: "4px 7px",
+    borderRadius: 6,
+    background: "#39291F",
+    color: "#D4A06D",
+    fontSize: 9,
+  },
+
+  importStatZero: {
+    background: "#20242B",
+    color: "#8A929C",
+  },
+
+  importStatSelected: {
+    padding: "4px 7px",
+    borderRadius: 6,
+    background: "#20242B",
+    color: "#8A929C",
+    fontSize: 9,
   },
 
   importDuplicateBox: {
