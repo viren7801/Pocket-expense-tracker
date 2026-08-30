@@ -1161,6 +1161,54 @@ export default function NotesView({ vault, onVaultChange }) {
     setPhase("locked");
   }
 
+  async function loadReminderHistory() {
+    try {
+      const response = await fetch("/api/telegram?action=history", {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not load reminder history.");
+      }
+
+      const remote = Array.isArray(data.history)
+        ? data.history.map((item) => ({
+            id: `server-${item.id}`,
+            noteId: item.note_id || null,
+            title: item.title || "",
+            action: item.action,
+            detail: item.detail || null,
+            at: item.created_at,
+          }))
+        : [];
+
+      setReminderHistory((current) => {
+        const local = Array.isArray(current) ? current : [];
+        const combined = [...remote, ...local];
+        const seen = new Set();
+
+        return combined
+          .sort(
+            (a, b) =>
+              new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime(),
+          )
+          .filter((item) => {
+            const key = `${item.noteId || ""}|${item.action || ""}|${item.at || ""}|${item.detail || ""}`;
+
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .slice(0, 200);
+      });
+    } catch (e) {
+      setError(e.message || "Could not load reminder history.");
+    }
+  }
+
   async function recordReminderHistory(entry) {
     const nextHistory = appendReminderHistory(reminderHistory, entry);
 

@@ -337,14 +337,34 @@ export default async function handler(req, res) {
                 ? "1 hour"
                 : `${minutes} minutes`;
 
+          await logReminderHistory(supabase, {
+            reminderId: reminder.id,
+            noteId: noteId,
+            title: reminder.title,
+            action: "snoozed",
+            detail: `Snoozed for ${pretty}`,
+          });
+
+          if (callbackQuery.message?.message_id) {
+            try {
+              await telegramRequest("editMessageText", {
+                chat_id: callbackChatId,
+
+                message_id: callbackQuery.message.message_id,
+
+                text: `⏰ ${reminder.title}\n\nSnoozed for ${pretty}.`,
+              });
+            } catch (editError) {
+              console.error(
+                "Could not edit Telegram snooze message:",
+                editError,
+              );
+            }
+          }
+
           await telegramRequest("answerCallbackQuery", {
             callback_query_id: callbackQuery.id,
             text: `Snoozed for ${pretty}.`,
-          });
-
-          await telegramRequest("sendMessage", {
-            chat_id: callbackChatId,
-            text: `⏰ ${reminder.title}\n\nSnoozed for ${pretty}.`,
           });
         } else {
           await telegramRequest("answerCallbackQuery", {
