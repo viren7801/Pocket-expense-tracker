@@ -738,6 +738,7 @@ export default function NotesView({ vault, onVaultChange }) {
   });
   const [formAttachments, setFormAttachments] = useState([]);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [isAttachmentDragging, setIsAttachmentDragging] = useState(false);
 
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
@@ -1552,6 +1553,37 @@ export default function NotesView({ vault, onVaultChange }) {
 
       reader.readAsDataURL(file);
     });
+  }
+
+  function handleAttachmentDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!attachmentBusy) {
+      setIsAttachmentDragging(true);
+    }
+  }
+
+  function handleAttachmentDragLeave(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setIsAttachmentDragging(false);
+    }
+  }
+
+  async function handleAttachmentDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setIsAttachmentDragging(false);
+
+    if (attachmentBusy) {
+      return;
+    }
+
+    await addAttachments(event.dataTransfer ? event.dataTransfer.files : null);
   }
 
   async function addAttachments(fileList) {
@@ -7686,7 +7718,18 @@ export default function NotesView({ vault, onVaultChange }) {
               </div>
             </div>
 
-            <div style={styles.attachmentSection}>
+            <div
+              style={{
+                ...styles.attachmentSection,
+                ...(isAttachmentDragging
+                  ? styles.attachmentSectionDragging
+                  : {}),
+              }}
+              onDragEnter={handleAttachmentDragOver}
+              onDragOver={handleAttachmentDragOver}
+              onDragLeave={handleAttachmentDragLeave}
+              onDrop={handleAttachmentDrop}
+            >
               <div style={styles.attachmentHeader}>
                 <div>
                   <div style={styles.attachmentTitle}>Attachments</div>
@@ -7730,6 +7773,16 @@ export default function NotesView({ vault, onVaultChange }) {
                   }}
                 />
               </div>
+
+              {isAttachmentDragging && (
+                <div style={styles.attachmentDropHint}>
+                  <Paperclip size={16} />
+                  <strong>Drop files here</strong>
+                  <span style={styles.attachmentDropHintSubtext}>
+                    Release to attach · 5 MB each · 10 MB total
+                  </span>
+                </div>
+              )}
 
               {formAttachments.length > 0 && (
                 <div style={styles.attachmentList}>
@@ -8007,6 +8060,32 @@ const styles = {
     border: "1px solid #292E36",
     borderRadius: 9,
     background: "#14171C",
+  },
+
+  attachmentSectionDragging: {
+    borderColor: "#4FE36B",
+    background: "#142018",
+    boxShadow: "0 0 0 1px rgba(79,227,107,0.12) inset",
+  },
+
+  attachmentDropHint: {
+    marginTop: 9,
+    minHeight: 72,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    border: "1px dashed #3B8B4A",
+    borderRadius: 8,
+    background: "#111914",
+    color: "#7FE88C",
+    fontSize: 9,
+  },
+
+  attachmentDropHintSubtext: {
+    color: "#718078",
+    fontSize: 8,
   },
 
   attachmentHeader: {
