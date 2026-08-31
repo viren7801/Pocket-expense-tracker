@@ -580,6 +580,9 @@ export default function NotesView({ vault, onVaultChange }) {
   const [selectedFolder, setSelectedFolder] = useState("all");
 
   const [selectedTag, setSelectedTag] = useState("all");
+  const [searchPinnedOnly, setSearchPinnedOnly] = useState(false);
+  const [searchHasReminder, setSearchHasReminder] = useState(false);
+  const [showSearchFilters, setShowSearchFilters] = useState(false);
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
 
@@ -1054,6 +1057,30 @@ export default function NotesView({ vault, onVaultChange }) {
     });
   }, [reminderHistory, reminderHistoryQuery, reminderHistoryFilter]);
 
+  function renderSearchHighlight(value, searchValue) {
+    const text = String(value || "");
+
+    const search = String(searchValue || "").trim();
+
+    if (!search) {
+      return text || "Empty note";
+    }
+
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const parts = text.split(new RegExp(`(${escaped})`, "ig"));
+
+    return parts.map((part, index) =>
+      part.toLowerCase() === search.toLowerCase() ? (
+        <mark key={`${part}-${index}`} style={styles.searchHighlight}>
+          {part}
+        </mark>
+      ) : (
+        <span key={`${part}-${index}`}>{part}</span>
+      ),
+    );
+  }
+
   const filteredNotes = useMemo(() => {
     const q = query.trim().toLowerCase();
 
@@ -1089,6 +1116,14 @@ export default function NotesView({ vault, onVaultChange }) {
           : Array.isArray(note.tags) && note.tags.includes(selectedTag);
 
       if (!inTag) {
+        return false;
+      }
+
+      if (searchPinnedOnly && !Boolean(note.pinned)) {
+        return false;
+      }
+
+      if (searchHasReminder && !Boolean(note.reminderAt)) {
         return false;
       }
 
@@ -1143,6 +1178,8 @@ export default function NotesView({ vault, onVaultChange }) {
     query,
     selectedFolder,
     selectedTag,
+    searchPinnedOnly,
+    searchHasReminder,
     sortMode,
     showArchivedNotes,
     showTrash,
@@ -5450,6 +5487,91 @@ export default function NotesView({ vault, onVaultChange }) {
           placeholder="Search notes…"
           style={styles.searchInput}
         />
+
+        {query.trim() && (
+          <span style={styles.searchResultCount}>
+            {filteredNotes.length}{" "}
+            {filteredNotes.length === 1 ? "result" : "results"}
+          </span>
+        )}
+
+        <div style={styles.searchFilterWrap}>
+          <button
+            type="button"
+            style={{
+              ...styles.searchFilterButton,
+              ...(searchPinnedOnly || searchHasReminder
+                ? styles.searchFilterButtonActive
+                : {}),
+            }}
+            onClick={() => setShowSearchFilters((value) => !value)}
+            title="Filter search results"
+            aria-haspopup="menu"
+            aria-expanded={showSearchFilters}
+          >
+            <SlidersHorizontal size={13} />
+            Filters
+            {(searchPinnedOnly || searchHasReminder) && (
+              <span style={styles.searchFilterBadge}>
+                {[searchPinnedOnly, searchHasReminder].filter(Boolean).length}
+              </span>
+            )}
+          </button>
+
+          {showSearchFilters && (
+            <div style={styles.searchFilterMenu}>
+              <div style={styles.searchFilterTitle}>SEARCH FILTERS</div>
+
+              <button
+                type="button"
+                style={styles.searchFilterItem}
+                onClick={() => setSearchPinnedOnly((value) => !value)}
+              >
+                <span>Pinned notes only</span>
+                <span
+                  style={
+                    searchPinnedOnly
+                      ? styles.searchFilterCheckActive
+                      : styles.searchFilterCheck
+                  }
+                >
+                  {searchPinnedOnly ? "✓" : ""}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                style={styles.searchFilterItem}
+                onClick={() => setSearchHasReminder((value) => !value)}
+              >
+                <span>Notes with reminders</span>
+                <span
+                  style={
+                    searchHasReminder
+                      ? styles.searchFilterCheckActive
+                      : styles.searchFilterCheck
+                  }
+                >
+                  {searchHasReminder ? "✓" : ""}
+                </span>
+              </button>
+
+              {(searchPinnedOnly || searchHasReminder) && (
+                <button
+                  type="button"
+                  style={styles.searchFilterClear}
+                  onClick={() => {
+                    setSearchPinnedOnly(false);
+                    setSearchHasReminder(false);
+                    setShowSearchFilters(false);
+                  }}
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={styles.tagFilterToolbar}>
@@ -5536,6 +5658,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={() => {
                   setSelectedId(note.id);
                   setShowNoteExportMenu(false);
+                  setShowSearchFilters(false);
                 }}
                 style={{
                   ...styles.noteRow,
@@ -5548,12 +5671,17 @@ export default function NotesView({ vault, onVaultChange }) {
                 </div>
 
                 <div style={styles.rowText}>
-                  <div style={styles.rowTitle}>{note.title}</div>
+                  <div style={styles.rowTitle}>
+                    {renderSearchHighlight(note.title, query)}
+                  </div>
 
                   <div style={styles.rowMeta}>
-                    {String(note.content || "")
-                      .replace(/\s+/g, " ")
-                      .slice(0, 70) || "Empty note"}
+                    {renderSearchHighlight(
+                      String(note.content || "")
+                        .replace(/\s+/g, " ")
+                        .slice(0, 70),
+                      query,
+                    )}
                   </div>
                 </div>
               </button>
@@ -10419,6 +10547,132 @@ const styles = {
     background: "#14161B",
     border: "1px solid #292D35",
     marginBottom: 12,
+  },
+
+  searchFilterWrap: {
+    position: "relative",
+    flexShrink: 0,
+  },
+
+  searchFilterButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    height: 30,
+    padding: "0 9px",
+    border: "1px solid #2B3038",
+    borderRadius: 6,
+    background: "#171A1F",
+    color: "#858D97",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  searchFilterButtonActive: {
+    borderColor: "#3B4D3F",
+    color: "#B7C7BA",
+    background: "#18201B",
+  },
+
+  searchFilterBadge: {
+    minWidth: 15,
+    height: 15,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 99,
+    background: "#2B3F30",
+    color: "#A8D5AE",
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  searchFilterMenu: {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    right: 0,
+    zIndex: 70,
+    width: 225,
+    padding: 6,
+    border: "1px solid #2C323A",
+    borderRadius: 8,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.34)",
+  },
+
+  searchFilterTitle: {
+    padding: "6px 8px",
+    color: "#68717B",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  searchFilterItem: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 8px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#B6BCC4",
+    fontSize: 9,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  searchFilterCheck: {
+    width: 17,
+    height: 17,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #39404A",
+    borderRadius: 4,
+    color: "#68717B",
+    fontSize: 10,
+  },
+
+  searchFilterCheckActive: {
+    width: 17,
+    height: 17,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #4E7B58",
+    borderRadius: 4,
+    background: "#1D3021",
+    color: "#9ED5A4",
+    fontSize: 10,
+  },
+
+  searchFilterClear: {
+    width: "100%",
+    marginTop: 3,
+    padding: "7px 8px",
+    border: "none",
+    borderTop: "1px solid #292E36",
+    background: "transparent",
+    color: "#868F98",
+    fontSize: 8,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  searchResultCount: {
+    flexShrink: 0,
+    color: "#68717B",
+    fontSize: 8,
+    whiteSpace: "nowrap",
+  },
+
+  searchHighlight: {
+    padding: "1px 2px",
+    borderRadius: 3,
+    background: "#304A33",
+    color: "#D8F2D7",
   },
 
   searchInput: {
