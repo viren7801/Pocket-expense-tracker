@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 // Passkey recovery uses the browser WebAuthn API directly so the PRF
 // extension values can be supplied as ArrayBuffer instances.
 import {
@@ -39,7 +39,11 @@ import {
   Share2,
   Ban,
   Copy,
+  Files,
+  Check,
   Link2,
+  History,
+  Clock3,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -590,7 +594,11 @@ export default function NotesView({ vault, onVaultChange }) {
   const [shareUrl, setShareUrl] = useState("");
   const [sharedLinks, setSharedLinks] = useState([]);
   const [showShareManager, setShowShareManager] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [noteCopied, setNoteCopied] = useState(false);
   const [shareManagerBusy, setShareManagerBusy] = useState(false);
+  const [shareNow, setShareNow] = useState(Date.now());
+  const [shareCopied, setShareCopied] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [customTemplates, setCustomTemplates] = useState([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
@@ -1429,44 +1437,63 @@ export default function NotesView({ vault, onVaultChange }) {
 
     const updatedAt = new Date().toISOString();
 
-    const nextNotes = notes.map((note) =>
-      note.id === editing.id
-        ? {
-            ...note,
-            title: form.title.trim() || note.title,
-            content: nextContent,
-            tags: [...formTags],
-            reminderAt: localReminderToISO(formReminder),
-            recurrence: formReminder ? formRecurrence : "none",
-            recurrenceDay:
-              formReminder && formRecurrence === "monthly"
-                ? Number(
-                    formRecurrenceDay ||
-                      defaultRecurrenceDay(formReminder, "monthly"),
-                  )
-                : null,
-            recurrenceDays:
-              formReminder && formRecurrence === "weekly"
-                ? normalizeRecurrenceDays(
-                    formRecurrenceDays.length
-                      ? formRecurrenceDays
-                      : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
-                  )
-                : [],
-            recurrenceInterval:
-              formReminder && formRecurrence === "custom"
-                ? Math.max(1, Number(formRecurrenceInterval) || 1)
-                : null,
-            recurrenceUnit:
-              formReminder && formRecurrence === "custom"
-                ? formRecurrenceUnit
-                : null,
+    const nextNotes = notes.map((note) => {
+      if (note.id !== editing.id) {
+        return note;
+      }
 
-            notifyTelegram: Boolean(formReminder && formNotifyTelegram),
-            updatedAt,
-          }
-        : note,
-    );
+      const nextTitle = form.title.trim() || note.title || "";
+
+      const nextTags = [...formTags];
+
+      const changed =
+        String(note.title || "") !== String(nextTitle) ||
+        String(note.content || "") !== String(nextContent || "") ||
+        JSON.stringify(Array.isArray(note.tags) ? note.tags : []) !==
+          JSON.stringify(nextTags);
+
+      const previousHistory = getNoteHistory(note);
+
+      const nextHistory = changed
+        ? [...previousHistory, buildNoteHistoryEntry(note)].slice(-20)
+        : previousHistory;
+
+      return {
+        ...note,
+        title: nextTitle,
+        content: nextContent,
+        tags: nextTags,
+        history: nextHistory,
+        reminderAt: localReminderToISO(formReminder),
+        recurrence: formReminder ? formRecurrence : "none",
+        recurrenceDay:
+          formReminder && formRecurrence === "monthly"
+            ? Number(
+                formRecurrenceDay ||
+                  defaultRecurrenceDay(formReminder, "monthly"),
+              )
+            : null,
+        recurrenceDays:
+          formReminder && formRecurrence === "weekly"
+            ? normalizeRecurrenceDays(
+                formRecurrenceDays.length
+                  ? formRecurrenceDays
+                  : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
+              )
+            : [],
+        recurrenceInterval:
+          formReminder && formRecurrence === "custom"
+            ? Math.max(1, Number(formRecurrenceInterval) || 1)
+            : null,
+        recurrenceUnit:
+          formReminder && formRecurrence === "custom"
+            ? formRecurrenceUnit
+            : null,
+
+        notifyTelegram: Boolean(formReminder && formNotifyTelegram),
+        updatedAt,
+      };
+    });
 
     try {
       setEditorStatus("Saving…");
@@ -2276,6 +2303,38 @@ export default function NotesView({ vault, onVaultChange }) {
       .replace(/=+$/g, "");
   }
 
+  function formatShareCountdown(expiresAt) {
+    if (!expiresAt) {
+      return "Never expires";
+    }
+
+    const remainingMs = new Date(expiresAt).getTime() - shareNow;
+
+    if (remainingMs <= 0) {
+      return "Expired";
+    }
+
+    const totalSeconds = Math.floor(remainingMs / 1000);
+
+    const days = Math.floor(totalSeconds / 86400);
+
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+    const seconds = totalSeconds % 60;
+
+    if (days > 0) {
+      return `${days}d ${hours}h remaining`;
+    }
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m remaining`;
+    }
+
+    return `${minutes}m ${seconds}s remaining`;
+  }
+
   async function createEncryptedShare() {
     if (!selected || selected.trashed) {
       setError("This note cannot be shared.");
@@ -2374,7 +2433,10 @@ export default function NotesView({ vault, onVaultChange }) {
 
     try {
       await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
       setError("");
+
+      window.setTimeout(() => setShareCopied(false), 1800);
     } catch {
       setError("Could not copy the share link.");
     }
@@ -2398,6 +2460,16 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setError("");
   }
+
+  useEffect(() => {
+    if (!showShareModal && !showShareManager) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => setShareNow(Date.now()), 1000);
+
+    return () => window.clearInterval(timer);
+  }, [showShareModal, showShareManager]);
 
   function openShareManager() {
     setShowShareManager(true);
@@ -2599,6 +2671,7 @@ export default function NotesView({ vault, onVaultChange }) {
     setSharePermission("read-only");
     setShareExpiration("never");
     setShareCreated(false);
+    setShareCopied(false);
     setShowShareModal(true);
     setError("");
   }
@@ -2606,6 +2679,7 @@ export default function NotesView({ vault, onVaultChange }) {
   function closeShareModal() {
     setShowShareModal(false);
     setShareCreated(false);
+    setShareCopied(false);
   }
 
   async function prepareShareLink() {
@@ -2787,6 +2861,39 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function buildNoteHistoryEntry(note) {
+    return {
+      id: makeId(),
+      title: note.title || "",
+      content: note.content || "",
+      tags: Array.isArray(note.tags) ? [...note.tags] : [],
+      savedAt: new Date().toISOString(),
+    };
+  }
+
+  function getNoteHistory(note) {
+    return Array.isArray(note?.history) ? note.history : [];
+  }
+
+  function restoreNoteVersion(version) {
+    if (!selected || !version) {
+      return;
+    }
+
+    setForm({
+      title: version.title || "",
+      content: version.content || "",
+    });
+
+    setFormTags(Array.isArray(version.tags) ? version.tags : []);
+
+    setEditorStatus("Version restored in editor — save to apply");
+    setShowVersionHistory(false);
+    setShowForm(true);
+    setEditing(selected);
+    setError("");
+  }
+
   async function saveNote() {
     setError("");
 
@@ -2901,20 +3008,43 @@ export default function NotesView({ vault, onVaultChange }) {
       normalizedReminderAt && formNotifyTelegram && telegramIsReady,
     );
 
-    const applyForm = (note) => ({
-      ...note,
-      title: form.title.trim(),
-      content: form.content,
-      tags: [...formTags],
-      reminderAt: normalizedReminderAt,
-      recurrence: normalizedReminderAt ? formRecurrence : "none",
-      recurrenceDay: normalizedReminderAt ? finalRecurrenceDay : null,
-      recurrenceInterval: normalizedReminderAt ? finalRecurrenceInterval : null,
-      recurrenceUnit: normalizedReminderAt ? finalRecurrenceUnit : null,
-      notifyTelegram: telegramReminderEnabled,
-      reminderPaused: false,
-      updatedAt: now,
-    });
+    const applyForm = (note) => {
+      const contentChanged =
+        String(note.content || "") !== String(form.content || "") ||
+        String(note.title || "") !== String(form.title.trim()) ||
+        JSON.stringify(Array.isArray(note.tags) ? note.tags : []) !==
+          JSON.stringify([...formTags]);
+
+      const previousHistory = getNoteHistory(note);
+
+      const isExistingNote = notes.some((current) => current.id === note.id);
+
+      const shouldSnapshot = Boolean(
+        isExistingNote && contentChanged && note && note.id,
+      );
+
+      const nextHistory = shouldSnapshot
+        ? [...previousHistory, buildNoteHistoryEntry(note)].slice(-20)
+        : previousHistory;
+
+      return {
+        ...note,
+        title: form.title.trim(),
+        content: form.content,
+        tags: [...formTags],
+        history: nextHistory,
+        reminderAt: normalizedReminderAt,
+        recurrence: normalizedReminderAt ? formRecurrence : "none",
+        recurrenceDay: normalizedReminderAt ? finalRecurrenceDay : null,
+        recurrenceInterval: normalizedReminderAt
+          ? finalRecurrenceInterval
+          : null,
+        recurrenceUnit: normalizedReminderAt ? finalRecurrenceUnit : null,
+        notifyTelegram: telegramReminderEnabled,
+        reminderPaused: false,
+        updatedAt: now,
+      };
+    };
 
     const next = editing
       ? notes.map((note) => (note.id === editing.id ? applyForm(note) : note))
@@ -2933,6 +3063,7 @@ export default function NotesView({ vault, onVaultChange }) {
             archived: false,
             trashed: false,
             trashedAt: null,
+            history: [],
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
                 ? null
@@ -2990,6 +3121,67 @@ export default function NotesView({ vault, onVaultChange }) {
 
   function removeTag(tag) {
     setFormTags(formTags.filter((item) => item !== tag));
+  }
+
+  async function copySelectedNote() {
+    if (!selected) {
+      return;
+    }
+
+    const text = [
+      selected.title || "Untitled note",
+      "",
+      selected.content || "",
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(text);
+
+      setNoteCopied(true);
+
+      window.setTimeout(() => setNoteCopied(false), 1600);
+
+      setError("");
+    } catch {
+      setError("Could not copy the note.");
+    }
+  }
+
+  async function duplicateSelectedNote() {
+    if (!selected || selected.trashed) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const duplicate = {
+      ...selected,
+      id: makeId(),
+      title: selected.title ? `${selected.title} copy` : "Untitled note copy",
+      reminderAt: null,
+      reminderPaused: false,
+      notifyTelegram: false,
+      recurrence: "none",
+      recurrenceDay: null,
+      recurrenceDays: [],
+      recurrenceInterval: null,
+      recurrenceUnit: null,
+      history: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextNotes = [duplicate, ...notes];
+
+    try {
+      await persistNotes(nextNotes);
+      setSelectedId(duplicate.id);
+      setShowForm(false);
+      setEditing(null);
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not duplicate note.");
+    }
   }
 
   function openNew() {
@@ -4457,6 +4649,13 @@ export default function NotesView({ vault, onVaultChange }) {
 
       {error && <div style={styles.errorBanner}>{error}</div>}
 
+      {noteCopied && (
+        <div style={styles.copiedToast} role="status">
+          <Check size={14} />
+          Copied to clipboard
+        </div>
+      )}
+
       <div style={styles.contentGrid}>
         <div style={styles.listPanel}>
           {filteredNotes.length === 0 ? (
@@ -4608,6 +4807,42 @@ export default function NotesView({ vault, onVaultChange }) {
                     title="Edit"
                   >
                     <Pencil size={15} />
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.iconButton}
+                    onClick={copySelectedNote}
+                    title="Copy note"
+                  >
+                    {noteCopied ? <Check size={15} /> : <Copy size={15} />}
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.iconButton}
+                    onClick={duplicateSelectedNote}
+                    title="Duplicate note"
+                  >
+                    <Files size={15} />
+                  </button>
+
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.iconButton,
+                      opacity: 1,
+                    }}
+                    onClick={() => setShowVersionHistory(true)}
+                    title={
+                      getNoteHistory(selected).length
+                        ? `Version history · ${getNoteHistory(selected).length} saved version${
+                            getNoteHistory(selected).length === 1 ? "" : "s"
+                          }`
+                        : "Version history · no saved versions yet"
+                    }
+                  >
+                    <History size={15} />
                   </button>
 
                   {!showTrash && !selected.archived && (
@@ -4860,6 +5095,85 @@ export default function NotesView({ vault, onVaultChange }) {
         </div>
       )}
 
+      {showVersionHistory && selected && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 700,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowVersionHistory(false)}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>VERSION HISTORY</div>
+
+            <h2 style={styles.formTitle}>
+              {selected.title || "Untitled note"}
+            </h2>
+
+            <p style={styles.copy}>
+              The last 20 saved versions are kept with the encrypted note.
+              Version history starts recording when you save an edit after this
+              feature is installed.
+            </p>
+
+            {getNoteHistory(selected).length === 0 ? (
+              <div style={styles.shareManagerEmpty}>
+                <History size={24} />
+                <strong>No previous versions</strong>
+                <span>
+                  Edit and save this note to create its first version.
+                </span>
+              </div>
+            ) : (
+              <div style={styles.versionHistoryList}>
+                {[...getNoteHistory(selected)].reverse().map((version) => (
+                  <div key={version.id} style={styles.versionHistoryRow}>
+                    <div style={styles.versionHistoryInfo}>
+                      <strong style={styles.versionHistoryStrong}>
+                        {version.title || "Untitled note"}
+                      </strong>
+                      <span style={styles.versionHistoryDate}>
+                        {new Date(version.savedAt).toLocaleString()}
+                      </span>
+                      <p style={styles.versionHistoryPreview}>
+                        {String(version.content || "").slice(0, 140) ||
+                          "Empty note"}
+                        {String(version.content || "").length > 140 ? "…" : ""}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      style={styles.secondaryButton}
+                      onClick={() => restoreNoteVersion(version)}
+                    >
+                      Restore to editor
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => setShowVersionHistory(false)}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showShareManager && (
         <div style={styles.overlay}>
           <div
@@ -4914,7 +5228,9 @@ export default function NotesView({ vault, onVaultChange }) {
                           {status}
                           {" · "}
                           {link.expiresAt
-                            ? `expires ${new Date(
+                            ? `${formatShareCountdown(
+                                link.expiresAt,
+                              )} · expires ${new Date(
                                 link.expiresAt,
                               ).toLocaleString()}`
                             : "never expires"}
@@ -5105,6 +5421,31 @@ export default function NotesView({ vault, onVaultChange }) {
               </span>
             </div>
 
+            <div style={styles.shareExpiryPreview}>
+              <Clock3 size={13} />
+              <span>
+                {shareCreated
+                  ? formatShareCountdown(
+                      sharedLinks.find(
+                        (link) =>
+                          link.shareId ===
+                          shareUrl.split("/share/")[1]?.split("#")[0],
+                      )?.expiresAt || null,
+                    )
+                  : shareExpiration === "never"
+                    ? "Never expires"
+                    : `Link will expire ${
+                        shareExpiration === "1h"
+                          ? "in 1 hour"
+                          : shareExpiration === "1d"
+                            ? "in 1 day"
+                            : shareExpiration === "7d"
+                              ? "in 7 days"
+                              : "in 30 days"
+                      }`}
+              </span>
+            </div>
+
             {shareCreated && shareUrl && (
               <div style={styles.shareCreatedBox}>
                 <div style={styles.shareCreatedLabel}>
@@ -5121,7 +5462,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   style={styles.secondaryFullButton}
                   onClick={copyShareUrl}
                 >
-                  Copy share link
+                  {shareCopied ? "Copied" : "Copy share link"}
                 </button>
                 <div style={styles.shareCreatedHint}>
                   The encryption key is kept in the URL fragment and is never
@@ -5145,7 +5486,9 @@ export default function NotesView({ vault, onVaultChange }) {
                 type="button"
                 style={styles.primaryButton}
                 onClick={prepareShareLink}
-                disabled={shareBusy}
+                disabled={
+                  shareBusy || Boolean(selected?.trashed || selected?.archived)
+                }
               >
                 <Share2 size={14} />
                 {shareBusy
@@ -6662,6 +7005,26 @@ export default function NotesView({ vault, onVaultChange }) {
 }
 
 const styles = {
+  copiedToast: {
+    position: "fixed",
+    left: "50%",
+    bottom: 26,
+    transform: "translateX(-50%)",
+    zIndex: 120,
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "9px 13px",
+    border: "1px solid #304638",
+    borderRadius: 8,
+    background: "#151A18",
+    color: "#9FE9A8",
+    fontSize: 10,
+    fontWeight: 600,
+    boxShadow: "0 10px 28px rgba(0,0,0,0.32)",
+    pointerEvents: "none",
+  },
+
   page: {
     padding: "0 32px 32px",
     fontFamily: "Inter, sans-serif",
@@ -7511,6 +7874,60 @@ const styles = {
     background: "#20242B",
     color: "#8A929C",
     fontSize: 9,
+  },
+
+  shareExpiryPreview: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 9,
+    color: "#818A95",
+    fontSize: 9,
+  },
+
+  versionHistoryList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginTop: 14,
+    maxHeight: 360,
+    overflowY: "auto",
+  },
+
+  versionHistoryRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "10px 11px",
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+    background: "#15181D",
+  },
+
+  versionHistoryInfo: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  versionHistoryStrong: {
+    color: "#D9D7D0",
+    fontSize: 10,
+  },
+
+  versionHistoryDate: {
+    color: "#69717B",
+    fontSize: 8,
+  },
+
+  versionHistoryPreview: {
+    margin: 0,
+    maxWidth: 470,
+    color: "#747D88",
+    fontSize: 9,
+    lineHeight: 1.4,
   },
 
   shareManagerList: {
