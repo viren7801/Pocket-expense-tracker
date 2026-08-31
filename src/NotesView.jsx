@@ -607,6 +607,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [shareNow, setShareNow] = useState(Date.now());
   const [shareCopied, setShareCopied] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [newNoteTemplateId, setNewNoteTemplateId] = useState("blank");
   const [customTemplates, setCustomTemplates] = useState([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [templateEditingId, setTemplateEditingId] = useState(null);
@@ -2850,7 +2851,11 @@ export default function NotesView({ vault, onVaultChange }) {
       content: template.content || "",
     });
 
+    editorLoadKeyRef.current = "";
+    setEditorHtml(markdownToEditorHtml(template.content || ""));
+
     setFormTags(Array.isArray(template.tags) ? template.tags : []);
+    setFormAttachments([]);
 
     setFormReminder("");
     setFormRecurrence("none");
@@ -3726,6 +3731,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setShowForm(false);
     setEditing(null);
+    setNewNoteTemplateId("blank");
 
     setForm({
       title: "",
@@ -7692,6 +7698,84 @@ export default function NotesView({ vault, onVaultChange }) {
               autoFocus
             />
 
+            {!editing && (
+              <>
+                <label style={styles.label}>Template</label>
+
+                <div style={styles.newNoteTemplateControl}>
+                  <Repeat size={14} color="#68707A" />
+
+                  <select
+                    value={newNoteTemplateId}
+                    onChange={(e) => {
+                      const value = e.target.value;
+
+                      setNewNoteTemplateId(value);
+
+                      if (value === "blank") {
+                        setForm({
+                          title: "",
+                          content: "",
+                        });
+                        editorLoadKeyRef.current = "";
+                        setEditorHtml("");
+                        setFormTags([]);
+                        setFormAttachments([]);
+                        setEditorStatus("New note");
+                        return;
+                      }
+
+                      applyNoteTemplate(value);
+                      setEditorStatus("Template applied");
+                    }}
+                    style={styles.newNoteTemplateSelect}
+                  >
+                    <option value="blank">Blank note</option>
+
+                    {NOTE_TEMPLATES.length > 0 && (
+                      <optgroup label="Built-in templates">
+                        {NOTE_TEMPLATES.map((template) => (
+                          <option
+                            key={`builtin-${template.id}`}
+                            value={template.id}
+                          >
+                            {template.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+
+                    {customTemplates.length > 0 && (
+                      <optgroup label="Your templates">
+                        {customTemplates.map((template) => (
+                          <option
+                            key={`custom-${template.id}`}
+                            value={template.id}
+                          >
+                            {template.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                {newNoteTemplateId !== "blank" && (
+                  <div style={styles.newNoteTemplateHint}>
+                    {(
+                      NOTE_TEMPLATES.find(
+                        (item) => item.id === newNoteTemplateId,
+                      ) ||
+                      customTemplates.find(
+                        (item) => item.id === newNoteTemplateId,
+                      )
+                    )?.description ||
+                      "Template applied. Everything remains editable."}
+                  </div>
+                )}
+              </>
+            )}
+
             <label style={styles.label}>Tags</label>
 
             <div style={styles.tagsEditor}>
@@ -8367,6 +8451,36 @@ const styles = {
     color: "#ECEAE3",
     outline: "none",
     fontSize: 12,
+  },
+
+  newNoteTemplateControl: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    height: 38,
+    padding: "0 10px",
+    border: "1px solid #292E36",
+    borderRadius: 7,
+    background: "#14171C",
+  },
+
+  newNoteTemplateSelect: {
+    flex: 1,
+    minWidth: 0,
+    height: "100%",
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#B8BDC4",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+
+  newNoteTemplateHint: {
+    marginTop: 5,
+    color: "#68717B",
+    fontSize: 8,
+    lineHeight: 1.45,
   },
 
   editorHeader: {
