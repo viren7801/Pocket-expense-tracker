@@ -40,6 +40,7 @@ import {
   Ban,
   Copy,
   Paperclip,
+  Keyboard,
   Files,
   Check,
   Link2,
@@ -585,6 +586,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [sortMode, setSortMode] = useState("updated");
 
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(0);
   const autoLockTimerRef = useRef(null);
@@ -726,6 +728,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveredDataKeyRef = useRef(null);
 
   const contentInputRef = useRef(null);
+  const editorLoadKeyRef = useRef("");
   const attachmentInputRef = useRef(null);
 
   const autosaveTimerRef = useRef(null);
@@ -736,6 +739,7 @@ export default function NotesView({ vault, onVaultChange }) {
     title: "",
     content: "",
   });
+  const [editorHtml, setEditorHtml] = useState("");
   const [formAttachments, setFormAttachments] = useState([]);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [isAttachmentDragging, setIsAttachmentDragging] = useState(false);
@@ -792,6 +796,96 @@ export default function NotesView({ vault, onVaultChange }) {
       clearAutoLockTimer();
     };
   }, [phase, autoLockMinutes]);
+
+  // NotesView keyboard shortcuts
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (phase !== "unlocked") {
+        return;
+      }
+
+      const target = event.target;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+
+      if (event.key === "Escape") {
+        setShowShortcuts(false);
+        setShowSortMenu(false);
+        setShowExportMenu(false);
+        setShowNoteExportMenu(false);
+        setShowAutoLockMenu(false);
+        setShowTemplateMenu(false);
+        setShowShareManager(false);
+        setShowVersionHistory(false);
+        setShowTagManager(false);
+        setShowFolderForm(false);
+        return;
+      }
+
+      if (event.key === "?" && !typing && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        setShowShortcuts(true);
+        return;
+      }
+
+      if (!event.metaKey && !event.ctrlKey) {
+        return;
+      }
+
+      const key = String(event.key || "").toLowerCase();
+
+      if (typing) {
+        return;
+      }
+
+      if (key === "n") {
+        event.preventDefault();
+        setError("");
+        setEditing(null);
+        setForm({
+          title: "",
+          content: "",
+        });
+        setFormTags([]);
+        setFormAttachments([]);
+        setFormReminder("");
+        setFormRecurrence("none");
+        setFormRecurrenceDay("");
+        setFormRecurrenceDays([]);
+        setFormRecurrenceInterval(1);
+        setFormRecurrenceUnit("days");
+        setFormNotifyTelegram(false);
+        setTagInput("");
+        setEditorStatus("New note");
+        setShowForm(true);
+        return;
+      }
+
+      if (key === "f") {
+        event.preventDefault();
+
+        window.setTimeout(() => {
+          const input = document.querySelector(
+            'input[placeholder="Search notes…"]',
+          );
+
+          if (input) {
+            input.focus();
+            input.select?.();
+          }
+        }, 0);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [phase]);
 
   const availableTags = useMemo(() => {
     const all = new Set();
@@ -1450,6 +1544,168 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function escapeHtml(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function markdownToEditorHtml(value) {
+    const source = String(value || "");
+
+    if (!source) {
+      return "";
+    }
+
+    return source
+      .split("\n")
+      .map((line) => {
+        if (line.startsWith("## ")) {
+          return `<h2>${escapeHtml(line.slice(3))}</h2>`;
+        }
+
+        if (line.startsWith("> ")) {
+          return `<blockquote>${escapeHtml(line.slice(2))}</blockquote>`;
+        }
+
+        if (line.startsWith("• ")) {
+          return `<div>• ${escapeHtml(line.slice(2))}</div>`;
+        }
+
+        if (line.startsWith("☐ ")) {
+          return `<div>☐ ${escapeHtml(line.slice(2))}</div>`;
+        }
+
+        let html = escapeHtml(line);
+
+        html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+        html = html.replace(/_(.+?)_/g, "<em>$1</em>");
+
+        html = html.replace(/`(.+?)`/g, "<code>$1</code>");
+
+        return `<div>${html || "<br />"}</div>`;
+      })
+      .join("");
+  }
+
+  function editorHtmlToMarkdown(root) {
+    if (!root) {
+      return "";
+    }
+
+    const convertInline = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.nodeValue || "";
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return "";
+      }
+
+      const tag = node.tagName.toLowerCase();
+
+      const inner = Array.from(node.childNodes).map(convertInline).join("");
+
+      if (tag === "strong" || tag === "b") {
+        return `**${inner}**`;
+      }
+
+      if (tag === "em" || tag === "i") {
+        return `_${inner}_`;
+      }
+
+      if (tag === "code") {
+        return `\`${inner}\``;
+      }
+
+      return inner;
+    };
+
+    const blocks = Array.from(root.children || []);
+
+    if (!blocks.length) {
+      return convertInline(root);
+    }
+
+    return blocks
+      .map((block) => {
+        const tag = block.tagName.toLowerCase();
+
+        const text = convertInline(block).replace(/\u00a0/g, " ");
+
+        if (tag === "h2") {
+          return `## ${text}`;
+        }
+
+        if (tag === "blockquote") {
+          return `> ${text}`;
+        }
+
+        return text;
+      })
+      .join("\n");
+  }
+
+  function syncEditorFromHtml(element) {
+    const html = element?.innerHTML || "";
+
+    setEditorHtml(html);
+
+    updateNoteContent(editorHtmlToMarkdown(element));
+  }
+
+  function focusEditor() {
+    requestAnimationFrame(() => {
+      contentInputRef.current?.focus();
+    });
+  }
+
+  function toggleInlineFormat(command) {
+    contentInputRef.current?.focus();
+
+    document.execCommand(command, false);
+
+    if (contentInputRef.current) {
+      syncEditorFromHtml(contentInputRef.current);
+    }
+  }
+
+  useEffect(() => {
+    if (!showForm || !contentInputRef.current) {
+      return;
+    }
+
+    const loadKey = `${editing?.id || "new"}:${showForm}`;
+
+    if (editorLoadKeyRef.current === loadKey) {
+      return;
+    }
+
+    editorLoadKeyRef.current = loadKey;
+
+    contentInputRef.current.innerHTML = editorHtml || "";
+
+    requestAnimationFrame(() => {
+      contentInputRef.current?.focus();
+
+      if (!editing?.id && contentInputRef.current) {
+        const selection = window.getSelection();
+
+        const range = document.createRange();
+
+        range.selectNodeContents(contentInputRef.current);
+        range.collapse(false);
+
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+    });
+  }, [showForm, editing?.id, editorHtml]);
+
   function updateNoteContent(value) {
     setForm((current) => ({
       ...current,
@@ -1459,75 +1715,117 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   function insertAtCursor(before, after = "", placeholder = "text") {
-    const textarea = contentInputRef.current;
-    if (!textarea) return;
+    const editor = contentInputRef.current;
 
-    const current = form.content || "";
-    const start = textarea.selectionStart ?? 0;
-    const end = textarea.selectionEnd ?? start;
-    const selected = current.slice(start, end) || placeholder;
-
-    const next =
-      current.slice(0, start) + before + selected + after + current.slice(end);
-
-    updateNoteContent(next);
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      const selectionStart = start + before.length;
-      const selectionEnd = selectionStart + selected.length;
-      textarea.setSelectionRange(selectionStart, selectionEnd);
-    });
-  }
-
-  function insertLinePrefix(prefix) {
-    const textarea = contentInputRef.current;
-    if (!textarea) return;
-
-    const current = form.content || "";
-    const start = textarea.selectionStart ?? 0;
-    const end = textarea.selectionEnd ?? start;
-
-    const lineStart = current.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-    const foundLineEnd = current.indexOf("\n", end);
-    const lineEnd = foundLineEnd === -1 ? current.length : foundLineEnd;
-
-    const block = current.slice(lineStart, lineEnd);
-    const nextBlock = block
-      .split("\n")
-      .map((line) => (line.startsWith(prefix) ? line : prefix + line))
-      .join("\n");
-
-    const next =
-      current.slice(0, lineStart) + nextBlock + current.slice(lineEnd);
-
-    updateNoteContent(next);
-
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(
-        lineStart + prefix.length,
-        lineStart + nextBlock.length,
-      );
-    });
-  }
-
-  function handleEditorKeyDown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-      e.preventDefault();
-      insertAtCursor("**", "**", "bold text");
+    if (!editor) {
       return;
     }
 
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "i") {
+    editor.focus();
+
+    const selection = window.getSelection();
+
+    if (!selection || !selection.rangeCount) {
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+
+    if (!editor.contains(range.commonAncestorContainer)) {
+      return;
+    }
+
+    const selectedText = selection.toString() || placeholder;
+
+    const replacement = `${before}${selectedText}${after}`;
+
+    range.deleteContents();
+    range.insertNode(document.createTextNode(replacement));
+
+    range.collapse(false);
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    syncEditorFromHtml(editor);
+  }
+
+  function insertLinePrefix(prefix) {
+    const editor = contentInputRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    editor.focus();
+
+    if (prefix === "## ") {
+      document.execCommand("formatBlock", false, "h2");
+    } else if (prefix === "> ") {
+      document.execCommand("formatBlock", false, "blockquote");
+    } else if (prefix === "• ") {
+      document.execCommand("insertUnorderedList", false);
+    } else if (prefix === "  ") {
+      document.execCommand("insertText", false, "  ");
+    } else {
+      document.execCommand("insertText", false, prefix);
+    }
+
+    syncEditorFromHtml(editor);
+  }
+
+  function handleEditorKeyDown(e) {
+    const command = e.metaKey || e.ctrlKey;
+
+    const key = String(e.key || "").toLowerCase();
+
+    if (command && key === "b") {
       e.preventDefault();
-      insertAtCursor("_", "_", "italic text");
+      e.stopPropagation();
+      toggleInlineFormat("bold");
+      return;
+    }
+
+    if (command && key === "i") {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleInlineFormat("italic");
+      return;
+    }
+
+    if (command && key === "z") {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // On macOS, Cmd+Shift+Z is redo.
+      // Ctrl+Shift+Z is supported as well.
+      if (e.shiftKey) {
+        document.execCommand("redo", false);
+      } else {
+        document.execCommand("undo", false);
+      }
+
+      syncEditorFromHtml(contentInputRef.current);
+      return;
+    }
+
+    if (command && key === "y") {
+      e.preventDefault();
+      e.stopPropagation();
+
+      document.execCommand("redo", false);
+
+      syncEditorFromHtml(contentInputRef.current);
       return;
     }
 
     if (e.key === "Tab") {
       e.preventDefault();
-      insertAtCursor("  ", "", "");
+      e.stopPropagation();
+
+      document.execCommand("insertText", false, "  ");
+
+      syncEditorFromHtml(contentInputRef.current);
     }
   }
 
@@ -3433,6 +3731,8 @@ export default function NotesView({ vault, onVaultChange }) {
       title: "",
       content: "",
     });
+    editorLoadKeyRef.current = "";
+    setEditorHtml("");
 
     setFormTags([]);
     setFormAttachments([]);
@@ -3634,6 +3934,9 @@ export default function NotesView({ vault, onVaultChange }) {
       title: note.title || "",
       content: note.content || "",
     });
+
+    editorLoadKeyRef.current = "";
+    setEditorHtml(markdownToEditorHtml(note.content || ""));
 
     setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
     setFormAttachments(
@@ -5021,6 +5324,16 @@ export default function NotesView({ vault, onVaultChange }) {
             Change password
           </button>
 
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={() => setShowShortcuts(true)}
+            title="Keyboard shortcuts"
+          >
+            <Keyboard size={14} />
+            Shortcuts
+          </button>
+
           <div style={styles.autoLockWrap}>
             <button
               type="button"
@@ -5722,6 +6035,60 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={saveCustomTemplate}
               >
                 {templateEditingId ? "Save changes" : "Create template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShortcuts && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 520,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowShortcuts(false)}
+              title="Close"
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>KEYBOARD</div>
+
+            <h2 style={styles.formTitle}>Keyboard shortcuts</h2>
+
+            <div style={styles.shortcutList}>
+              {[
+                ["⌘/Ctrl + N", "New note"],
+                ["⌘/Ctrl + F", "Focus note search"],
+                ["⌘/Ctrl + B", "Bold in editor"],
+                ["⌘/Ctrl + I", "Italic in editor"],
+                ["?", "Open this shortcut panel"],
+                ["Esc", "Close menus and dialogs"],
+              ].map(([keys, label]) => (
+                <div key={keys} style={styles.shortcutRow}>
+                  <kbd style={styles.shortcutKeys}>{keys}</kbd>
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={styles.shortcutHint}>
+              Navigation shortcuts stay inactive while you are typing.
+            </div>
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => setShowShortcuts(false)}
+              >
+                Done
               </button>
             </div>
           </div>
@@ -7609,7 +7976,8 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Bold"
                   style={styles.editorTool}
-                  onClick={() => insertAtCursor("**", "**", "bold text")}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => toggleInlineFormat("bold")}
                 >
                   <Bold size={14} />
                 </button>
@@ -7618,7 +7986,8 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Italic"
                   style={styles.editorTool}
-                  onClick={() => insertAtCursor("_", "_", "italic text")}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => toggleInlineFormat("italic")}
                 >
                   <Italic size={14} />
                 </button>
@@ -7627,6 +7996,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Heading"
                   style={styles.editorTool}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertLinePrefix("## ")}
                 >
                   <Heading2 size={14} />
@@ -7638,6 +8008,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Bullet list"
                   style={styles.editorTool}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertLinePrefix("• ")}
                 >
                   <List size={14} />
@@ -7647,6 +8018,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Checklist"
                   style={styles.editorTool}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertLinePrefix("☐ ")}
                 >
                   <ListChecks size={14} />
@@ -7656,6 +8028,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   type="button"
                   title="Quote"
                   style={styles.editorTool}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => insertLinePrefix("> ")}
                 >
                   <Quote size={14} />
@@ -7691,15 +8064,22 @@ export default function NotesView({ vault, onVaultChange }) {
                 </button>
               </div>
 
-              <textarea
+              <div
                 ref={contentInputRef}
-                value={form.content}
-                onChange={(e) => updateNoteContent(e.target.value)}
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-multiline="true"
+                data-placeholder="Write your note…"
+                onInput={(e) => syncEditorFromHtml(e.currentTarget)}
                 onKeyDown={handleEditorKeyDown}
-                placeholder="Write your note…"
-                style={styles.editorTextarea}
-                rows={14}
-                spellCheck
+                style={{
+                  ...styles.editorTextarea,
+                  minHeight: 330,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  outline: "none",
+                }}
               />
 
               <div style={styles.editorFooter}>
@@ -8170,6 +8550,10 @@ const styles = {
     color: "#AF776E",
   },
 
+  editorTextareaPlaceholder: {
+    color: "#666D76",
+  },
+
   editorFooter: {
     display: "flex",
     alignItems: "center",
@@ -8516,6 +8900,45 @@ const styles = {
     color: "#818A95",
     fontSize: 8,
     cursor: "pointer",
+  },
+
+  shortcutList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginTop: 14,
+  },
+
+  shortcutRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "9px 10px",
+    border: "1px solid #292E36",
+    borderRadius: 7,
+    background: "#15181D",
+    color: "#AEB4BC",
+    fontSize: 10,
+  },
+
+  shortcutKeys: {
+    minWidth: 125,
+    padding: "4px 6px",
+    border: "1px solid #343A43",
+    borderBottomWidth: 2,
+    borderRadius: 5,
+    background: "#101318",
+    color: "#D5D2CB",
+    fontSize: 9,
+    textAlign: "center",
+  },
+
+  shortcutHint: {
+    marginTop: 10,
+    color: "#69727C",
+    fontSize: 8,
+    lineHeight: 1.5,
   },
 
   tagManagerList: {
