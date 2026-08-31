@@ -39,6 +39,7 @@ import {
   Share2,
   Ban,
   Copy,
+  Paperclip,
   Files,
   Check,
   Link2,
@@ -584,6 +585,9 @@ export default function NotesView({ vault, onVaultChange }) {
   const [sortMode, setSortMode] = useState("updated");
 
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
+  const [autoLockMinutes, setAutoLockMinutes] = useState(0);
+  const autoLockTimerRef = useRef(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showNoteExportMenu, setShowNoteExportMenu] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
@@ -722,6 +726,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const recoveredDataKeyRef = useRef(null);
 
   const contentInputRef = useRef(null);
+  const attachmentInputRef = useRef(null);
 
   const autosaveTimerRef = useRef(null);
 
@@ -731,6 +736,8 @@ export default function NotesView({ vault, onVaultChange }) {
     title: "",
     content: "",
   });
+  const [formAttachments, setFormAttachments] = useState([]);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
 
   const recoveryEnabled = Boolean(
     vault?.version === 2 && vault?.passkeyWraps?.length,
@@ -744,11 +751,46 @@ export default function NotesView({ vault, onVaultChange }) {
     window.clearTimeout(autosaveTimerRef.current);
 
     autosaveTimerRef.current = window.setTimeout(() => {
-      autosaveExistingNote(form.content);
+      autosaveExistingNote(form.content, formAttachments);
     }, 1200);
 
     return () => window.clearTimeout(autosaveTimerRef.current);
-  }, [form.content, form.title, editing?.id, showForm, editorStatus]);
+  }, [
+    form.content,
+    form.title,
+    formAttachments,
+    editing?.id,
+    showForm,
+    editorStatus,
+  ]);
+
+  useEffect(() => {
+    if (phase !== "unlocked" || !autoLockMinutes) {
+      clearAutoLockTimer();
+      return undefined;
+    }
+
+    const events = ["mousedown", "keydown", "touchstart", "scroll"];
+
+    const activityHandler = () => {
+      handleActivityForAutoLock();
+    };
+
+    events.forEach((eventName) =>
+      window.addEventListener(eventName, activityHandler, {
+        passive: true,
+      }),
+    );
+
+    resetAutoLockTimer();
+
+    return () => {
+      events.forEach((eventName) =>
+        window.removeEventListener(eventName, activityHandler),
+      );
+      clearAutoLockTimer();
+    };
+  }, [phase, autoLockMinutes]);
 
   const availableTags = useMemo(() => {
     const all = new Set();
@@ -1275,6 +1317,12 @@ export default function NotesView({ vault, onVaultChange }) {
         }, 0);
       }
 
+      setAutoLockMinutes(
+        Number.isInteger(Number(vault?.autoLockMinutes))
+          ? Math.max(0, Number(vault?.autoLockMinutes))
+          : 0,
+      );
+
       setFolders(
         Array.isArray(vault?.folders)
           ? vault.folders
@@ -1295,7 +1343,55 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function clearAutoLockTimer() {
+    if (autoLockTimerRef.current) {
+      window.clearTimeout(autoLockTimerRef.current);
+      autoLockTimerRef.current = null;
+    }
+  }
+
+  function resetAutoLockTimer() {
+    clearAutoLockTimer();
+
+    if (phase !== "unlocked" || !autoLockMinutes) {
+      return;
+    }
+
+    autoLockTimerRef.current = window.setTimeout(
+      () => {
+        clearAutoLockTimer();
+        lockVault();
+      },
+      autoLockMinutes * 60 * 1000,
+    );
+  }
+
+  function handleActivityForAutoLock() {
+    if (phase === "unlocked" && autoLockMinutes) {
+      resetAutoLockTimer();
+    }
+  }
+
+  function setAutoLockDuration(minutes) {
+    const value = Math.max(0, Number(minutes) || 0);
+
+    setAutoLockMinutes(value);
+    setShowAutoLockMenu(false);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        autoLockMinutes: value,
+      });
+    }
+
+    resetAutoLockTimer();
+    setError("");
+  }
+
   function lockVault() {
+    clearAutoLockTimer();
+    setShowAutoLockMenu(false);
     sessionPasswordRef.current = "";
 
     recoveredDataKeyRef.current = null;
@@ -1434,7 +1530,105 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
-  async function autosaveExistingNote(nextContent) {
+  const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+
+  const MAX_ATTACHMENT_TOTAL_BYTES = 10 * 1024 * 1024;
+
+  function formatAttachmentSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) {
+      return `${Math.round(bytes / 1024)} KB`;
+    }
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => resolve(String(reader.result || ""));
+
+      reader.onerror = () => reject(new Error("Could not read attachment."));
+
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addAttachments(fileList) {
+    const files = Array.from(fileList || []);
+
+    if (!files.length) {
+      return;
+    }
+
+    const existingTotal = formAttachments.reduce(
+      (sum, item) => sum + Number(item.size || 0),
+      0,
+    );
+
+    let total = existingTotal;
+
+    setAttachmentBusy(true);
+    setError("");
+
+    try {
+      const additions = [];
+
+      for (const file of files) {
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          throw new Error(`"${file.name}" is larger than 5 MB.`);
+        }
+
+        if (total + file.size > MAX_ATTACHMENT_TOTAL_BYTES) {
+          throw new Error("Attachments for one note cannot exceed 10 MB.");
+        }
+
+        const dataUrl = await fileToDataUrl(file);
+
+        additions.push({
+          id: makeId(),
+          name: file.name || "Attachment",
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl,
+          addedAt: new Date().toISOString(),
+        });
+
+        total += file.size;
+      }
+
+      setFormAttachments((current) => [...current, ...additions]);
+
+      setEditorStatus("Unsaved changes");
+    } catch (error) {
+      setError(error.message || "Could not add attachment.");
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }
+
+  function removeAttachment(id) {
+    setFormAttachments((current) => current.filter((item) => item.id !== id));
+    setEditorStatus("Unsaved changes");
+  }
+
+  function downloadAttachment(attachment) {
+    if (!attachment?.dataUrl) {
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = attachment.dataUrl;
+    link.download = attachment.name || "attachment";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  async function autosaveExistingNote(
+    nextContent,
+    nextAttachments = formAttachments,
+  ) {
     if (!editing?.id || !sessionPasswordRef.current) {
       return;
     }
@@ -1454,7 +1648,11 @@ export default function NotesView({ vault, onVaultChange }) {
         String(note.title || "") !== String(nextTitle) ||
         String(note.content || "") !== String(nextContent || "") ||
         JSON.stringify(Array.isArray(note.tags) ? note.tags : []) !==
-          JSON.stringify(nextTags);
+          JSON.stringify(nextTags) ||
+        JSON.stringify(
+          Array.isArray(note.attachments) ? note.attachments : [],
+        ) !==
+          JSON.stringify(Array.isArray(nextAttachments) ? nextAttachments : []);
 
       const previousHistory = getNoteHistory(note);
 
@@ -1467,6 +1665,7 @@ export default function NotesView({ vault, onVaultChange }) {
         title: nextTitle,
         content: nextContent,
         tags: nextTags,
+        attachments: Array.isArray(nextAttachments) ? nextAttachments : [],
         history: nextHistory,
         reminderAt: localReminderToISO(formReminder),
         recurrence: formReminder ? formRecurrence : "none",
@@ -3101,6 +3300,8 @@ export default function NotesView({ vault, onVaultChange }) {
         title: form.title.trim(),
         content: form.content,
         tags: [...formTags],
+        attachments: [...formAttachments],
+        attachments: [...formAttachments],
         history: nextHistory,
         reminderAt: normalizedReminderAt,
         recurrence: normalizedReminderAt ? formRecurrence : "none",
@@ -3133,6 +3334,7 @@ export default function NotesView({ vault, onVaultChange }) {
             trashed: false,
             trashedAt: null,
             history: [],
+            attachments: [],
             folderId:
               selectedFolder === "all" || selectedFolder === "pinned"
                 ? null
@@ -3161,6 +3363,7 @@ export default function NotesView({ vault, onVaultChange }) {
     });
 
     setFormTags([]);
+    setFormAttachments([]);
     setFormReminder("");
     setFormRecurrence("none");
     setFormRecurrenceDay("");
@@ -3342,6 +3545,7 @@ export default function NotesView({ vault, onVaultChange }) {
     });
 
     setFormTags([]);
+    setFormAttachments([]);
     setFormReminder("");
     setFormRecurrence("none");
     setFormRecurrenceDay("");
@@ -3360,6 +3564,9 @@ export default function NotesView({ vault, onVaultChange }) {
     });
 
     setFormTags(Array.isArray(note.tags) ? [...note.tags] : []);
+    setFormAttachments(
+      Array.isArray(note.attachments) ? [...note.attachments] : [],
+    );
 
     setFormReminder(isoToLocalDateTime(note.reminderAt));
 
@@ -4742,6 +4949,56 @@ export default function NotesView({ vault, onVaultChange }) {
             Change password
           </button>
 
+          <div style={styles.autoLockWrap}>
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => setShowAutoLockMenu((value) => !value)}
+              title="Auto-lock settings"
+              aria-haspopup="menu"
+              aria-expanded={showAutoLockMenu}
+            >
+              <Lock size={14} />
+              Auto-lock
+              <span style={styles.autoLockValue}>
+                {autoLockMinutes === 0 ? "Off" : `${autoLockMinutes}m`}
+              </span>
+            </button>
+
+            {showAutoLockMenu && (
+              <div style={styles.autoLockMenu}>
+                <div style={styles.autoLockMenuTitle}>AUTO-LOCK NOTES</div>
+
+                <div style={styles.autoLockMenuCopy}>
+                  Lock the Notes vault after inactivity.
+                </div>
+
+                {[
+                  [0, "Off"],
+                  [5, "5 minutes"],
+                  [15, "15 minutes"],
+                  [30, "30 minutes"],
+                  [60, "1 hour"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    style={{
+                      ...styles.autoLockMenuItem,
+                      ...(autoLockMinutes === value
+                        ? styles.autoLockMenuItemActive
+                        : {}),
+                    }}
+                    onClick={() => setAutoLockDuration(value)}
+                  >
+                    {label}
+                    {autoLockMinutes === value && <Check size={13} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             style={styles.secondaryButton}
@@ -5184,6 +5441,41 @@ export default function NotesView({ vault, onVaultChange }) {
               </div>
 
               <div style={styles.noteContent}>{selected.content}</div>
+
+              {Array.isArray(selected.attachments) &&
+                selected.attachments.length > 0 && (
+                  <div style={styles.detailAttachmentSection}>
+                    <div style={styles.detailAttachmentTitle}>Attachments</div>
+                    <div style={styles.detailAttachmentList}>
+                      {selected.attachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          style={styles.detailAttachmentRow}
+                        >
+                          <div style={styles.detailAttachmentInfo}>
+                            <Paperclip size={13} />
+                            <div
+                              style={styles.detailAttachmentName}
+                              title={attachment.name}
+                            >
+                              {attachment.name}
+                            </div>
+                            <span>{formatAttachmentSize(attachment.size)}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            style={styles.attachmentAction}
+                            onClick={() => downloadAttachment(attachment)}
+                            title="Download attachment"
+                          >
+                            <Download size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
               <div style={styles.detailFooter}>
                 <ShieldCheck size={14} />
@@ -7333,6 +7625,91 @@ export default function NotesView({ vault, onVaultChange }) {
               </div>
             </div>
 
+            <div style={styles.attachmentSection}>
+              <div style={styles.attachmentHeader}>
+                <div>
+                  <div style={styles.attachmentTitle}>Attachments</div>
+                  <div style={styles.attachmentHint}>
+                    Encrypted with this note · 5 MB each · 10 MB total
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  style={styles.attachmentAddButton}
+                  title="Add attachments"
+                  disabled={attachmentBusy}
+                  onClick={() => {
+                    attachmentInputRef.current?.click();
+                  }}
+                >
+                  <Paperclip size={13} />
+                  {attachmentBusy ? "Reading…" : "Add files"}
+                </button>
+
+                <input
+                  ref={attachmentInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.zip"
+                  style={{
+                    position: "absolute",
+                    width: 1,
+                    height: 1,
+                    opacity: 0,
+                    pointerEvents: "none",
+                  }}
+                  tabIndex={-1}
+                  onChange={async (event) => {
+                    const files = event.target.files;
+
+                    await addAttachments(files);
+
+                    event.target.value = "";
+                  }}
+                />
+              </div>
+
+              {formAttachments.length > 0 && (
+                <div style={styles.attachmentList}>
+                  {formAttachments.map((attachment) => (
+                    <div key={attachment.id} style={styles.attachmentRow}>
+                      <div style={styles.attachmentInfo}>
+                        <strong
+                          style={styles.attachmentInfoStrong}
+                          title={attachment.name}
+                        >
+                          {attachment.name}
+                        </strong>
+                        <span>{formatAttachmentSize(attachment.size)}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        style={styles.attachmentAction}
+                        onClick={() => downloadAttachment(attachment)}
+                        title="Download attachment"
+                      >
+                        <Download size={13} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.attachmentAction,
+                          ...styles.attachmentRemove,
+                        }}
+                        onClick={() => removeAttachment(attachment.id)}
+                        title="Remove attachment"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {error && <div style={styles.error}>{error}</div>}
 
             <button
@@ -7561,6 +7938,96 @@ const styles = {
     fontSize: 12,
     lineHeight: 1.75,
     fontFamily: "Inter, sans-serif",
+  },
+
+  attachmentSection: {
+    marginTop: 12,
+    padding: "11px 12px",
+    border: "1px solid #292E36",
+    borderRadius: 9,
+    background: "#14171C",
+  },
+
+  attachmentHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  attachmentTitle: {
+    color: "#C8C6BF",
+    fontSize: 10,
+    fontWeight: 700,
+  },
+
+  attachmentHint: {
+    marginTop: 3,
+    color: "#68717B",
+    fontSize: 8,
+  },
+
+  attachmentAddButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "6px 8px",
+    border: "1px solid #30353D",
+    borderRadius: 6,
+    background: "#1A1E24",
+    color: "#A8ADB4",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  attachmentList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginTop: 9,
+  },
+
+  attachmentRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 8px",
+    border: "1px solid #292E36",
+    borderRadius: 7,
+    background: "#171A1F",
+  },
+
+  attachmentInfo: {
+    minWidth: 0,
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    color: "#B8BDC4",
+    fontSize: 9,
+  },
+
+  attachmentInfoStrong: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  attachmentAction: {
+    width: 28,
+    height: 28,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #2C323A",
+    borderRadius: 6,
+    background: "#191D22",
+    color: "#818A95",
+    cursor: "pointer",
+  },
+
+  attachmentRemove: {
+    color: "#AF776E",
   },
 
   editorFooter: {
@@ -9131,6 +9598,65 @@ const styles = {
     color: "#72C681",
   },
 
+  autoLockWrap: {
+    position: "relative",
+    display: "inline-flex",
+  },
+
+  autoLockValue: {
+    color: "#737C87",
+    fontSize: 8,
+    marginLeft: 1,
+  },
+
+  autoLockMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    zIndex: 60,
+    width: 210,
+    padding: 7,
+    border: "1px solid #2C323A",
+    borderRadius: 9,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.35)",
+  },
+
+  autoLockMenuTitle: {
+    padding: "5px 7px 2px",
+    color: "#68717C",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  autoLockMenuCopy: {
+    padding: "2px 7px 7px",
+    color: "#717A85",
+    fontSize: 9,
+    lineHeight: 1.4,
+  },
+
+  autoLockMenuItem: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 8px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#B8BEC6",
+    fontSize: 9,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  autoLockMenuItemActive: {
+    background: "#22272E",
+    color: "#E2E0D9",
+  },
+
   noteExportWrap: {
     position: "relative",
     display: "inline-flex",
@@ -9344,6 +9870,55 @@ const styles = {
     lineHeight: 1.7,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
+  },
+
+  detailAttachmentSection: {
+    marginTop: 18,
+    paddingTop: 12,
+    borderTop: "1px solid #292E36",
+  },
+
+  detailAttachmentTitle: {
+    marginBottom: 8,
+    color: "#8D969F",
+    fontSize: 9,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+
+  detailAttachmentList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+
+  detailAttachmentRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 8px",
+    border: "1px solid #292E36",
+    borderRadius: 7,
+    background: "#15181D",
+  },
+
+  detailAttachmentInfo: {
+    minWidth: 0,
+    flex: 1,
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    color: "#8B939C",
+    fontSize: 9,
+  },
+
+  detailAttachmentName: {
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "#B9BEC5",
   },
 
   detailFooter: {
