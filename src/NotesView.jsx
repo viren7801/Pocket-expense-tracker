@@ -585,6 +585,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showNoteExportMenu, setShowNoteExportMenu] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareAccess, setShareAccess] = useState("link");
   const [sharePermission, setSharePermission] = useState("read-only");
@@ -652,6 +653,9 @@ export default function NotesView({ vault, onVaultChange }) {
   ]);
 
   const [showFolderForm, setShowFolderForm] = useState(false);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [tagManagerName, setTagManagerName] = useState("");
+  const [tagManagerBusy, setTagManagerBusy] = useState(false);
 
   const [newFolderName, setNewFolderName] = useState("");
 
@@ -2677,6 +2681,7 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   function closeShareModal() {
+    setShowNoteExportMenu(false);
     setShowShareModal(false);
     setShareCreated(false);
     setShareCopied(false);
@@ -2709,6 +2714,70 @@ export default function NotesView({ vault, onVaultChange }) {
     const text = value === null || value === undefined ? "" : String(value);
 
     return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  function exportSelectedNote(format) {
+    if (!selected) {
+      setError("Select a note to export.");
+      return;
+    }
+
+    const safeTitle =
+      String(selected.title || "untitled-note")
+        .trim()
+        .replace(/[\\/:*?"<>|]+/g, "-")
+        .replace(/\s+/g, "-")
+        .slice(0, 80) || "untitled-note";
+
+    if (format === "markdown") {
+      const tags =
+        Array.isArray(selected.tags) && selected.tags.length
+          ? `\n\n**Tags:** ${selected.tags.map((tag) => `#${tag}`).join(", ")}`
+          : "";
+
+      const reminder = selected.reminderAt
+        ? `\n\n**Reminder:** ${new Date(selected.reminderAt).toLocaleString()}`
+        : "";
+
+      const content = `# ${selected.title || "Untitled note"}\n\n${
+        selected.content || ""
+      }${tags}${reminder}\n`;
+
+      downloadExportFile(
+        `${safeTitle}.md`,
+        content,
+        "text/markdown;charset=utf-8",
+      );
+    }
+
+    if (format === "txt") {
+      const content = `${selected.title || "Untitled note"}\n\n${
+        selected.content || ""
+      }\n`;
+
+      downloadExportFile(
+        `${safeTitle}.txt`,
+        content,
+        "text/plain;charset=utf-8",
+      );
+    }
+
+    if (format === "json") {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: 1,
+        note: selected,
+      };
+
+      downloadExportFile(
+        `${safeTitle}.json`,
+        JSON.stringify(payload, null, 2),
+        "application/json;charset=utf-8",
+      );
+    }
+
+    setShowNoteExportMenu(false);
+    setError("");
   }
 
   function exportNotes(format) {
@@ -3103,6 +3172,84 @@ export default function NotesView({ vault, onVaultChange }) {
     setEditorStatus("Saved");
   }
 
+  function getTagUsage(tag) {
+    return notes.filter(
+      (note) => Array.isArray(note.tags) && note.tags.includes(tag),
+    ).length;
+  }
+
+  async function renameTagEverywhere(oldTag, nextTag) {
+    const cleanOld = String(oldTag || "").trim();
+
+    const cleanNew = String(nextTag || "")
+      .trim()
+      .replace(/^#/, "")
+      .replace(/\s+/g, " ");
+
+    if (!cleanOld || !cleanNew) {
+      setError("Enter a tag name.");
+      return;
+    }
+
+    if (cleanOld.toLowerCase() === cleanNew.toLowerCase()) {
+      setError("");
+      return;
+    }
+
+    const conflict = availableTags.some(
+      (tag) => tag !== cleanOld && tag.toLowerCase() === cleanNew.toLowerCase(),
+    );
+
+    if (conflict) {
+      setError(`The tag #${cleanNew} already exists.`);
+      return;
+    }
+
+    setTagManagerBusy(true);
+    setError("");
+
+    const nextNotes = notes.map((note) => ({
+      ...note,
+      tags: Array.isArray(note.tags)
+        ? note.tags.map((tag) => (tag === cleanOld ? cleanNew : tag))
+        : [],
+    }));
+
+    try {
+      await persistNotes(nextNotes);
+    } finally {
+      setTagManagerBusy(false);
+    }
+  }
+
+  async function deleteTagEverywhere(tag) {
+    const cleanTag = String(tag || "").trim();
+
+    if (!cleanTag) {
+      return;
+    }
+
+    const nextNotes = notes.map((note) => ({
+      ...note,
+      tags: Array.isArray(note.tags)
+        ? note.tags.filter((item) => item !== cleanTag)
+        : [],
+    }));
+
+    setTagManagerBusy(true);
+    setError("");
+
+    try {
+      await persistNotes(nextNotes);
+
+      if (selectedTag === cleanTag) {
+        setSelectedTag("all");
+      }
+    } finally {
+      setTagManagerBusy(false);
+    }
+  }
+
   function addTag() {
     const tag = tagInput.trim().replace(/^#/, "").replace(/\s+/g, " ");
 
@@ -3185,6 +3332,7 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   function openNew() {
+    setShowNoteExportMenu(false);
     setError("");
     setEditing(null);
 
@@ -3899,6 +4047,15 @@ export default function NotesView({ vault, onVaultChange }) {
               {availableTags.length > 0 && (
                 <>
                   <span style={styles.filterLabel}>Tags</span>
+
+                  <button
+                    type="button"
+                    style={styles.tagManageButton}
+                    onClick={() => setShowTagManager(true)}
+                    title="Manage tags"
+                  >
+                    Manage
+                  </button>
 
                   <button
                     type="button"
@@ -4647,6 +4804,46 @@ export default function NotesView({ vault, onVaultChange }) {
         />
       </div>
 
+      <div style={styles.tagFilterToolbar}>
+        <div style={styles.tagFilterScroll}>
+          <span style={styles.filterLabel}>Tags</span>
+
+          <button
+            type="button"
+            style={{
+              ...styles.folderChip,
+              ...(selectedTag === "all" ? styles.folderChipActive : {}),
+            }}
+            onClick={() => setSelectedTag("all")}
+          >
+            All
+          </button>
+
+          {availableTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              style={{
+                ...styles.folderChip,
+                ...(selectedTag === tag ? styles.folderChipActive : {}),
+              }}
+              onClick={() => setSelectedTag(tag)}
+            >
+              #{tag}
+            </button>
+          ))}
+
+          <button
+            type="button"
+            style={styles.tagManageButton}
+            onClick={() => setShowTagManager(true)}
+            title="Manage tags"
+          >
+            Manage tags
+          </button>
+        </div>
+      </div>
+
       {error && <div style={styles.errorBanner}>{error}</div>}
 
       {noteCopied && (
@@ -4688,7 +4885,10 @@ export default function NotesView({ vault, onVaultChange }) {
               <button
                 key={note.id}
                 type="button"
-                onClick={() => setSelectedId(note.id)}
+                onClick={() => {
+                  setSelectedId(note.id);
+                  setShowNoteExportMenu(false);
+                }}
                 style={{
                   ...styles.noteRow,
                   background:
@@ -4844,6 +5044,54 @@ export default function NotesView({ vault, onVaultChange }) {
                   >
                     <History size={15} />
                   </button>
+
+                  <div style={styles.noteExportWrap}>
+                    <button
+                      type="button"
+                      style={styles.iconButton}
+                      onClick={() => setShowNoteExportMenu((value) => !value)}
+                      title="Export selected note"
+                      aria-haspopup="menu"
+                      aria-expanded={showNoteExportMenu}
+                    >
+                      <Download size={15} />
+                    </button>
+
+                    {showNoteExportMenu && (
+                      <div style={styles.noteExportMenu}>
+                        <div style={styles.noteExportMenuTitle}>
+                          Export note
+                        </div>
+
+                        <button
+                          type="button"
+                          style={styles.exportMenuItem}
+                          onClick={() => exportSelectedNote("markdown")}
+                        >
+                          <strong>Markdown</strong>
+                          <span>Best for notes and backups</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.exportMenuItem}
+                          onClick={() => exportSelectedNote("txt")}
+                        >
+                          <strong>Plain text</strong>
+                          <span>Simple .txt file</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.exportMenuItem}
+                          onClick={() => exportSelectedNote("json")}
+                        >
+                          <strong>JSON</strong>
+                          <span>Full note data</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
                   {!showTrash && !selected.archived && (
                     <button
@@ -5089,6 +5337,104 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={saveCustomTemplate}
               >
                 {templateEditingId ? "Save changes" : "Create template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTagManager && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 620,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowTagManager(false)}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>TAGS</div>
+
+            <h2 style={styles.formTitle}>Manage tags</h2>
+
+            <p style={styles.copy}>
+              Rename a tag everywhere or remove it from every note.
+            </p>
+
+            <div style={styles.tagManagerList}>
+              {availableTags.length === 0 ? (
+                <div style={styles.shareManagerEmpty}>No tags yet</div>
+              ) : (
+                availableTags.map((tag) => (
+                  <div key={tag} style={styles.tagManagerRow}>
+                    <div style={styles.tagManagerInfo}>
+                      <strong style={styles.tagManagerStrong}>#{tag}</strong>
+                      <span style={styles.tagManagerCount}>
+                        {getTagUsage(tag)}{" "}
+                        {getTagUsage(tag) === 1 ? "note" : "notes"}
+                      </span>
+                    </div>
+
+                    <div style={styles.tagManagerActions}>
+                      <button
+                        type="button"
+                        style={styles.reminderActionButton}
+                        disabled={tagManagerBusy}
+                        onClick={() => {
+                          setTagManagerName(tag);
+
+                          const next = window.prompt(`Rename #${tag} to:`, tag);
+
+                          if (next !== null) {
+                            renameTagEverywhere(tag, next);
+                          }
+                        }}
+                        title="Rename tag"
+                      >
+                        <Pencil size={13} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.reminderActionButton,
+                          ...styles.reminderDeleteButton,
+                        }}
+                        disabled={tagManagerBusy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Remove #${tag} from all notes? This cannot be undone.`,
+                            )
+                          ) {
+                            deleteTagEverywhere(tag);
+                          }
+                        }}
+                        title="Delete tag from all notes"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => setShowTagManager(false)}
+              >
+                Done
               </button>
             </div>
           </div>
@@ -7547,6 +7893,65 @@ const styles = {
     marginBottom: 9,
   },
 
+  tagFilterToolbar: {
+    display: "flex",
+    alignItems: "center",
+    minWidth: 0,
+    marginTop: 7,
+    marginBottom: 8,
+  },
+
+  tagManageButton: {
+    border: "none",
+    borderRadius: 5,
+    padding: "4px 6px",
+    background: "#1C2026",
+    color: "#818A95",
+    fontSize: 8,
+    cursor: "pointer",
+  },
+
+  tagManagerList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginTop: 14,
+    maxHeight: 320,
+    overflowY: "auto",
+  },
+
+  tagManagerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "10px 11px",
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+    background: "#15181D",
+  },
+
+  tagManagerInfo: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  tagManagerStrong: {
+    color: "#D9D7D0",
+    fontSize: 10,
+  },
+
+  tagManagerCount: {
+    color: "#69717B",
+    fontSize: 8,
+  },
+
+  tagManagerActions: {
+    display: "flex",
+    gap: 5,
+  },
+
   tagFilterScroll: {
     display: "flex",
     alignItems: "center",
@@ -8724,6 +9129,33 @@ const styles = {
     border: "1px solid #3E6D48",
     background: "#203225",
     color: "#72C681",
+  },
+
+  noteExportWrap: {
+    position: "relative",
+    display: "inline-flex",
+  },
+
+  noteExportMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    zIndex: 40,
+    width: 220,
+    padding: 6,
+    border: "1px solid #2C323A",
+    borderRadius: 9,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.34)",
+  },
+
+  noteExportMenuTitle: {
+    padding: "6px 8px 7px",
+    color: "#676F79",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+    textTransform: "uppercase",
   },
 
   exportWrap: {
