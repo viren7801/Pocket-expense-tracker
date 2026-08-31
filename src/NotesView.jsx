@@ -1146,14 +1146,39 @@ export default function NotesView({ vault, onVaultChange }) {
         return b.pinned ? 1 : -1;
       }
 
-      if (sortMode === "title") {
-        return String(a.title || "").localeCompare(String(b.title || ""));
+      if (sortMode === "titleAsc") {
+        return String(a.title || "").localeCompare(
+          String(b.title || ""),
+          undefined,
+          {
+            sensitivity: "base",
+            numeric: true,
+          },
+        );
+      }
+
+      if (sortMode === "titleDesc") {
+        return String(b.title || "").localeCompare(
+          String(a.title || ""),
+          undefined,
+          {
+            sensitivity: "base",
+            numeric: true,
+          },
+        );
       }
 
       if (sortMode === "created") {
         return (
           new Date(b.createdAt || 0).getTime() -
           new Date(a.createdAt || 0).getTime()
+        );
+      }
+
+      if (sortMode === "oldestUpdated") {
+        return (
+          new Date(a.updatedAt || a.createdAt || 0).getTime() -
+          new Date(b.updatedAt || b.createdAt || 0).getTime()
         );
       }
 
@@ -1165,7 +1190,14 @@ export default function NotesView({ vault, onVaultChange }) {
           ? new Date(b.reminderAt).getTime()
           : Infinity;
 
-        return aTime - bTime;
+        if (aTime !== bTime) {
+          return aTime - bTime;
+        }
+
+        return (
+          new Date(b.updatedAt || b.createdAt || 0).getTime() -
+          new Date(a.updatedAt || a.createdAt || 0).getTime()
+        );
       }
 
       return (
@@ -5611,6 +5643,60 @@ export default function NotesView({ vault, onVaultChange }) {
           >
             Manage tags
           </button>
+
+          <div style={styles.notesSortWrap}>
+            <button
+              type="button"
+              style={styles.notesSortButton}
+              onClick={() => setShowSortMenu((value) => !value)}
+              title="Sort notes"
+              aria-haspopup="menu"
+              aria-expanded={showSortMenu}
+            >
+              <SlidersHorizontal size={13} />
+              Sort
+              <span style={styles.notesSortCurrent}>
+                {
+                  {
+                    updated: "Recent",
+                    created: "Created",
+                    oldestUpdated: "Oldest",
+                    titleAsc: "A–Z",
+                    titleDesc: "Z–A",
+                    reminder: "Reminders",
+                  }[sortMode]
+                }
+              </span>
+            </button>
+
+            {showSortMenu && (
+              <div style={styles.notesSortMenu}>
+                {[
+                  ["updated", "Recently updated"],
+                  ["created", "Recently created"],
+                  ["oldestUpdated", "Oldest updated"],
+                  ["titleAsc", "Title A → Z"],
+                  ["titleDesc", "Title Z → A"],
+                  ["reminder", "Reminders soonest"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    style={{
+                      ...styles.notesSortItem,
+                      ...(sortMode === value ? styles.notesSortItemActive : {}),
+                    }}
+                    onClick={() => {
+                      setSortMode(value);
+                      setShowSortMenu(false);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -5659,6 +5745,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   setSelectedId(note.id);
                   setShowNoteExportMenu(false);
                   setShowSearchFilters(false);
+                  setShowSortMenu(false);
                 }}
                 style={{
                   ...styles.noteRow,
@@ -9132,6 +9219,62 @@ const styles = {
     minWidth: 0,
     marginTop: 7,
     marginBottom: 8,
+  },
+
+  notesSortWrap: {
+    position: "relative",
+    marginLeft: "auto",
+    flexShrink: 0,
+  },
+
+  notesSortButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    height: 28,
+    padding: "0 8px",
+    border: "1px solid #2B3038",
+    borderRadius: 6,
+    background: "#171A1F",
+    color: "#858D97",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  notesSortCurrent: {
+    color: "#68717B",
+    fontSize: 8,
+  },
+
+  notesSortMenu: {
+    position: "absolute",
+    top: "calc(100% + 5px)",
+    right: 0,
+    zIndex: 60,
+    width: 185,
+    padding: 5,
+    border: "1px solid #2C323A",
+    borderRadius: 8,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.34)",
+  },
+
+  notesSortItem: {
+    width: "100%",
+    display: "block",
+    padding: "8px 9px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#8E969F",
+    fontSize: 9,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  notesSortItemActive: {
+    background: "#20251F",
+    color: "#B5C9BA",
   },
 
   tagManageButton: {
