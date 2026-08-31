@@ -2380,6 +2380,25 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function removeShareFromManagerOnly(link) {
+    if (!link?.shareId) {
+      return;
+    }
+
+    const next = sharedLinks.filter((item) => item.shareId !== link.shareId);
+
+    setSharedLinks(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        sharedLinks: next,
+      });
+    }
+
+    setError("");
+  }
+
   function openShareManager() {
     setShowShareManager(true);
     setError("");
@@ -2404,6 +2423,60 @@ export default function NotesView({ vault, onVaultChange }) {
         ...vault,
         sharedLinks: next,
       });
+    }
+  }
+
+  async function removeSharedLinkFromManager(link) {
+    if (!link?.shareId) {
+      return;
+    }
+
+    setShareManagerBusy(true);
+    setError("");
+
+    try {
+      // Legacy links may no longer exist on the server. In that case, remove
+      // the manager entry locally anyway. Managed revoked links are deleted
+      // from the server first.
+      if (link.managementToken && link.revoked) {
+        const response = await fetch("/api/share-note", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "delete",
+            shareId: link.shareId,
+            managementToken: link.managementToken,
+          }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+
+          // A deleted/missing legacy record is safe to remove locally.
+          if (response.status !== 404 && response.status !== 409) {
+            throw new Error(data.error || "Could not remove share link.");
+          }
+        }
+      }
+
+      const next = sharedLinks.filter((item) => item.shareId !== link.shareId);
+
+      setSharedLinks(next);
+
+      if (vault?.version === 2) {
+        onVaultChange({
+          ...vault,
+          sharedLinks: next,
+        });
+      }
+
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not remove share link.");
+    } finally {
+      setShareManagerBusy(false);
     }
   }
 
@@ -4873,7 +4946,7 @@ export default function NotesView({ vault, onVaultChange }) {
                                   "Remove this revoked share from Share Management? This cannot be undone.",
                                 )
                               ) {
-                                permanentlyRemoveSharedLink(link);
+                                removeShareFromManagerOnly(link);
                               }
                             }}
                             title="Remove revoked link"
@@ -4902,6 +4975,24 @@ export default function NotesView({ vault, onVaultChange }) {
                             <Ban size={13} />
                           </button>
                         )}
+
+                        <button
+                          type="button"
+                          style={styles.reminderActionButton}
+                          disabled={shareManagerBusy}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Remove this link from Share Management? This only removes it from your manager; it does not revoke the server link.",
+                              )
+                            ) {
+                              removeShareFromManagerOnly(link);
+                            }
+                          }}
+                          title="Remove from manager"
+                        >
+                          <X size={13} />
+                        </button>
                       </div>
                     </div>
                   );
