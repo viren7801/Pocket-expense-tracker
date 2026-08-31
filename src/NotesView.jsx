@@ -1612,6 +1612,46 @@ export default function NotesView({ vault, onVaultChange }) {
     setEditorStatus("Unsaved changes");
   }
 
+  function previewAttachmentInNewTab(attachment) {
+    if (!attachment?.dataUrl) {
+      return;
+    }
+
+    try {
+      const response = fetch(attachment.dataUrl);
+
+      response
+        .then((res) => res.blob())
+        .then((blob) => {
+          const blobUrl = URL.createObjectURL(blob);
+
+          const link = document.createElement("a");
+
+          link.href = blobUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.style.display = "none";
+
+          document.body.appendChild(link);
+
+          link.click();
+
+          link.remove();
+
+          window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        })
+        .catch(() => {
+          setError(
+            "Could not preview this attachment. Try downloading it instead.",
+          );
+        });
+    } catch {
+      setError(
+        "Could not preview this attachment. Try downloading it instead.",
+      );
+    }
+  }
+
   function downloadAttachment(attachment) {
     if (!attachment?.dataUrl) {
       return;
@@ -5452,16 +5492,37 @@ export default function NotesView({ vault, onVaultChange }) {
                           key={attachment.id}
                           style={styles.detailAttachmentRow}
                         >
-                          <div style={styles.detailAttachmentInfo}>
-                            <Paperclip size={13} />
-                            <div
-                              style={styles.detailAttachmentName}
-                              title={attachment.name}
-                            >
-                              {attachment.name}
+                          <button
+                            type="button"
+                            style={styles.detailAttachmentInfoButton}
+                            onClick={() => {
+                              if (attachment?.dataUrl) {
+                                previewAttachmentInNewTab(attachment);
+                              }
+                            }}
+                            title="Preview attachment"
+                          >
+                            <div style={styles.detailAttachmentInfo}>
+                              {attachment?.type?.startsWith("image/") ? (
+                                <img
+                                  src={attachment.dataUrl}
+                                  alt=""
+                                  style={styles.detailAttachmentThumb}
+                                />
+                              ) : (
+                                <Paperclip size={13} />
+                              )}
+                              <div
+                                style={styles.detailAttachmentName}
+                                title={attachment.name}
+                              >
+                                {attachment.name}
+                              </div>
+                              <span>
+                                {formatAttachmentSize(attachment.size)}
+                              </span>
                             </div>
-                            <span>{formatAttachmentSize(attachment.size)}</span>
-                          </div>
+                          </button>
 
                           <button
                             type="button"
@@ -9870,6 +9931,24 @@ const styles = {
     lineHeight: 1.7,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
+  },
+
+  detailAttachmentInfoButton: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  detailAttachmentThumb: {
+    width: 28,
+    height: 28,
+    borderRadius: 5,
+    objectFit: "cover",
+    flexShrink: 0,
   },
 
   detailAttachmentSection: {
