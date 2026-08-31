@@ -37,6 +37,9 @@ import {
   Upload,
   Download,
   Share2,
+  Ban,
+  Copy,
+  Link2,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -585,6 +588,9 @@ export default function NotesView({ vault, onVaultChange }) {
   const [shareCreated, setShareCreated] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
+  const [sharedLinks, setSharedLinks] = useState([]);
+  const [showShareManager, setShowShareManager] = useState(false);
+  const [shareManagerBusy, setShareManagerBusy] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [customTemplates, setCustomTemplates] = useState([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
@@ -1235,6 +1241,28 @@ export default function NotesView({ vault, onVaultChange }) {
         Array.isArray(vault?.customTemplates) ? vault.customTemplates : [],
       );
 
+      const savedSharedLinks = Array.isArray(vault?.sharedLinks)
+        ? vault.sharedLinks
+        : [];
+
+      // Legacy shares created before management tokens existed cannot be
+      // copied/revoked from the Share Manager. They were removed from the
+      // database separately, so keep them out of the UI as well.
+      const managedSharedLinks = savedSharedLinks.filter((link) =>
+        Boolean(link?.managementToken),
+      );
+
+      setSharedLinks(managedSharedLinks);
+
+      if (managedSharedLinks.length !== savedSharedLinks.length) {
+        setTimeout(() => {
+          onVaultChange({
+            ...vault,
+            sharedLinks: managedSharedLinks,
+          });
+        }, 0);
+      }
+
       setFolders(
         Array.isArray(vault?.folders)
           ? vault.folders
@@ -1262,6 +1290,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     setNotes([]);
     setCustomTemplates([]);
+    setSharedLinks([]);
     setSelectedId(null);
     setShowForm(false);
     setEditing(null);
@@ -2317,6 +2346,17 @@ export default function NotesView({ vault, onVaultChange }) {
         data.shareId,
       )}#${bytesToBase64UrlLocal(shareKey)}`;
 
+      rememberSharedLink({
+        shareId: data.shareId,
+        managementToken: data.managementToken,
+        url,
+        expiresAt: data.expiresAt || null,
+        revoked: false,
+        createdAt: new Date().toISOString(),
+        noteId: selected.id,
+        title: selected.title || "Untitled note",
+      });
+
       setShareUrl(url);
       setShareCreated(true);
       setError("");
@@ -2338,6 +2378,142 @@ export default function NotesView({ vault, onVaultChange }) {
     } catch {
       setError("Could not copy the share link.");
     }
+  }
+
+  function openShareManager() {
+    setShowShareManager(true);
+    setError("");
+  }
+
+  function closeShareManager() {
+    setShowShareManager(false);
+    setShareManagerBusy(false);
+    setError("");
+  }
+
+  function rememberSharedLink(link) {
+    const next = [
+      link,
+      ...sharedLinks.filter((item) => item.shareId !== link.shareId),
+    ];
+
+    setSharedLinks(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        sharedLinks: next,
+      });
+    }
+  }
+
+  async function permanentlyRemoveSharedLink(link) {
+    if (!link?.shareId) {
+      return;
+    }
+
+    // Remove it from the local encrypted vault immediately after a
+    // successful server deletion.
+    setShareManagerBusy(true);
+    setError("");
+
+    try {
+      if (link.managementToken) {
+        const response = await fetch("/api/share-note", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "delete",
+            shareId: link.shareId,
+            managementToken: link.managementToken,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Could not remove share link.");
+        }
+      }
+
+      const next = sharedLinks.filter((item) => item.shareId !== link.shareId);
+
+      setSharedLinks(next);
+
+      if (vault?.version === 2) {
+        onVaultChange({
+          ...vault,
+          sharedLinks: next,
+        });
+      }
+
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not remove share link.");
+    } finally {
+      setShareManagerBusy(false);
+    }
+  }
+
+  async function revokeSharedLink(link) {
+    if (!link?.shareId || !link?.managementToken) {
+      setError("This share cannot be revoked from this device.");
+      return;
+    }
+
+    setShareManagerBusy(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/share-note?action=revoke", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          shareId: link.shareId,
+          managementToken: link.managementToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not revoke share.");
+      }
+
+      const next = sharedLinks.map((item) =>
+        item.shareId === link.shareId
+          ? {
+              ...item,
+              revoked: true,
+              revokedAt: new Date().toISOString(),
+            }
+          : item,
+      );
+
+      setSharedLinks(next);
+
+      if (vault?.version === 2) {
+        onVaultChange({
+          ...vault,
+          sharedLinks: next,
+        });
+      }
+    } catch (error) {
+      setError(error.message || "Could not revoke share.");
+    } finally {
+      setShareManagerBusy(false);
+    }
+  }
+
+  function copyShareManagerLink(value) {
+    navigator.clipboard
+      .writeText(value || "")
+      .then(() => setError(""))
+      .catch(() => setError("Could not copy share link."));
   }
 
   function openShareModal() {
@@ -4372,6 +4548,15 @@ export default function NotesView({ vault, onVaultChange }) {
                     </button>
                   )}
 
+                  <button
+                    type="button"
+                    style={styles.iconButton}
+                    onClick={openShareManager}
+                    title="Manage shared links"
+                  >
+                    <Link2 size={15} />
+                  </button>
+
                   <select
                     value={selected.folderId || ""}
                     onChange={(e) => moveSelectedNote(e.target.value || "all")}
@@ -4596,6 +4781,143 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={saveCustomTemplate}
               >
                 {templateEditingId ? "Save changes" : "Create template"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showShareManager && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 720,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={closeShareManager}
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>SHARED LINKS</div>
+
+            <h2 style={styles.formTitle}>Manage shared links</h2>
+
+            <p style={styles.copy}>
+              These links are created for individual notes. Revoke a link to
+              immediately disable it.
+            </p>
+
+            {sharedLinks.length === 0 ? (
+              <div style={styles.shareManagerEmpty}>
+                <Link2 size={24} />
+                <strong>No shared links yet</strong>
+                <span>Create a Share link from any active note.</span>
+              </div>
+            ) : (
+              <div style={styles.shareManagerList}>
+                {sharedLinks.map((link) => {
+                  const expired =
+                    Boolean(link.expiresAt) &&
+                    new Date(link.expiresAt).getTime() <= Date.now();
+
+                  const status = link.revoked
+                    ? "Revoked"
+                    : expired
+                      ? "Expired"
+                      : "Active";
+
+                  return (
+                    <div key={link.shareId} style={styles.shareManagerRow}>
+                      <div style={styles.shareManagerInfo}>
+                        <div style={styles.shareManagerTitle}>
+                          {link.title || "Untitled note"}
+                        </div>
+                        <div style={styles.shareManagerMeta}>
+                          {status}
+                          {" · "}
+                          {link.expiresAt
+                            ? `expires ${new Date(
+                                link.expiresAt,
+                              ).toLocaleString()}`
+                            : "never expires"}
+                        </div>
+                      </div>
+
+                      <div style={styles.shareManagerActions}>
+                        <button
+                          type="button"
+                          style={styles.reminderActionButton}
+                          disabled={Boolean(link.revoked)}
+                          onClick={() => copyShareManagerLink(link.url)}
+                          title="Copy link"
+                        >
+                          <Copy size={13} />
+                        </button>
+
+                        {link.revoked ? (
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.reminderActionButton,
+                              ...styles.reminderDeleteButton,
+                            }}
+                            disabled={shareManagerBusy}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Remove this revoked share from Share Management? This cannot be undone.",
+                                )
+                              ) {
+                                permanentlyRemoveSharedLink(link);
+                              }
+                            }}
+                            title="Remove revoked link"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.reminderActionButton,
+                              ...styles.reminderDeleteButton,
+                            }}
+                            disabled={shareManagerBusy}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Revoke this share link? Anyone using it will lose access.",
+                                )
+                              ) {
+                                revokeSharedLink(link);
+                              }
+                            }}
+                            title="Revoke link"
+                          >
+                            <Ban size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={closeShareManager}
+              >
+                Done
               </button>
             </div>
           </div>
@@ -7098,6 +7420,67 @@ const styles = {
     background: "#20242B",
     color: "#8A929C",
     fontSize: 9,
+  },
+
+  shareManagerList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 7,
+    marginTop: 14,
+    maxHeight: 340,
+    overflowY: "auto",
+  },
+
+  shareManagerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "10px 11px",
+    border: "1px solid #2D323B",
+    borderRadius: 8,
+    background: "#15181D",
+  },
+
+  shareManagerInfo: {
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+
+  shareManagerTitle: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "#D9D7D0",
+    fontSize: 11,
+    fontWeight: 600,
+  },
+
+  shareManagerMeta: {
+    color: "#69717B",
+    fontSize: 9,
+  },
+
+  shareManagerActions: {
+    display: "flex",
+    gap: 5,
+    flexShrink: 0,
+  },
+
+  shareManagerEmpty: {
+    minHeight: 180,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    border: "1px dashed #30353E",
+    borderRadius: 9,
+    color: "#6E7680",
+    textAlign: "center",
+    fontSize: 10,
   },
 
   shareOptionGroup: {

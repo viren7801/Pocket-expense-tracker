@@ -17,6 +17,10 @@ function base64UrlToBuffer(value) {
   );
 }
 
+function hash(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
 function base64UrlFromBuffer(buffer) {
   return Buffer.from(buffer)
     .toString("base64")
@@ -50,6 +54,69 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const body = await readJsonBody(req);
 
+      // Revoke requests are recognized from the body first. This avoids
+      // relying on query-string parsing and prevents them from falling
+      // through into share creation.
+      if (body?.shareId && body?.managementToken) {
+        const action = String(body?.action || "revoke");
+
+        const shareId = String(body.shareId);
+
+        const managementToken = String(body.managementToken);
+
+        const { data, error: lookupError } = await supabase
+          .from("note_shares")
+          .select("id, management_token_hash, revoked")
+          .eq("id", shareId)
+          .maybeSingle();
+
+        if (lookupError) {
+          throw lookupError;
+        }
+
+        if (!data) {
+          return json(res, 404, {
+            error: "Share link not found.",
+          });
+        }
+
+        if (!data.management_token_hash) {
+          return json(res, 409, {
+            error:
+              "This share was created before share management was enabled. Create a new share link.",
+          });
+        }
+
+        if (data.management_token_hash !== hash(managementToken)) {
+          return json(res, 403, {
+            error: "Invalid share management token.",
+          });
+        }
+
+        if (data.revoked) {
+          return json(res, 200, {
+            revoked: true,
+          });
+        }
+
+        const { error: revokeError } = await supabase
+          .from("note_shares")
+          .update({
+            revoked: true,
+            revoked_at: new Date().toISOString(),
+          })
+          .eq("id", shareId);
+
+        if (revokeError) {
+          throw revokeError;
+        }
+
+        return json(res, 200, {
+          revoked: true,
+        });
+      }
+
+      // Otherwise this is a new encrypted share.
       const ciphertext = String(body?.ciphertext || "");
 
       const iv = String(body?.iv || "");
@@ -68,12 +135,16 @@ export default async function handler(req, res) {
 
       const shareId = crypto.randomUUID();
 
+      const managementToken = crypto.randomBytes(32).toString("base64url");
+
       const expiresAt = expirationDate(body?.expiresIn);
 
       const { error } = await supabase.from("note_shares").insert({
         id: shareId,
 
         owner_id: null,
+
+        management_token_hash: hash(managementToken),
 
         ciphertext,
 
@@ -93,6 +164,7 @@ export default async function handler(req, res) {
       return json(res, 200, {
         shareId,
         expiresAt,
+        managementToken,
       });
     }
 
@@ -141,38 +213,123 @@ export default async function handler(req, res) {
       });
     }
 
-    if (req.method === "DELETE") {
-      const user = await isAuthenticated(req);
+    if (req.method === "POST" && String(req.query?.action || "") === "revoke") {
+      const body = await readJsonBody(req);
 
-      if (!user) {
-        return json(res, 401, {
-          error: "Authentication required.",
-        });
-      }
+      const shareId = String(body?.shareId || "");
 
-      const shareId = String(req.query?.id || "");
+      const managementToken = String(body?.managementToken || "");
 
-      if (!shareId) {
+      if (!shareId || !managementToken) {
         return json(res, 400, {
-          error: "Share id is required.",
+          error: "Share id and management token are required.",
         });
       }
 
-      const { error } = await supabase
+      const { data, error: lookupError } = await supabase
+        .from("note_shares")
+        .select("id, management_token_hash, revoked")
+        .eq("id", shareId)
+        .maybeSingle();
+
+      if (lookupError) {
+        throw lookupError;
+      }
+
+      if (!data) {
+        return json(res, 404, {
+          error: "Share link not found.",
+        });
+      }
+
+      if (!data.management_token_hash) {
+        return json(res, 409, {
+          error:
+            "This share was created before share management was enabled. Create a new share link.",
+        });
+      }
+
+      if (data.management_token_hash !== hash(managementToken)) {
+        return json(res, 403, {
+          error: "Invalid share management token.",
+        });
+      }
+
+      if (action === "delete") {
+        if (!data.revoked) {
+          return json(res, 409, {
+            error: "Only revoked share links can be permanently removed.",
+          });
+        }
+
+        const { error: deleteError } = await supabase
+          .from("note_shares")
+          .delete()
+          .eq("id", shareId);
+
+        if (deleteError) {
+          throw deleteError;
+        }
+
+        return json(res, 200, {
+          deleted: true,
+        });
+      }
+
+      const { error: revokeError } = await supabase
         .from("note_shares")
         .update({
           revoked: true,
           revoked_at: new Date().toISOString(),
         })
-        .eq("id", shareId)
-        .eq("owner_id", user.id);
+        .eq("id", shareId);
 
-      if (error) {
-        throw error;
+      if (revokeError) {
+        throw revokeError;
       }
 
       return json(res, 200, {
         revoked: true,
+      });
+    }
+
+    if (req.method === "GET" && String(req.query?.action || "") === "manage") {
+      const shareId = String(req.query?.id || "");
+
+      const managementToken = String(req.query?.token || "");
+
+      if (!shareId || !managementToken) {
+        return json(res, 400, {
+          error: "Share id and management token are required.",
+        });
+      }
+
+      const { data, error: lookupError } = await supabase
+        .from("note_shares")
+        .select("id, management_token_hash, expires_at, revoked")
+        .eq("id", shareId)
+        .maybeSingle();
+
+      if (lookupError) {
+        throw lookupError;
+      }
+
+      if (!data || data.management_token_hash !== hash(managementToken)) {
+        return json(res, 403, {
+          error: "Invalid share management token.",
+        });
+      }
+
+      return json(res, 200, {
+        shareId: data.id,
+        expiresAt: data.expires_at,
+        revoked: data.revoked,
+      });
+    }
+
+    if (req.method === "DELETE") {
+      return json(res, 501, {
+        error: "Use POST ?action=revoke with the management token.",
       });
     }
 
