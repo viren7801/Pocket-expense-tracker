@@ -45,6 +45,7 @@ import {
   Files,
   Check,
   Link2,
+  Bookmark,
   History,
   Clock3,
 } from "lucide-react";
@@ -581,6 +582,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [selectedFolder, setSelectedFolder] = useState("all");
   const [showFavorites, setShowFavorites] = useState(false);
   const [selectedNoteIds, setSelectedNoteIds] = useState([]);
+  const [hoveredNoteId, setHoveredNoteId] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [showBulkMoveMenu, setShowBulkMoveMenu] = useState(false);
   const [showBulkExportMenu, setShowBulkExportMenu] = useState(false);
@@ -589,6 +591,10 @@ export default function NotesView({ vault, onVaultChange }) {
   const [searchPinnedOnly, setSearchPinnedOnly] = useState(false);
   const [searchHasReminder, setSearchHasReminder] = useState(false);
   const [showSearchFilters, setShowSearchFilters] = useState(false);
+  const [savedSearchViews, setSavedSearchViews] = useState([]);
+  const [showSavedViewsMenu, setShowSavedViewsMenu] = useState(false);
+  const [showSaveViewDialog, setShowSaveViewDialog] = useState(false);
+  const [savedViewName, setSavedViewName] = useState("");
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
 
@@ -598,6 +604,8 @@ export default function NotesView({ vault, onVaultChange }) {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(0);
+  const [trashRetentionDays, setTrashRetentionDays] = useState(0);
+  const [showTrashRetentionMenu, setShowTrashRetentionMenu] = useState(false);
   const autoLockTimerRef = useRef(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showNoteExportMenu, setShowNoteExportMenu] = useState(false);
@@ -700,6 +708,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [telegramConnectUrl, setTelegramConnectUrl] = useState("");
 
   const [query, setQuery] = useState("");
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1);
 
   const [selectedId, setSelectedId] = useState(null);
 
@@ -827,6 +836,7 @@ export default function NotesView({ vault, onVaultChange }) {
         setShowExportMenu(false);
         setShowNoteExportMenu(false);
         setShowAutoLockMenu(false);
+        setShowTrashRetentionMenu(false);
         setShowTemplateMenu(false);
         setShowShareManager(false);
         setShowVersionHistory(false);
@@ -1105,6 +1115,77 @@ export default function NotesView({ vault, onVaultChange }) {
     setSelectedNoteIds(allSelected ? [] : visibleIds);
   }
 
+  async function applyBulkTrashAction(action) {
+    const ids = selectedNoteIds.filter((id) =>
+      notes.some((note) => note.id === id && note.trashed),
+    );
+
+    if (!ids.length) {
+      return;
+    }
+
+    if (
+      action === "permanentDelete" &&
+      !window.confirm(
+        `Permanently delete ${ids.length} ${
+          ids.length === 1 ? "note" : "notes"
+        }? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkBusy(true);
+    setError("");
+
+    try {
+      if (action === "restore") {
+        const now = new Date().toISOString();
+
+        const next = notes.map((note) =>
+          ids.includes(note.id)
+            ? {
+                ...note,
+                trashed: false,
+                trashedAt: null,
+                archived: false,
+                updatedAt: now,
+              }
+            : note,
+        );
+
+        await persistNotes(next);
+
+        setShowTrash(false);
+        setShowArchivedNotes(false);
+        setSelectedFolder("all");
+        setSelectedTag("all");
+        setQuery("");
+        setSelectedId(
+          next.find((note) => ids.includes(note.id))?.id ||
+            next.find((note) => !note.trashed && !note.archived)?.id ||
+            null,
+        );
+      }
+
+      if (action === "permanentDelete") {
+        const next = notes.filter((note) => !ids.includes(note.id));
+
+        await persistNotes(next);
+
+        setSelectedId(
+          next.find((note) => !note.trashed && !note.archived)?.id || null,
+        );
+      }
+
+      setSelectedNoteIds([]);
+    } catch (error) {
+      setError(error.message || "Could not update trash.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   function exportSelectedNotes(format) {
     const selected = notes.filter((note) => selectedNoteIds.includes(note.id));
 
@@ -1202,6 +1283,22 @@ export default function NotesView({ vault, onVaultChange }) {
           return note;
         }
 
+        if (action === "favorite") {
+          return {
+            ...note,
+            favorite: true,
+            updatedAt: now,
+          };
+        }
+
+        if (action === "unfavorite") {
+          return {
+            ...note,
+            favorite: false,
+            updatedAt: now,
+          };
+        }
+
         if (action === "pin") {
           return {
             ...note,
@@ -1267,6 +1364,266 @@ export default function NotesView({ vault, onVaultChange }) {
     } finally {
       setBulkBusy(false);
     }
+  }
+
+  function getCurrentSavedViewState() {
+    return {
+      query,
+      selectedFolder,
+      showFavorites,
+      selectedTag,
+      searchPinnedOnly,
+      searchHasReminder,
+      showArchivedNotes,
+      showTrash,
+      sortMode,
+    };
+  }
+
+  function applySavedSearchView(view) {
+    if (!view) {
+      return;
+    }
+
+    const state = view.state || {};
+
+    setQuery(String(state.query || ""));
+    setSelectedFolder(state.selectedFolder || "all");
+    setShowFavorites(Boolean(state.showFavorites));
+    setSelectedTag(state.selectedTag || "all");
+    setSearchPinnedOnly(Boolean(state.searchPinnedOnly));
+    setSearchHasReminder(Boolean(state.searchHasReminder));
+    setShowArchivedNotes(Boolean(state.showArchivedNotes));
+    setShowTrash(Boolean(state.showTrash));
+    setSortMode(state.sortMode || "updated");
+
+    setSelectedNoteIds([]);
+    setShowSearchFilters(false);
+    setShowSortMenu(false);
+    setShowSavedViewsMenu(false);
+    setSearchActiveIndex(state.query ? 0 : -1);
+    setError("");
+  }
+
+  function saveCurrentSearchView() {
+    const name = savedViewName.trim();
+
+    if (!name) {
+      setError("Enter a name for this saved view.");
+      return;
+    }
+
+    const state = getCurrentSavedViewState();
+
+    const next = [
+      {
+        id: makeId(),
+        name,
+        state,
+        createdAt: new Date().toISOString(),
+      },
+      ...savedSearchViews,
+    ].slice(0, 20);
+
+    setSavedSearchViews(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        savedSearchViews: next,
+      });
+    }
+
+    setSavedViewName("");
+    setShowSaveViewDialog(false);
+    setShowSavedViewsMenu(false);
+    setError("");
+  }
+
+  function deleteSavedSearchView(viewId) {
+    const next = savedSearchViews.filter((view) => view.id !== viewId);
+
+    setSavedSearchViews(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        savedSearchViews: next,
+      });
+    }
+
+    setError("");
+  }
+
+  function getNoteShareStatus(noteId) {
+    const links = Array.isArray(sharedLinks)
+      ? sharedLinks.filter((link) => link.noteId === noteId)
+      : [];
+
+    if (!links.length) {
+      return {
+        key: "private",
+        label: "Private",
+      };
+    }
+
+    const active = links.some((link) => {
+      if (link.revoked) {
+        return false;
+      }
+
+      if (!link.expiresAt) {
+        return true;
+      }
+
+      const expires = new Date(link.expiresAt).getTime();
+
+      return !Number.isNaN(expires) && expires > Date.now();
+    });
+
+    return active
+      ? {
+          key: "shared",
+          label: "Shared",
+        }
+      : {
+          key: "revoked",
+          label: "Revoked",
+        };
+  }
+
+  function buildNoteActivityTimeline(note) {
+    const events = [];
+
+    if (note?.createdAt) {
+      events.push({
+        id: "created",
+        label: "Created",
+        detail: "Note created",
+        at: note.createdAt,
+      });
+    }
+
+    if (note?.updatedAt && note.updatedAt !== note.createdAt) {
+      events.push({
+        id: "updated",
+        label: "Updated",
+        detail: "Note last edited",
+        at: note.updatedAt,
+      });
+    }
+
+    if (Array.isArray(note?.history) && note.history.length > 0) {
+      events.push({
+        id: "history",
+        label: "Version history",
+        detail: `${note.history.length} saved ${
+          note.history.length === 1 ? "version" : "versions"
+        } available`,
+        at: note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (Array.isArray(note?.attachments) && note.attachments.length > 0) {
+      const latestAttachment = note.attachments[note.attachments.length - 1];
+
+      events.push({
+        id: "attachments",
+        label: "Attachments",
+        detail: `${note.attachments.length} ${
+          note.attachments.length === 1 ? "attachment" : "attachments"
+        } attached`,
+        at: latestAttachment?.addedAt || note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (note?.reminderAt) {
+      events.push({
+        id: "reminder",
+        label: "Reminder",
+        detail: "Reminder scheduled",
+        at: note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (note?.favorite) {
+      events.push({
+        id: "favorite",
+        label: "Favorite",
+        detail: "Currently in Favorites",
+        at: note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (note?.pinned) {
+      events.push({
+        id: "pinned",
+        label: "Pinned",
+        detail: "Currently pinned",
+        at: note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (note?.archived) {
+      events.push({
+        id: "archived",
+        label: "Archived",
+        detail: "Currently archived",
+        at: note.updatedAt || note.createdAt,
+      });
+    }
+
+    if (note?.trashed) {
+      events.push({
+        id: "trashed",
+        label: "Trash",
+        detail: "Currently in Trash",
+        at: note.trashedAt || note.updatedAt || note.createdAt,
+      });
+    }
+
+    return events
+      .filter((event) => event.at)
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  }
+
+  function getNoteStatistics(note) {
+    const content = String(note?.content || "");
+
+    const trimmed = content.trim();
+
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+
+    const characters = content.length;
+
+    const lines = content ? content.split("\n").length : 0;
+
+    const readingSeconds =
+      words > 0 ? Math.max(1, Math.ceil((words / 200) * 60)) : 0;
+
+    return {
+      words,
+      characters,
+      lines,
+      readingSeconds,
+    };
+  }
+
+  function formatNoteDateTime(value) {
+    if (!value) {
+      return "Unknown";
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "Unknown";
+    }
+
+    return date.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
   }
 
   const filteredNotes = useMemo(() => {
@@ -1409,6 +1766,12 @@ export default function NotesView({ vault, onVaultChange }) {
     showArchivedNotes,
     showTrash,
   ]);
+
+  useEffect(() => {
+    if (searchActiveIndex >= filteredNotes.length) {
+      setSearchActiveIndex(filteredNotes.length ? 0 : -1);
+    }
+  }, [filteredNotes.length, searchActiveIndex]);
 
   const selected = notes.find((note) => note.id === selectedId) || null;
 
@@ -1646,11 +2009,71 @@ export default function NotesView({ vault, onVaultChange }) {
         decrypted = await decryptLegacyNotes(vault, password);
       }
 
+      const savedRetention = Number(vault?.trashRetentionDays);
+
+      const retentionDays =
+        Number.isFinite(savedRetention) && savedRetention >= 0
+          ? Math.floor(savedRetention)
+          : 0;
+
+      setTrashRetentionDays(retentionDays);
+
+      let cleanedNotes = decrypted;
+
+      if (retentionDays > 0) {
+        const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+        cleanedNotes = decrypted.filter((note) => {
+          if (!note.trashed) {
+            return true;
+          }
+
+          const trashedAt = new Date(
+            note.trashedAt || note.updatedAt || note.createdAt || 0,
+          ).getTime();
+
+          return !Number.isFinite(trashedAt) || trashedAt > cutoff;
+        });
+
+        if (cleanedNotes.length !== decrypted.length) {
+          try {
+            if (vault?.version === 2) {
+              const dataKey = await unwrapDataKeyWithPassword(
+                vault.passwordWrap,
+                password,
+              );
+
+              const data = await encryptNotesWithDataKey(cleanedNotes, dataKey);
+
+              onVaultChange({
+                ...vault,
+                data,
+                trashRetentionDays: retentionDays,
+              });
+            } else {
+              const envelope = await encryptLegacyNotes(
+                cleanedNotes,
+                password,
+                vault?.salt,
+              );
+
+              onVaultChange(envelope);
+            }
+          } catch {
+            // Keep the session usable even if cleanup persistence fails.
+          }
+        }
+      }
+
       sessionPasswordRef.current = password;
 
-      setNotes(decrypted);
+      setNotes(cleanedNotes);
       setCustomTemplates(
         Array.isArray(vault?.customTemplates) ? vault.customTemplates : [],
+      );
+
+      setSavedSearchViews(
+        Array.isArray(vault?.savedSearchViews) ? vault.savedSearchViews : [],
       );
 
       const savedSharedLinks = Array.isArray(vault?.sharedLinks)
@@ -1698,6 +2121,54 @@ export default function NotesView({ vault, onVaultChange }) {
       setError("Incorrect notes vault password or corrupted vault.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function setTrashRetention(days) {
+    const value = Math.max(0, Number(days) || 0);
+
+    setTrashRetentionDays(value);
+    setShowTrashRetentionMenu(false);
+    setError("");
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        trashRetentionDays: value,
+      });
+    }
+
+    // Apply the new policy immediately to notes already in Trash.
+    if (value > 0) {
+      const cutoff = Date.now() - value * 24 * 60 * 60 * 1000;
+
+      const expiredIds = notes
+        .filter((note) => {
+          if (!note.trashed) {
+            return false;
+          }
+
+          const time = new Date(
+            note.trashedAt || note.updatedAt || note.createdAt || 0,
+          ).getTime();
+
+          return Number.isFinite(time) && time <= cutoff;
+        })
+        .map((note) => note.id);
+
+      if (expiredIds.length) {
+        const next = notes.filter((note) => !expiredIds.includes(note.id));
+
+        try {
+          await persistNotes(next);
+
+          setSelectedNoteIds((current) =>
+            current.filter((id) => !expiredIds.includes(id)),
+          );
+        } catch {
+          // Error state is handled by persistNotes.
+        }
+      }
     }
   }
 
@@ -5014,6 +5485,10 @@ export default function NotesView({ vault, onVaultChange }) {
                 setSelectedFolder("all");
                 setSelectedTag("all");
                 setSelectedId(null);
+                setSelectedNoteIds([]);
+                setShowBulkMoveMenu(false);
+                setShowBulkExportMenu(false);
+                setHoveredNoteId(null);
               }}
             >
               <FileText size={13} />
@@ -5060,6 +5535,9 @@ export default function NotesView({ vault, onVaultChange }) {
                 setSelectedFolder("all");
                 setSelectedTag("all");
                 setSelectedId(null);
+                setSelectedNoteIds([]);
+                setShowBulkMoveMenu(false);
+                setShowBulkExportMenu(false);
               }}
             >
               <Trash2 size={13} />
@@ -5668,6 +6146,55 @@ export default function NotesView({ vault, onVaultChange }) {
             )}
           </div>
 
+          <div style={styles.trashRetentionWrap}>
+            <button
+              type="button"
+              style={styles.secondaryButton}
+              onClick={() => setShowTrashRetentionMenu((value) => !value)}
+              title="Trash retention"
+              aria-haspopup="menu"
+              aria-expanded={showTrashRetentionMenu}
+            >
+              <Trash2 size={14} />
+              Trash retention
+              <span style={styles.trashRetentionValue}>
+                {trashRetentionDays === 0 ? "Never" : `${trashRetentionDays}d`}
+              </span>
+            </button>
+
+            {showTrashRetentionMenu && (
+              <div style={styles.trashRetentionMenu}>
+                <div style={styles.trashRetentionTitle}>AUTO-CLEAN TRASH</div>
+
+                <div style={styles.trashRetentionCopy}>
+                  Notes are permanently deleted after the selected time.
+                </div>
+
+                {[
+                  [0, "Never"],
+                  [7, "7 days"],
+                  [30, "30 days"],
+                  [90, "90 days"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    style={{
+                      ...styles.trashRetentionItem,
+                      ...(trashRetentionDays === value
+                        ? styles.trashRetentionItemActive
+                        : {}),
+                    }}
+                    onClick={() => setTrashRetention(value)}
+                  >
+                    {label}
+                    {trashRetentionDays === value && <Check size={13} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             style={styles.secondaryButton}
@@ -5724,7 +6251,55 @@ export default function NotesView({ vault, onVaultChange }) {
 
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setSearchActiveIndex(e.target.value.trim() ? 0 : -1);
+          }}
+          onKeyDown={(event) => {
+            if (!query.trim()) {
+              return;
+            }
+
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+
+              if (!filteredNotes.length) {
+                setSearchActiveIndex(-1);
+                return;
+              }
+
+              setSearchActiveIndex((current) => {
+                const start = current < 0 ? 0 : current;
+
+                return event.key === "ArrowDown"
+                  ? (start + 1) % filteredNotes.length
+                  : (start - 1 + filteredNotes.length) % filteredNotes.length;
+              });
+
+              return;
+            }
+
+            if (event.key === "Enter" && filteredNotes.length) {
+              event.preventDefault();
+
+              const index = searchActiveIndex >= 0 ? searchActiveIndex : 0;
+
+              const note = filteredNotes[index];
+
+              if (note) {
+                setSelectedId(note.id);
+                setShowNoteExportMenu(false);
+                setShowSearchFilters(false);
+                setShowSortMenu(false);
+                setSearchActiveIndex(index);
+              }
+            }
+
+            if (event.key === "Escape") {
+              setQuery("");
+              setSearchActiveIndex(-1);
+            }
+          }}
           placeholder="Search notes…"
           style={styles.searchInput}
         />
@@ -5735,6 +6310,77 @@ export default function NotesView({ vault, onVaultChange }) {
             {filteredNotes.length === 1 ? "result" : "results"}
           </span>
         )}
+
+        <div style={styles.savedViewsWrap}>
+          <button
+            type="button"
+            style={{
+              ...styles.searchFilterButton,
+              ...(showSavedViewsMenu ? styles.searchFilterButtonActive : {}),
+            }}
+            onClick={() => setShowSavedViewsMenu((value) => !value)}
+            title="Saved search views"
+            aria-haspopup="menu"
+            aria-expanded={showSavedViewsMenu}
+          >
+            <Bookmark size={13} />
+            Saved
+            {savedSearchViews.length > 0 && (
+              <span style={styles.searchFilterBadge}>
+                {savedSearchViews.length}
+              </span>
+            )}
+          </button>
+
+          {showSavedViewsMenu && (
+            <div style={styles.savedViewsMenu}>
+              <div style={styles.savedViewsTitle}>SAVED VIEWS</div>
+
+              {savedSearchViews.length === 0 ? (
+                <div style={styles.savedViewsEmpty}>No saved views yet.</div>
+              ) : (
+                savedSearchViews.map((view) => (
+                  <div key={view.id} style={styles.savedViewRow}>
+                    <button
+                      type="button"
+                      style={styles.savedViewButton}
+                      onClick={() => applySavedSearchView(view)}
+                      title={`Apply ${view.name}`}
+                    >
+                      <Bookmark size={12} />
+                      <span style={styles.savedViewButtonLabel}>
+                        {view.name}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.savedViewDelete}
+                      onClick={() => deleteSavedSearchView(view.id)}
+                      title="Delete saved view"
+                      aria-label="Delete saved view"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))
+              )}
+
+              <button
+                type="button"
+                style={styles.savedViewSaveButton}
+                onClick={() => {
+                  setSavedViewName("");
+                  setShowSaveViewDialog(true);
+                  setShowSavedViewsMenu(false);
+                }}
+              >
+                <Plus size={12} />
+                Save current view
+              </button>
+            </div>
+          )}
+        </div>
 
         <div style={styles.searchFilterWrap}>
           <button
@@ -5936,6 +6582,12 @@ export default function NotesView({ vault, onVaultChange }) {
         </div>
       )}
 
+      {query.trim() && filteredNotes.length > 0 && (
+        <div style={styles.searchKeyboardHint}>
+          ↑ ↓ to navigate · Enter to open
+        </div>
+      )}
+
       {selectedNoteIds.length > 0 && (
         <div style={styles.bulkToolbar}>
           <div style={styles.bulkToolbarLeft}>
@@ -5954,133 +6606,210 @@ export default function NotesView({ vault, onVaultChange }) {
           </div>
 
           <div style={styles.bulkToolbarActions}>
-            <button
-              type="button"
-              style={styles.bulkActionButton}
-              disabled={bulkBusy}
-              onClick={() => applyBulkAction("pin")}
-            >
-              <Pin size={12} />
-              Pin
-            </button>
+            {showTrash ? (
+              <>
+                <button
+                  type="button"
+                  style={styles.bulkActionButton}
+                  disabled={bulkBusy}
+                  onClick={() => applyBulkTrashAction("restore")}
+                >
+                  <Archive size={12} />
+                  Restore
+                </button>
 
-            <button
-              type="button"
-              style={styles.bulkActionButton}
-              disabled={bulkBusy}
-              onClick={() => applyBulkAction("archive")}
-            >
-              <Archive size={12} />
-              Archive
-            </button>
+                <button
+                  type="button"
+                  style={{
+                    ...styles.bulkActionButton,
+                    ...styles.bulkPermanentDeleteButton,
+                  }}
+                  disabled={bulkBusy}
+                  onClick={() => applyBulkTrashAction("permanentDelete")}
+                >
+                  <Trash2 size={12} />
+                  Delete permanently
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  style={styles.bulkActionButton}
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const allFavorite =
+                      selectedNoteIds.length > 0 &&
+                      selectedNoteIds.every(
+                        (id) => notes.find((note) => note.id === id)?.favorite,
+                      );
 
-            <div style={styles.bulkMoveWrap}>
-              <button
-                type="button"
-                style={styles.bulkActionButton}
-                disabled={bulkBusy}
-                onClick={() => setShowBulkMoveMenu((value) => !value)}
-                title="Move selected notes"
-              >
-                <Folder size={12} />
-                Move to
-              </button>
+                    applyBulkAction(allFavorite ? "unfavorite" : "favorite");
+                  }}
+                  title="Favorite selected notes"
+                >
+                  <Star
+                    size={12}
+                    fill={
+                      selectedNoteIds.length > 0 &&
+                      selectedNoteIds.every(
+                        (id) => notes.find((note) => note.id === id)?.favorite,
+                      )
+                        ? "currentColor"
+                        : "none"
+                    }
+                  />
+                  {selectedNoteIds.length > 0 &&
+                  selectedNoteIds.every(
+                    (id) => notes.find((note) => note.id === id)?.favorite,
+                  )
+                    ? "Unfavorite"
+                    : "Favorite"}
+                </button>
 
-              {showBulkMoveMenu && (
-                <div style={styles.bulkMoveMenu}>
-                  <div style={styles.bulkMoveMenuTitle}>MOVE TO FOLDER</div>
+                <button
+                  type="button"
+                  style={styles.bulkActionButton}
+                  disabled={bulkBusy}
+                  onClick={() => {
+                    const allPinned =
+                      selectedNoteIds.length > 0 &&
+                      selectedNoteIds.every(
+                        (id) => notes.find((note) => note.id === id)?.pinned,
+                      );
 
-                  {folders.map((folder) => (
-                    <button
-                      key={folder.id}
-                      type="button"
-                      style={styles.bulkMoveItem}
-                      disabled={bulkBusy}
-                      onClick={async () => {
-                        setShowBulkMoveMenu(false);
+                    applyBulkAction(allPinned ? "unpin" : "pin");
+                  }}
+                  title="Pin or unpin selected notes"
+                >
+                  <Pin size={12} />
+                  {selectedNoteIds.length > 0 &&
+                  selectedNoteIds.every(
+                    (id) => notes.find((note) => note.id === id)?.pinned,
+                  )
+                    ? "Unpin"
+                    : "Pin"}
+                </button>
 
-                        await applyBulkAction(`move:${folder.id}`);
-                      }}
-                    >
-                      <Folder size={12} />
-                      {folder.name}
-                    </button>
-                  ))}
+                <button
+                  type="button"
+                  style={styles.bulkActionButton}
+                  disabled={bulkBusy}
+                  onClick={() => applyBulkAction("archive")}
+                >
+                  <Archive size={12} />
+                  Archive
+                </button>
 
+                <div style={styles.bulkMoveWrap}>
                   <button
                     type="button"
-                    style={styles.bulkMoveItem}
+                    style={styles.bulkActionButton}
                     disabled={bulkBusy}
-                    onClick={async () => {
-                      setShowBulkMoveMenu(false);
-
-                      await applyBulkAction("move:none");
-                    }}
+                    onClick={() => setShowBulkMoveMenu((value) => !value)}
+                    title="Move selected notes"
                   >
                     <Folder size={12} />
-                    No folder
+                    Move to
                   </button>
+
+                  {showBulkMoveMenu && (
+                    <div style={styles.bulkMoveMenu}>
+                      <div style={styles.bulkMoveMenuTitle}>MOVE TO FOLDER</div>
+
+                      {folders.map((folder) => (
+                        <button
+                          key={folder.id}
+                          type="button"
+                          style={styles.bulkMoveItem}
+                          disabled={bulkBusy}
+                          onClick={async () => {
+                            setShowBulkMoveMenu(false);
+                            await applyBulkAction(`move:${folder.id}`);
+                          }}
+                        >
+                          <Folder size={12} />
+                          {folder.name}
+                        </button>
+                      ))}
+
+                      <button
+                        type="button"
+                        style={styles.bulkMoveItem}
+                        disabled={bulkBusy}
+                        onClick={async () => {
+                          setShowBulkMoveMenu(false);
+                          await applyBulkAction("move:none");
+                        }}
+                      >
+                        <Folder size={12} />
+                        No folder
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            <div style={styles.bulkExportWrap}>
-              <button
-                type="button"
-                style={styles.bulkActionButton}
-                disabled={bulkBusy}
-                onClick={() => setShowBulkExportMenu((value) => !value)}
-                title="Export selected notes"
-                aria-haspopup="menu"
-                aria-expanded={showBulkExportMenu}
-              >
-                <Upload size={12} />
-                Export
-              </button>
-
-              {showBulkExportMenu && (
-                <div style={styles.bulkExportMenu}>
-                  <div style={styles.bulkExportMenuTitle}>EXPORT SELECTED</div>
-
+                <div style={styles.bulkExportWrap}>
                   <button
                     type="button"
-                    style={styles.bulkExportItem}
+                    style={styles.bulkActionButton}
                     disabled={bulkBusy}
-                    onClick={() => exportSelectedNotes("markdown")}
+                    onClick={() => setShowBulkExportMenu((value) => !value)}
+                    title="Export selected notes"
+                    aria-haspopup="menu"
+                    aria-expanded={showBulkExportMenu}
                   >
-                    Markdown (.md)
+                    <Upload size={12} />
+                    Export
                   </button>
 
-                  <button
-                    type="button"
-                    style={styles.bulkExportItem}
-                    disabled={bulkBusy}
-                    onClick={() => exportSelectedNotes("txt")}
-                  >
-                    Plain text (.txt)
-                  </button>
+                  {showBulkExportMenu && (
+                    <div style={styles.bulkExportMenu}>
+                      <div style={styles.bulkExportMenuTitle}>
+                        EXPORT SELECTED
+                      </div>
 
-                  <button
-                    type="button"
-                    style={styles.bulkExportItem}
-                    disabled={bulkBusy}
-                    onClick={() => exportSelectedNotes("json")}
-                  >
-                    JSON (.json)
-                  </button>
+                      <button
+                        type="button"
+                        style={styles.bulkExportItem}
+                        disabled={bulkBusy}
+                        onClick={() => exportSelectedNotes("markdown")}
+                      >
+                        Markdown (.md)
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.bulkExportItem}
+                        disabled={bulkBusy}
+                        onClick={() => exportSelectedNotes("txt")}
+                      >
+                        Plain text (.txt)
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.bulkExportItem}
+                        disabled={bulkBusy}
+                        onClick={() => exportSelectedNotes("json")}
+                      >
+                        JSON (.json)
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            <button
-              type="button"
-              style={styles.bulkActionButton}
-              disabled={bulkBusy}
-              onClick={() => applyBulkAction("delete")}
-            >
-              <Trash2 size={12} />
-              Delete
-            </button>
+                <button
+                  type="button"
+                  style={styles.bulkActionButton}
+                  disabled={bulkBusy}
+                  onClick={() => applyBulkAction("delete")}
+                >
+                  <Trash2 size={12} />
+                  Delete
+                </button>
+              </>
+            )}
 
             <button
               type="button"
@@ -6126,15 +6855,20 @@ export default function NotesView({ vault, onVaultChange }) {
               )}
             </div>
           ) : (
-            filteredNotes.map((note) => (
+            filteredNotes.map((note, noteIndex) => (
               <div
                 key={note.id}
                 style={{
                   ...styles.noteRowWrap,
+                  ...(searchActiveIndex === noteIndex && query.trim()
+                    ? styles.noteRowWrapSearchActive
+                    : {}),
                   ...(selectedNoteIds.includes(note.id)
                     ? styles.noteRowWrapSelected
                     : {}),
                 }}
+                onMouseEnter={() => setHoveredNoteId(note.id)}
+                onMouseLeave={() => setHoveredNoteId(null)}
               >
                 <button
                   type="button"
@@ -6169,6 +6903,7 @@ export default function NotesView({ vault, onVaultChange }) {
                     ...styles.noteRow,
                     flex: 1,
                     minWidth: 0,
+                    paddingRight: 175,
                     background:
                       selectedId === note.id ? "#20242B" : "transparent",
                   }}
@@ -6196,8 +6931,141 @@ export default function NotesView({ vault, onVaultChange }) {
                         query,
                       )}
                     </div>
+
+                    <div style={styles.rowCompactMeta}>
+                      <span>
+                        Updated{" "}
+                        {formatNoteDateTime(note.updatedAt || note.createdAt)}
+                      </span>
+
+                      <span>·</span>
+
+                      <span>{getNoteShareStatus(note.id).label}</span>
+
+                      {Array.isArray(note.attachments) &&
+                        note.attachments.length > 0 && (
+                          <>
+                            <span>·</span>
+                            <span>
+                              {note.attachments.length}{" "}
+                              {note.attachments.length === 1
+                                ? "attachment"
+                                : "attachments"}
+                            </span>
+                          </>
+                        )}
+                    </div>
                   </div>
                 </button>
+
+                {!note.trashed && hoveredNoteId === note.id && (
+                  <div style={styles.noteQuickActions}>
+                    <button
+                      type="button"
+                      style={styles.noteQuickActionButton}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleFavorite(note.id);
+                      }}
+                      title={
+                        note.favorite
+                          ? "Remove from favorites"
+                          : "Add to favorites"
+                      }
+                      aria-label={
+                        note.favorite
+                          ? "Remove from favorites"
+                          : "Add to favorites"
+                      }
+                    >
+                      <Star
+                        size={12}
+                        fill={note.favorite ? "currentColor" : "none"}
+                      />
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.noteQuickActionButton}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        togglePin(note.id);
+                      }}
+                      title={note.pinned ? "Unpin note" : "Pin note"}
+                      aria-label={note.pinned ? "Unpin note" : "Pin note"}
+                    >
+                      <Pin
+                        size={12}
+                        fill={note.pinned ? "currentColor" : "none"}
+                      />
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.noteQuickActionButton}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleArchive(note.id);
+                      }}
+                      title="Archive note"
+                      aria-label="Archive note"
+                    >
+                      <Archive size={12} />
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.noteQuickActionButton}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+
+                        try {
+                          await navigator.clipboard.writeText(
+                            [
+                              note.title || "Untitled note",
+                              "",
+                              note.content || "",
+                            ].join("\n"),
+                          );
+                          setError("");
+                          setNoteCopied(true);
+
+                          window.setTimeout(() => setNoteCopied(false), 1200);
+                        } catch {
+                          setError("Could not copy the note.");
+                        }
+                      }}
+                      title="Copy note"
+                      aria-label="Copy note"
+                    >
+                      {noteCopied && selectedId === note.id ? (
+                        <Check size={12} />
+                      ) : (
+                        <Copy size={12} />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      style={styles.noteQuickActionDanger}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+
+                        if (
+                          window.confirm(
+                            `Move "${note.title || "Untitled note"}" to Trash?`,
+                          )
+                        ) {
+                          await deleteNote(note.id);
+                        }
+                      }}
+                      title="Move to Trash"
+                      aria-label="Move to Trash"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -6211,6 +7079,26 @@ export default function NotesView({ vault, onVaultChange }) {
                   <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
 
                   <h2 style={styles.detailTitle}>{selected.title}</h2>
+
+                  {(() => {
+                    const shareStatus = getNoteShareStatus(selected.id);
+
+                    return (
+                      <span
+                        style={{
+                          ...styles.noteShareStatus,
+                          ...(shareStatus.key === "shared"
+                            ? styles.noteShareStatusShared
+                            : shareStatus.key === "revoked"
+                              ? styles.noteShareStatusRevoked
+                              : styles.noteShareStatusPrivate),
+                        }}
+                      >
+                        <Link2 size={11} />
+                        {shareStatus.label}
+                      </span>
+                    );
+                  })()}
 
                   <div style={styles.metadataRow}>
                     {(Array.isArray(selected.tags) ? selected.tags : []).map(
@@ -6278,6 +7166,68 @@ export default function NotesView({ vault, onVaultChange }) {
                       <span style={styles.trashBadge}>Trash</span>
                     )}
                   </div>
+
+                  <div style={styles.noteCreatedMeta}>
+                    <span>
+                      Created {formatNoteDateTime(selected.createdAt)}
+                    </span>
+
+                    <span>
+                      Updated {formatNoteDateTime(selected.updatedAt)}
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const stats = getNoteStatistics(selected);
+
+                    return (
+                      <div style={styles.noteStatsRow}>
+                        <span>
+                          {stats.words} {stats.words === 1 ? "word" : "words"}
+                        </span>
+                        <span>
+                          {stats.characters}{" "}
+                          {stats.characters === 1 ? "character" : "characters"}
+                        </span>
+                        <span>
+                          {stats.lines} {stats.lines === 1 ? "line" : "lines"}
+                        </span>
+                        <span>
+                          {stats.readingSeconds < 60
+                            ? `${stats.readingSeconds} sec read`
+                            : `${Math.ceil(
+                                stats.readingSeconds / 60,
+                              )} min read`}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
+                  {buildNoteActivityTimeline(selected).length > 0 && (
+                    <div style={styles.noteActivity}>
+                      <div style={styles.noteActivityTitle}>ACTIVITY</div>
+
+                      <div style={styles.noteActivityList}>
+                        {buildNoteActivityTimeline(selected).map((event) => (
+                          <div key={event.id} style={styles.noteActivityItem}>
+                            <span style={styles.noteActivityDot} />
+
+                            <div style={styles.noteActivityBody}>
+                              <div style={styles.noteActivityText}>
+                                {event.label}
+                                {" · "}
+                                {event.detail}
+                              </div>
+
+                              <div style={styles.noteActivityTime}>
+                                {formatNoteDateTime(event.at)}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.detailActions}>
@@ -7261,6 +8211,70 @@ export default function NotesView({ vault, onVaultChange }) {
                   : shareCreated
                     ? "Create another link"
                     : "Create secure link"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveViewDialog && (
+        <div style={styles.overlay}>
+          <div
+            style={{
+              ...styles.formModal,
+              maxWidth: 420,
+            }}
+          >
+            <button
+              type="button"
+              style={styles.modalClose}
+              onClick={() => setShowSaveViewDialog(false)}
+              title="Close"
+            >
+              <X size={17} />
+            </button>
+
+            <div style={styles.detailEyebrow}>SAVED VIEW</div>
+
+            <h2 style={styles.formTitle}>Save current view</h2>
+
+            <div style={styles.savedViewDialogHint}>
+              Saves the current search, filters, folder, Favorites,
+              archive/trash view, and sort order.
+            </div>
+
+            <label style={styles.label}>View name</label>
+
+            <input
+              autoFocus
+              value={savedViewName}
+              onChange={(event) => setSavedViewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  saveCurrentSearchView();
+                }
+              }}
+              placeholder="e.g. Important work"
+              style={styles.input}
+            />
+
+            <div style={styles.importFooter}>
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => setShowSaveViewDialog(false)}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={saveCurrentSearchView}
+              >
+                <Bookmark size={13} />
+                Save view
               </button>
             </div>
           </div>
@@ -10992,6 +12006,65 @@ const styles = {
     color: "#72C681",
   },
 
+  trashRetentionWrap: {
+    position: "relative",
+    display: "inline-flex",
+  },
+
+  trashRetentionValue: {
+    color: "#737C87",
+    fontSize: 8,
+    marginLeft: 1,
+  },
+
+  trashRetentionMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    zIndex: 65,
+    width: 220,
+    padding: 7,
+    border: "1px solid #2C323A",
+    borderRadius: 9,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.35)",
+  },
+
+  trashRetentionTitle: {
+    padding: "5px 7px 2px",
+    color: "#68717B",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  trashRetentionCopy: {
+    padding: "2px 7px 7px",
+    color: "#717A85",
+    fontSize: 9,
+    lineHeight: 1.4,
+  },
+
+  trashRetentionItem: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "8px 8px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#B8BEC6",
+    fontSize: 9,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  trashRetentionItemActive: {
+    background: "#22272E",
+    color: "#E2E0D9",
+  },
+
   autoLockWrap: {
     position: "relative",
     display: "inline-flex",
@@ -11136,6 +12209,104 @@ const styles = {
     background: "#14161B",
     border: "1px solid #292D35",
     marginBottom: 12,
+  },
+
+  savedViewsWrap: {
+    position: "relative",
+    flexShrink: 0,
+  },
+
+  savedViewsMenu: {
+    position: "absolute",
+    top: "calc(100% + 6px)",
+    right: 0,
+    zIndex: 75,
+    width: 245,
+    maxHeight: 320,
+    overflowY: "auto",
+    padding: 6,
+    border: "1px solid #2C323A",
+    borderRadius: 9,
+    background: "#171A1F",
+    boxShadow: "0 16px 34px rgba(0,0,0,0.34)",
+  },
+
+  savedViewsTitle: {
+    padding: "6px 8px 5px",
+    color: "#68717B",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  savedViewsEmpty: {
+    padding: "10px 8px",
+    color: "#6C747E",
+    fontSize: 9,
+  },
+
+  savedViewRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+  },
+
+  savedViewButton: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    padding: "8px 8px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#B5BBC3",
+    fontSize: 9,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+
+  savedViewButtonLabel: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+
+  savedViewDelete: {
+    width: 23,
+    height: 23,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "none",
+    borderRadius: 5,
+    background: "transparent",
+    color: "#69727C",
+    cursor: "pointer",
+  },
+
+  savedViewSaveButton: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 5,
+    padding: "8px 7px",
+    border: "1px solid #2E3932",
+    borderRadius: 6,
+    background: "#18221B",
+    color: "#9CCFA3",
+    fontSize: 9,
+    cursor: "pointer",
+  },
+
+  savedViewDialogHint: {
+    marginBottom: 12,
+    color: "#727B85",
+    fontSize: 9,
+    lineHeight: 1.5,
   },
 
   searchFilterWrap: {
@@ -11376,6 +12547,12 @@ const styles = {
     cursor: "pointer",
   },
 
+  bulkPermanentDeleteButton: {
+    color: "#C28B84",
+    borderColor: "#4A302E",
+    background: "#241A19",
+  },
+
   bulkClearButton: {
     border: "none",
     background: "transparent",
@@ -11385,6 +12562,7 @@ const styles = {
   },
 
   noteRowWrap: {
+    position: "relative",
     display: "flex",
     alignItems: "stretch",
     minWidth: 0,
@@ -11404,6 +12582,59 @@ const styles = {
     color: "#8FD39A",
     cursor: "pointer",
     fontSize: 11,
+  },
+
+  searchKeyboardHint: {
+    marginTop: 4,
+    marginLeft: 3,
+    color: "#59616B",
+    fontSize: 7,
+  },
+
+  noteQuickActions: {
+    position: "absolute",
+    top: "50%",
+    right: 7,
+    transform: "translateY(-50%)",
+    display: "flex",
+    alignItems: "center",
+    gap: 3,
+    padding: 3,
+    border: "1px solid #30363A",
+    borderRadius: 7,
+    background: "#171B20",
+    boxShadow: "0 8px 20px rgba(0,0,0,0.28)",
+  },
+
+  noteQuickActionButton: {
+    width: 24,
+    height: 24,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #30363B",
+    borderRadius: 5,
+    background: "#1C2026",
+    color: "#949CA5",
+    cursor: "pointer",
+  },
+
+  noteQuickActionDanger: {
+    width: 24,
+    height: 24,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #4A302E",
+    borderRadius: 5,
+    background: "#241A19",
+    color: "#C28C85",
+    cursor: "pointer",
+  },
+
+  noteRowWrapSearchActive: {
+    background: "#20271F",
+    boxShadow: "inset 2px 0 0 #4FE36B",
   },
 
   searchResultCount: {
@@ -11498,6 +12729,126 @@ const styles = {
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
+  },
+
+  noteActivity: {
+    marginTop: 10,
+    paddingTop: 9,
+    borderTop: "1px solid #252A31",
+  },
+
+  noteActivityTitle: {
+    marginBottom: 7,
+    color: "#68717B",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  noteActivityList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    maxHeight: 150,
+    overflowY: "auto",
+  },
+
+  noteActivityItem: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 7,
+  },
+
+  noteActivityDot: {
+    width: 6,
+    height: 6,
+    marginTop: 4,
+    flexShrink: 0,
+    borderRadius: "50%",
+    background: "#4F6E58",
+  },
+
+  noteActivityBody: {
+    minWidth: 0,
+  },
+
+  noteActivityText: {
+    color: "#9CA4AD",
+    fontSize: 8,
+    lineHeight: 1.35,
+  },
+
+  noteActivityTime: {
+    marginTop: 2,
+    color: "#5F6872",
+    fontSize: 7,
+  },
+
+  noteShareStatus: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    width: "fit-content",
+    marginTop: 6,
+    padding: "4px 7px",
+    borderRadius: 6,
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  noteShareStatusShared: {
+    color: "#9CCFA3",
+    background: "#17231A",
+    border: "1px solid #29412E",
+  },
+
+  noteShareStatusPrivate: {
+    color: "#8D96A0",
+    background: "#181C21",
+    border: "1px solid #2A3037",
+  },
+
+  noteShareStatusRevoked: {
+    color: "#C8958E",
+    background: "#241A19",
+    border: "1px solid #4A302E",
+  },
+
+  noteCreatedMeta: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 7,
+    color: "#68717B",
+    fontSize: 8,
+  },
+
+  noteStatsRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 7,
+    color: "#7A838D",
+    fontSize: 8,
+  },
+
+  rowCompactMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
+    color: "#5F6872",
+    fontSize: 7,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+
+  rowDate: {
+    marginTop: 4,
+    color: "#5E6670",
+    fontSize: 7,
   },
 
   detailHeader: {
