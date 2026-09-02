@@ -33,6 +33,7 @@ import {
   SlidersHorizontal,
   Star,
   Repeat,
+  RefreshCw,
   Pause,
   Play,
   Upload,
@@ -40,6 +41,7 @@ import {
   Share2,
   Ban,
   Copy,
+  CopyPlus,
   Paperclip,
   Keyboard,
   Files,
@@ -595,6 +597,8 @@ export default function NotesView({ vault, onVaultChange }) {
   const [showSavedViewsMenu, setShowSavedViewsMenu] = useState(false);
   const [showSaveViewDialog, setShowSaveViewDialog] = useState(false);
   const [savedViewName, setSavedViewName] = useState("");
+  const [savedViewActionId, setSavedViewActionId] = useState(null);
+  const [savedViewEditingId, setSavedViewEditingId] = useState(null);
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
 
@@ -744,6 +748,9 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const sessionPasswordRef = useRef("");
 
+  const sessionDataKeyRef = useRef(null);
+  const newNoteDraftTimerRef = useRef(null);
+
   const recoveredDataKeyRef = useRef(null);
 
   const contentInputRef = useRef(null);
@@ -753,6 +760,9 @@ export default function NotesView({ vault, onVaultChange }) {
   const autosaveTimerRef = useRef(null);
 
   const [editorStatus, setEditorStatus] = useState("Saved");
+  const [newNoteDraftAvailable, setNewNoteDraftAvailable] = useState(false);
+  const [showNewNoteDraftPrompt, setShowNewNoteDraftPrompt] = useState(false);
+  const [newNoteDraftSavedAt, setNewNoteDraftSavedAt] = useState("");
 
   const [form, setForm] = useState({
     title: "",
@@ -786,6 +796,35 @@ export default function NotesView({ vault, onVaultChange }) {
     editing?.id,
     showForm,
     editorStatus,
+  ]);
+
+  useEffect(() => {
+    if (phase !== "unlocked" || !showForm || editing) {
+      return undefined;
+    }
+
+    window.clearTimeout(newNoteDraftTimerRef.current);
+
+    newNoteDraftTimerRef.current = window.setTimeout(() => {
+      autosaveNewNoteDraft();
+    }, 900);
+
+    return () => window.clearTimeout(newNoteDraftTimerRef.current);
+  }, [
+    phase,
+    showForm,
+    editing,
+    form.title,
+    form.content,
+    formTags,
+    formAttachments,
+    formReminder,
+    formRecurrence,
+    formRecurrenceDay,
+    formRecurrenceDays,
+    formRecurrenceInterval,
+    formRecurrenceUnit,
+    formNotifyTelegram,
   ]);
 
   useEffect(() => {
@@ -857,30 +896,19 @@ export default function NotesView({ vault, onVaultChange }) {
 
       const key = String(event.key || "").toLowerCase();
 
+      if (showForm && (key === "s" || key === "enter")) {
+        event.preventDefault();
+        saveNote();
+        return;
+      }
+
       if (typing) {
         return;
       }
 
       if (key === "n") {
         event.preventDefault();
-        setError("");
-        setEditing(null);
-        setForm({
-          title: "",
-          content: "",
-        });
-        setFormTags([]);
-        setFormAttachments([]);
-        setFormReminder("");
-        setFormRecurrence("none");
-        setFormRecurrenceDay("");
-        setFormRecurrenceDays([]);
-        setFormRecurrenceInterval(1);
-        setFormRecurrenceUnit("days");
-        setFormNotifyTelegram(false);
-        setTagInput("");
-        setEditorStatus("New note");
-        setShowForm(true);
+        openNewWithDraftCheck();
         return;
       }
 
@@ -905,7 +933,7 @@ export default function NotesView({ vault, onVaultChange }) {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [phase]);
+  }, [phase, showForm, editing?.id]);
 
   const availableTags = useMemo(() => {
     const all = new Set();
@@ -1366,6 +1394,49 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function persistSavedSearchViews(next) {
+    setSavedSearchViews(next);
+
+    if (vault?.version === 2) {
+      onVaultChange({
+        ...vault,
+        savedSearchViews: next,
+      });
+    }
+  }
+
+  function openRenameSavedSearchView(view) {
+    setSavedViewEditingId(view?.id || null);
+    setSavedViewName(view?.name || "");
+    setShowSaveViewDialog(true);
+    setShowSavedViewsMenu(false);
+    setSavedViewActionId(null);
+    setError("");
+  }
+
+  function updateSavedSearchView(viewId) {
+    const current = savedSearchViews.find((view) => view.id === viewId);
+
+    if (!current) {
+      return;
+    }
+
+    const next = savedSearchViews.map((view) =>
+      view.id === viewId
+        ? {
+            ...view,
+            state: getCurrentSavedViewState(),
+            updatedAt: new Date().toISOString(),
+          }
+        : view,
+    );
+
+    persistSavedSearchViews(next);
+    setShowSavedViewsMenu(false);
+    setSavedViewActionId(null);
+    setError("");
+  }
+
   function getCurrentSavedViewState() {
     return {
       query,
@@ -1415,26 +1486,48 @@ export default function NotesView({ vault, onVaultChange }) {
 
     const state = getCurrentSavedViewState();
 
-    const next = [
-      {
-        id: makeId(),
-        name,
-        state,
-        createdAt: new Date().toISOString(),
-      },
-      ...savedSearchViews,
-    ].slice(0, 20);
+    const now = new Date().toISOString();
 
-    setSavedSearchViews(next);
+    const next = savedViewEditingId
+      ? savedSearchViews.map((view) =>
+          view.id === savedViewEditingId
+            ? {
+                ...view,
+                name,
+                state: view.state,
+                updatedAt: now,
+              }
+            : view,
+        )
+      : [
+          {
+            id: makeId(),
+            name,
+            state,
+            createdAt: now,
+            updatedAt: now,
+          },
+          ...savedSearchViews,
+        ].slice(0, 20);
 
-    if (vault?.version === 2) {
-      onVaultChange({
-        ...vault,
-        savedSearchViews: next,
-      });
+    if (savedViewEditingId) {
+      const edited = next.map((view) =>
+        view.id === savedViewEditingId
+          ? {
+              ...view,
+              name,
+              updatedAt: now,
+            }
+          : view,
+      );
+
+      persistSavedSearchViews(edited);
+    } else {
+      persistSavedSearchViews(next);
     }
 
     setSavedViewName("");
+    setSavedViewEditingId(null);
     setShowSaveViewDialog(false);
     setShowSavedViewsMenu(false);
     setError("");
@@ -1443,15 +1536,9 @@ export default function NotesView({ vault, onVaultChange }) {
   function deleteSavedSearchView(viewId) {
     const next = savedSearchViews.filter((view) => view.id !== viewId);
 
-    setSavedSearchViews(next);
+    persistSavedSearchViews(next);
 
-    if (vault?.version === 2) {
-      onVaultChange({
-        ...vault,
-        savedSearchViews: next,
-      });
-    }
-
+    setSavedViewActionId(null);
     setError("");
   }
 
@@ -1942,6 +2029,136 @@ export default function NotesView({ vault, onVaultChange }) {
     return () => window.clearInterval(notificationTimerRef.current);
   }, [notes]);
 
+  async function autosaveNewNoteDraft() {
+    if (
+      phase !== "unlocked" ||
+      editing ||
+      !showForm ||
+      !sessionPasswordRef.current
+    ) {
+      return;
+    }
+
+    const hasSomething = Boolean(
+      form.title.trim() ||
+      form.content.trim() ||
+      formTags.length ||
+      formAttachments.length ||
+      formReminder ||
+      formNotifyTelegram,
+    );
+
+    if (!hasSomething) {
+      return;
+    }
+
+    try {
+      const draft = {
+        version: 1,
+        title: form.title,
+        content: form.content,
+        tags: [...formTags],
+        attachments: [...formAttachments],
+        reminder: formReminder,
+        recurrence: formRecurrence,
+        recurrenceDay: formRecurrenceDay,
+        recurrenceDays: [...formRecurrenceDays],
+        recurrenceInterval: formRecurrenceInterval,
+        recurrenceUnit: formRecurrenceUnit,
+        notifyTelegram: Boolean(formNotifyTelegram),
+        savedAt: new Date().toISOString(),
+      };
+
+      const storedEnvelope = await encryptLegacyNotes(
+        [draft],
+        sessionPasswordRef.current,
+        vault?.salt,
+      );
+
+      localStorage.setItem(
+        "pocket-new-note-draft-v1",
+        JSON.stringify(storedEnvelope),
+      );
+
+      setNewNoteDraftSavedAt(draft.savedAt);
+      setEditorStatus("Draft saved");
+    } catch {
+      setEditorStatus("Draft save failed");
+    }
+  }
+
+  async function readNewNoteDraft() {
+    if (!sessionPasswordRef.current) {
+      return null;
+    }
+
+    try {
+      const raw = localStorage.getItem("pocket-new-note-draft-v1");
+
+      if (!raw) {
+        return null;
+      }
+
+      const stored = JSON.parse(raw);
+
+      const list = await decryptLegacyNotes(stored, sessionPasswordRef.current);
+
+      return Array.isArray(list) ? list[0] || null : null;
+    } catch {
+      try {
+        localStorage.removeItem("pocket-new-note-draft-v1");
+      } catch {
+        // ignore
+      }
+
+      return null;
+    }
+  }
+
+  async function restoreNewNoteDraft() {
+    const draft = await readNewNoteDraft();
+
+    if (!draft) {
+      return;
+    }
+
+    setEditing(null);
+    setForm({
+      title: draft.title || "",
+      content: draft.content || "",
+    });
+    setFormTags(Array.isArray(draft.tags) ? draft.tags : []);
+    setFormAttachments(
+      Array.isArray(draft.attachments) ? draft.attachments : [],
+    );
+    setFormReminder(draft.reminder || "");
+    setFormRecurrence(draft.recurrence || "none");
+    setFormRecurrenceDay(draft.recurrenceDay || "");
+    setFormRecurrenceDays(normalizeRecurrenceDays(draft.recurrenceDays));
+    setFormRecurrenceInterval(draft.recurrenceInterval || 1);
+    setFormRecurrenceUnit(draft.recurrenceUnit || "days");
+    setFormNotifyTelegram(Boolean(draft.notifyTelegram));
+
+    editorLoadKeyRef.current = "";
+    setEditorHtml(markdownToEditorHtml(draft.content || ""));
+    setEditorStatus("Draft restored");
+    setShowNewNoteDraftPrompt(false);
+    setNewNoteDraftAvailable(false);
+    setError("");
+  }
+
+  function clearNewNoteDraft() {
+    try {
+      localStorage.removeItem("pocket-new-note-draft-v1");
+    } catch {
+      // ignore
+    }
+
+    setNewNoteDraftAvailable(false);
+    setShowNewNoteDraftPrompt(false);
+    setNewNoteDraftSavedAt("");
+  }
+
   async function createVault() {
     setError("");
 
@@ -1959,6 +2176,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     try {
       const dataKey = await generateDataKey();
+      sessionDataKeyRef.current = dataKey;
 
       const passwordWrap = await wrapDataKeyWithPassword(dataKey, password);
 
@@ -2066,6 +2284,11 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       sessionPasswordRef.current = password;
+
+      const draft = await readNewNoteDraft();
+
+      setNewNoteDraftAvailable(Boolean(draft));
+      setNewNoteDraftSavedAt(draft?.savedAt || "");
 
       setNotes(cleanedNotes);
       setCustomTemplates(
@@ -4456,6 +4679,10 @@ export default function NotesView({ vault, onVaultChange }) {
 
     await persistNotes(next);
 
+    if (!editing) {
+      clearNewNoteDraft();
+    }
+
     const savedNote = next.find((note) => note.id === savedNoteId);
 
     await syncTelegramReminder(savedNote);
@@ -4608,6 +4835,41 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  async function duplicateNoteById(note) {
+    if (!note || note.trashed) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+
+    const duplicate = {
+      ...note,
+      id: makeId(),
+      title: note.title ? `${note.title} copy` : "Untitled note copy",
+      reminderAt: null,
+      reminderPaused: false,
+      notifyTelegram: false,
+      recurrence: "none",
+      recurrenceDay: null,
+      recurrenceDays: [],
+      recurrenceInterval: null,
+      recurrenceUnit: null,
+      history: [],
+      activity: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    try {
+      await persistNotes([duplicate, ...notes]);
+
+      setSelectedId(duplicate.id);
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not duplicate note.");
+    }
+  }
+
   async function duplicateSelectedNote() {
     if (!selected || selected.trashed) {
       return;
@@ -4645,7 +4907,7 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
-  function openNew() {
+  async function openNewWithDraftCheck() {
     setShowNoteExportMenu(false);
     setError("");
     setEditing(null);
@@ -4660,9 +4922,28 @@ export default function NotesView({ vault, onVaultChange }) {
     setFormReminder("");
     setFormRecurrence("none");
     setFormRecurrenceDay("");
+    setFormRecurrenceDays([]);
+    setFormRecurrenceInterval(1);
+    setFormRecurrenceUnit("days");
+    setFormNotifyTelegram(false);
     setTagInput("");
-    setEditorStatus("New note");
+    editorLoadKeyRef.current = "";
+    setEditorHtml("");
+
+    const draft = await readNewNoteDraft();
+
+    const hasRecoverableDraft = Boolean(draft);
+
+    setNewNoteDraftSavedAt(draft?.savedAt || "");
+    setNewNoteDraftAvailable(hasRecoverableDraft);
+    setShowNewNoteDraftPrompt(hasRecoverableDraft);
+
+    setEditorStatus(hasRecoverableDraft ? "Draft available" : "New note");
     setShowForm(true);
+  }
+
+  function openNew() {
+    openNewWithDraftCheck();
   }
 
   function openEdit(note) {
@@ -6238,7 +6519,7 @@ export default function NotesView({ vault, onVaultChange }) {
           <button
             type="button"
             style={styles.primaryCompactButton}
-            onClick={openNew}
+            onClick={openNewWithDraftCheck}
           >
             <Plus size={15} />
             New note
@@ -6336,6 +6617,11 @@ export default function NotesView({ vault, onVaultChange }) {
             <div style={styles.savedViewsMenu}>
               <div style={styles.savedViewsTitle}>SAVED VIEWS</div>
 
+              <div style={styles.savedViewsHint}>
+                Click a view to apply it. Use the icons to update, rename, or
+                delete.
+              </div>
+
               {savedSearchViews.length === 0 ? (
                 <div style={styles.savedViewsEmpty}>No saved views yet.</div>
               ) : (
@@ -6353,15 +6639,40 @@ export default function NotesView({ vault, onVaultChange }) {
                       </span>
                     </button>
 
-                    <button
-                      type="button"
-                      style={styles.savedViewDelete}
-                      onClick={() => deleteSavedSearchView(view.id)}
-                      title="Delete saved view"
-                      aria-label="Delete saved view"
-                    >
-                      <X size={11} />
-                    </button>
+                    <div style={styles.savedViewActionsInline}>
+                      <button
+                        type="button"
+                        style={styles.savedViewIconAction}
+                        onClick={() => updateSavedSearchView(view.id)}
+                        title="Update to current view"
+                        aria-label={`Update ${view.name}`}
+                      >
+                        <RefreshCw size={11} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.savedViewIconAction}
+                        onClick={() => openRenameSavedSearchView(view)}
+                        title="Rename saved view"
+                        aria-label={`Rename ${view.name}`}
+                      >
+                        <Pencil size={11} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.savedViewIconActionDanger}
+                        onClick={() => {
+                          deleteSavedSearchView(view.id);
+                          setSavedViewActionId(null);
+                        }}
+                        title="Delete saved view"
+                        aria-label={`Delete ${view.name}`}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -6376,7 +6687,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 }}
               >
                 <Plus size={12} />
-                Save current view
+                {savedViewEditingId ? "Rename saved view" : "Save current view"}
               </button>
             </div>
           )}
@@ -6847,7 +7158,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 <button
                   type="button"
                   style={styles.secondaryButton}
-                  onClick={openNew}
+                  onClick={openNewWithDraftCheck}
                 >
                   <Plus size={14} />
                   New note
@@ -7079,6 +7390,15 @@ export default function NotesView({ vault, onVaultChange }) {
                   <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
 
                   <h2 style={styles.detailTitle}>{selected.title}</h2>
+
+                  <div style={styles.noteFolderBreadcrumb}>
+                    <Folder size={10} />
+                    {selected.folderId
+                      ? folders.find(
+                          (folder) => folder.id === selected.folderId,
+                        )?.name || "Folder"
+                      : "No folder"}
+                  </div>
 
                   {(() => {
                     const shareStatus = getNoteShareStatus(selected.id);
@@ -8228,7 +8548,11 @@ export default function NotesView({ vault, onVaultChange }) {
             <button
               type="button"
               style={styles.modalClose}
-              onClick={() => setShowSaveViewDialog(false)}
+              onClick={() => {
+                setShowSaveViewDialog(false);
+                setSavedViewEditingId(null);
+                setSavedViewName("");
+              }}
               title="Close"
             >
               <X size={17} />
@@ -8274,7 +8598,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 onClick={saveCurrentSearchView}
               >
                 <Bookmark size={13} />
-                Save view
+                {savedViewEditingId ? "Save name" : "Save view"}
               </button>
             </div>
           </div>
@@ -9360,6 +9684,36 @@ export default function NotesView({ vault, onVaultChange }) {
 
             <label style={styles.label}>Title</label>
 
+            {!editing && showNewNoteDraftPrompt && (
+              <div style={styles.newNoteDraftBanner}>
+                <div>
+                  <strong>Unsaved draft available</strong>
+                  <span style={styles.newNoteDraftSubtext}>
+                    {newNoteDraftSavedAt
+                      ? `Last saved ${formatNoteDateTime(newNoteDraftSavedAt)}`
+                      : "Saved automatically · available after reopening"}
+                  </span>
+                </div>
+
+                <div style={styles.newNoteDraftActions}>
+                  <button
+                    type="button"
+                    style={styles.newNoteDraftRestore}
+                    onClick={restoreNewNoteDraft}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.newNoteDraftDismiss}
+                    onClick={clearNewNoteDraft}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+
             <input
               value={form.title}
               onChange={(e) =>
@@ -9448,6 +9802,47 @@ export default function NotesView({ vault, onVaultChange }) {
                       "Template applied. Everything remains editable."}
                   </div>
                 )}
+
+                <div style={styles.quickTemplateSection}>
+                  <div style={styles.quickTemplateLabel}>QUICK START</div>
+
+                  <div style={styles.quickTemplateRow}>
+                    <button
+                      type="button"
+                      style={styles.quickTemplateChip}
+                      onClick={() => {
+                        setNewNoteTemplateId("blank");
+                        setForm({
+                          title: "",
+                          content: "",
+                        });
+                        setFormTags([]);
+                        setFormAttachments([]);
+                        setEditorHtml("");
+                        editorLoadKeyRef.current = "";
+                        setEditorStatus("New note");
+                      }}
+                    >
+                      Blank
+                    </button>
+
+                    {NOTE_TEMPLATES.slice(0, 3).map((template) => (
+                      <button
+                        key={`quick-${template.id}`}
+                        type="button"
+                        style={styles.quickTemplateChip}
+                        onClick={() => {
+                          setNewNoteTemplateId(template.id);
+                          applyNoteTemplate(template.id);
+                          setEditorStatus("Template applied");
+                        }}
+                        title={template.description}
+                      >
+                        {template.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             )}
 
@@ -9963,16 +10358,93 @@ export default function NotesView({ vault, onVaultChange }) {
               )}
             </div>
 
+            {!editing && (
+              <div style={styles.noteDraftStatus}>
+                {editorStatus === "Draft saved"
+                  ? "Draft saved automatically"
+                  : newNoteDraftAvailable
+                    ? "Draft recovery available"
+                    : ""}
+              </div>
+            )}
+
             {error && <div style={styles.error}>{error}</div>}
 
-            <button
-              type="button"
-              style={styles.primaryButton}
-              disabled={busy}
-              onClick={saveNote}
-            >
-              {busy ? "Saving…" : editing ? "Save changes" : "Save note"}
-            </button>
+            {(() => {
+              const liveStats = getNoteStatistics({
+                content: form.content,
+              });
+
+              return (
+                <div style={styles.noteLiveStats}>
+                  <span>{liveStats.words} words</span>
+                  <span>·</span>
+                  <span>{liveStats.characters} chars</span>
+                  <span>·</span>
+                  <span>
+                    {liveStats.readingSeconds < 60
+                      ? `${liveStats.readingSeconds} sec read`
+                      : `${Math.ceil(liveStats.readingSeconds / 60)} min read`}
+                  </span>
+                </div>
+              );
+            })()}
+
+            <div style={styles.noteFormFooter}>
+              <button
+                type="button"
+                style={styles.secondaryButton}
+                onClick={() => {
+                  const hasDraftContent = Boolean(
+                    form.title.trim() ||
+                    form.content.trim() ||
+                    formTags.length ||
+                    formAttachments.length ||
+                    formReminder ||
+                    formNotifyTelegram,
+                  );
+
+                  setShowForm(false);
+                  setEditing(null);
+                  setShowNewNoteDraftPrompt(false);
+                  setError("");
+
+                  if (!editing && hasDraftContent) {
+                    setNewNoteDraftAvailable(true);
+                  }
+                }}
+              >
+                Close
+              </button>
+
+              <div style={styles.noteFooterCenter}>
+                <span
+                  style={{
+                    ...styles.noteSaveStatus,
+                    ...(editorStatus === "Saving…"
+                      ? styles.noteSaveStatusSaving
+                      : editorStatus === "Unsaved changes"
+                        ? styles.noteSaveStatusUnsaved
+                        : {}),
+                  }}
+                >
+                  {editorStatus}
+                </span>
+
+                <span style={styles.noteKeyboardHint}>
+                  ⌘/Ctrl+S · ⌘/Ctrl+Enter
+                </span>
+              </div>
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={busy}
+                onClick={saveNote}
+              >
+                {busy ? "Saving…" : editing ? "Save changes" : "Save note"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -12221,10 +12693,9 @@ const styles = {
     top: "calc(100% + 6px)",
     right: 0,
     zIndex: 75,
-    width: 245,
-    maxHeight: 320,
-    overflowY: "auto",
-    padding: 6,
+    width: 335,
+    maxWidth: "min(335px, calc(100vw - 28px))",
+    padding: 8,
     border: "1px solid #2C323A",
     borderRadius: 9,
     background: "#171A1F",
@@ -12239,6 +12710,13 @@ const styles = {
     letterSpacing: 0.9,
   },
 
+  savedViewsHint: {
+    padding: "0 8px 7px",
+    color: "#666F79",
+    fontSize: 8,
+    lineHeight: 1.4,
+  },
+
   savedViewsEmpty: {
     padding: "10px 8px",
     color: "#6C747E",
@@ -12248,7 +12726,8 @@ const styles = {
   savedViewRow: {
     display: "flex",
     alignItems: "center",
-    gap: 4,
+    gap: 8,
+    padding: 2,
   },
 
   savedViewButton: {
@@ -12271,6 +12750,40 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+  },
+
+  savedViewActionsInline: {
+    display: "flex",
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 0,
+    paddingLeft: 2,
+  },
+
+  savedViewIconAction: {
+    width: 25,
+    height: 25,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #2A3037",
+    borderRadius: 5,
+    background: "#1B1F24",
+    color: "#7E8791",
+    cursor: "pointer",
+  },
+
+  savedViewIconActionDanger: {
+    width: 25,
+    height: 25,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #4A302E",
+    borderRadius: 5,
+    background: "#241A19",
+    color: "#C28D87",
+    cursor: "pointer",
   },
 
   savedViewDelete: {
@@ -12784,6 +13297,15 @@ const styles = {
     fontSize: 7,
   },
 
+  noteFolderBreadcrumb: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
+    color: "#6E7780",
+    fontSize: 8,
+  },
+
   noteShareStatus: {
     display: "inline-flex",
     alignItems: "center",
@@ -13026,6 +13548,143 @@ const styles = {
     padding: 20,
     background: "rgba(8,9,11,.74)",
     backdropFilter: "blur(10px)",
+  },
+
+  quickTemplateSection: {
+    marginTop: 8,
+    marginBottom: 4,
+    paddingTop: 8,
+    borderTop: "1px solid #252A31",
+  },
+
+  quickTemplateLabel: {
+    marginBottom: 6,
+    color: "#626B74",
+    fontSize: 7,
+    fontWeight: 800,
+    letterSpacing: 0.8,
+  },
+
+  quickTemplateRow: {
+    display: "flex",
+    gap: 5,
+    flexWrap: "wrap",
+  },
+
+  quickTemplateChip: {
+    padding: "5px 8px",
+    border: "1px solid #2C333A",
+    borderRadius: 6,
+    background: "#191D22",
+    color: "#8E979F",
+    fontSize: 8,
+    cursor: "pointer",
+  },
+
+  noteFooterCenter: {
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    minWidth: 0,
+  },
+
+  noteSaveStatus: {
+    color: "#7F9B84",
+    fontSize: 7,
+    whiteSpace: "nowrap",
+  },
+
+  noteSaveStatusSaving: {
+    color: "#B19C6E",
+  },
+
+  noteSaveStatusUnsaved: {
+    color: "#C38F87",
+  },
+
+  noteKeyboardHint: {
+    color: "#59616B",
+    fontSize: 7,
+    marginRight: "auto",
+  },
+
+  noteLiveStats: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 5,
+    marginTop: 6,
+    color: "#68717B",
+    fontSize: 7,
+  },
+
+  newNoteDraftBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 12,
+    padding: "9px 10px",
+    border: "1px solid #334238",
+    borderRadius: 7,
+    background: "#172019",
+    color: "#A9BEAE",
+    fontSize: 9,
+  },
+
+  newNoteDraftSubtext: {
+    display: "block",
+    marginTop: 2,
+    color: "#68756D",
+    fontSize: 7,
+  },
+
+  newNoteDraftActions: {
+    display: "flex",
+    gap: 5,
+    flexShrink: 0,
+  },
+
+  newNoteDraftRestore: {
+    padding: "5px 8px",
+    border: "1px solid #36513C",
+    borderRadius: 5,
+    background: "#1C2A20",
+    color: "#9CCFA3",
+    fontSize: 8,
+    cursor: "pointer",
+  },
+
+  newNoteDraftDismiss: {
+    padding: "5px 8px",
+    border: "1px solid #4A302E",
+    borderRadius: 5,
+    background: "#241A19",
+    color: "#C28D85",
+    fontSize: 8,
+    cursor: "pointer",
+  },
+
+  noteDraftStatus: {
+    marginTop: 5,
+    marginBottom: -7,
+    color: "#68756D",
+    fontSize: 7,
+    textAlign: "right",
+  },
+
+  noteFormFooter: {
+    position: "sticky",
+    bottom: -24,
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    margin: "18px -24px -24px",
+    padding: "12px 24px 24px",
+    borderTop: "1px solid #2A2F37",
+    background: "linear-gradient(to bottom, rgba(26,29,36,0.95), #1A1D24 28px)",
   },
 
   formModal: {
