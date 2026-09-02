@@ -50,6 +50,8 @@ import {
   Bookmark,
   History,
   Clock3,
+  Printer,
+  SearchCheck,
 } from "lucide-react";
 
 const PBKDF2_ITERATIONS = 600000;
@@ -601,6 +603,13 @@ export default function NotesView({ vault, onVaultChange }) {
   const [savedViewEditingId, setSavedViewEditingId] = useState(null);
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  const [showRecentlyOpened, setShowRecentlyOpened] = useState(false);
+  const [recentNoteIds, setRecentNoteIds] = useState([]);
+  const [focusMode, setFocusMode] = useState(false);
+  const [showNoteFind, setShowNoteFind] = useState(false);
+  const [noteFindQuery, setNoteFindQuery] = useState("");
+  const [showNoteToolsMenu, setShowNoteToolsMenu] = useState(false);
+  const [showNoteInfo, setShowNoteInfo] = useState(false);
 
   const [sortMode, setSortMode] = useState("updated");
 
@@ -628,6 +637,7 @@ export default function NotesView({ vault, onVaultChange }) {
   const [shareNow, setShareNow] = useState(Date.now());
   const [shareCopied, setShareCopied] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [showNotesToolsMenu, setShowNotesToolsMenu] = useState(false);
   const [newNoteTemplateId, setNewNoteTemplateId] = useState("blank");
   const [customTemplates, setCustomTemplates] = useState([]);
   const [showTemplateManager, setShowTemplateManager] = useState(false);
@@ -1732,6 +1742,10 @@ export default function NotesView({ vault, onVaultChange }) {
       }
 
       if (showFavorites && !Boolean(note.favorite)) {
+        return false;
+      }
+
+      if (showRecentlyOpened && !recentNoteIds.includes(note.id)) {
         return false;
       }
 
@@ -4003,7 +4017,7 @@ export default function NotesView({ vault, onVaultChange }) {
     const timer = window.setInterval(() => setShareNow(Date.now()), 1000);
 
     return () => window.clearInterval(timer);
-  }, [showShareModal, showShareManager]);
+  }, [showShareModal, showShareManager, , showRecentlyOpened, recentNoteIds]);
 
   function openShareManager() {
     setShowShareManager(true);
@@ -4835,6 +4849,35 @@ export default function NotesView({ vault, onVaultChange }) {
     }
   }
 
+  function getDuplicateNoteTitle(title) {
+    const base =
+      String(title || "Untitled note")
+        .replace(/\s+copy(?:\s+\d+)?$/i, "")
+        .trim() || "Untitled note";
+
+    const existingTitles = new Set(
+      notes.map((note) =>
+        String(note.title || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    );
+
+    const first = `${base} copy`;
+
+    if (!existingTitles.has(first.toLowerCase())) {
+      return first;
+    }
+
+    let index = 2;
+
+    while (existingTitles.has(`${base} copy ${index}`.toLowerCase())) {
+      index += 1;
+    }
+
+    return `${base} copy ${index}`;
+  }
+
   async function duplicateNoteById(note) {
     if (!note || note.trashed) {
       return;
@@ -4845,7 +4888,7 @@ export default function NotesView({ vault, onVaultChange }) {
     const duplicate = {
       ...note,
       id: makeId(),
-      title: note.title ? `${note.title} copy` : "Untitled note copy",
+      title: getDuplicateNoteTitle(note.title),
       reminderAt: null,
       reminderPaused: false,
       notifyTelegram: false,
@@ -4858,6 +4901,7 @@ export default function NotesView({ vault, onVaultChange }) {
       activity: [],
       createdAt: now,
       updatedAt: now,
+      color: note.color || "",
     };
 
     try {
@@ -4880,7 +4924,7 @@ export default function NotesView({ vault, onVaultChange }) {
     const duplicate = {
       ...selected,
       id: makeId(),
-      title: selected.title ? `${selected.title} copy` : "Untitled note copy",
+      title: getDuplicateNoteTitle(selected.title),
       reminderAt: null,
       reminderPaused: false,
       notifyTelegram: false,
@@ -4892,6 +4936,7 @@ export default function NotesView({ vault, onVaultChange }) {
       history: [],
       createdAt: now,
       updatedAt: now,
+      color: selected.color || "",
     };
 
     const nextNotes = [duplicate, ...notes];
@@ -4946,7 +4991,161 @@ export default function NotesView({ vault, onVaultChange }) {
     openNewWithDraftCheck();
   }
 
+  const NOTE_COLOR_OPTIONS = [
+    { value: "", label: "Default" },
+    { value: "#4FE36B", label: "Green" },
+    { value: "#6BA8FF", label: "Blue" },
+    { value: "#B38CFF", label: "Purple" },
+    { value: "#E3A84F", label: "Orange" },
+    { value: "#E3766B", label: "Red" },
+  ];
+
+  function renderNoteFindHighlight(value, query) {
+    const source = String(value || "");
+    const term = String(query || "").trim();
+
+    if (!term) {
+      return source;
+    }
+
+    const lower = source.toLowerCase();
+    const needle = term.toLowerCase();
+    const pieces = [];
+    let cursor = 0;
+
+    while (cursor < source.length) {
+      const index = lower.indexOf(needle, cursor);
+
+      if (index === -1) {
+        pieces.push(source.slice(cursor));
+        break;
+      }
+
+      if (index > cursor) {
+        pieces.push(source.slice(cursor, index));
+      }
+
+      pieces.push(
+        <mark key={`${index}-${term}`} style={styles.noteFindHighlight}>
+          {source.slice(index, index + term.length)}
+        </mark>,
+      );
+
+      cursor = index + term.length;
+    }
+
+    return pieces;
+  }
+
+  function getNoteFindCount(content, query) {
+    const source = String(content || "");
+    const term = String(query || "").trim();
+
+    if (!term) {
+      return 0;
+    }
+
+    let count = 0;
+    let cursor = 0;
+    const lower = source.toLowerCase();
+    const needle = term.toLowerCase();
+
+    while (cursor < source.length) {
+      const index = lower.indexOf(needle, cursor);
+      if (index === -1) break;
+      count += 1;
+      cursor = index + needle.length;
+    }
+
+    return count;
+  }
+
+  async function setSelectedNoteColor(color) {
+    if (!selected) return;
+
+    const now = new Date().toISOString();
+    const nextNotes = notes.map((note) =>
+      note.id === selected.id
+        ? {
+            ...note,
+            color: color || "",
+            updatedAt: now,
+          }
+        : note,
+    );
+
+    try {
+      await persistNotes(nextNotes);
+      setError("");
+    } catch (error) {
+      setError(error.message || "Could not update note color.");
+    }
+  }
+
+  function printSelectedNote() {
+    if (!selected) return;
+
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+
+    if (!printWindow) {
+      setError("Allow pop-ups to print this note.");
+      return;
+    }
+
+    const title = selected.title || "Untitled note";
+    const body = String(selected.content || "");
+
+    printWindow.document.title = title;
+    printWindow.document.body.innerHTML = "";
+
+    const shell = printWindow.document.createElement("div");
+    shell.style.fontFamily = "Arial, sans-serif";
+    shell.style.maxWidth = "820px";
+    shell.style.margin = "40px auto";
+    shell.style.padding = "0 28px";
+
+    const heading = printWindow.document.createElement("h1");
+    heading.textContent = title;
+    heading.style.fontSize = "28px";
+    heading.style.marginBottom = "8px";
+
+    const meta = printWindow.document.createElement("div");
+    meta.textContent = selected.updatedAt
+      ? `Updated ${formatNoteDateTime(selected.updatedAt)}`
+      : "";
+    meta.style.color = "#666";
+    meta.style.fontSize = "12px";
+    meta.style.marginBottom = "22px";
+
+    const content = printWindow.document.createElement("pre");
+    content.textContent = body;
+    content.style.whiteSpace = "pre-wrap";
+    content.style.wordBreak = "break-word";
+    content.style.fontFamily = "Arial, sans-serif";
+    content.style.fontSize = "14px";
+    content.style.lineHeight = "1.7";
+
+    shell.appendChild(heading);
+    shell.appendChild(meta);
+    shell.appendChild(content);
+    printWindow.document.body.appendChild(shell);
+
+    printWindow.focus();
+    printWindow.print();
+  }
+
+  function rememberRecentlyOpened(noteId) {
+    if (!noteId) {
+      return;
+    }
+
+    setRecentNoteIds((current) =>
+      [noteId, ...current.filter((id) => id !== noteId)].slice(0, 8),
+    );
+  }
+
   function openEdit(note) {
+    rememberRecentlyOpened(note?.id);
     setError("");
     setEditing(note);
 
@@ -5617,7 +5816,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
   if (phase === "setup") {
     return (
-      <div style={styles.page}>
+      <div className="notesResponsivePage" style={styles.page}>
         <div style={styles.centerPanel}>
           <div style={styles.iconLarge}>
             <FileText size={27} />
@@ -5749,7 +5948,10 @@ export default function NotesView({ vault, onVaultChange }) {
             </div>
           )}
 
-          <div style={styles.noteViewSwitcher}>
+          <div
+            className="notesResponsiveViewSwitcher"
+            style={styles.noteViewSwitcher}
+          >
             <div style={styles.noteViewLabel}>VIEW</div>
 
             <button
@@ -5837,7 +6039,7 @@ export default function NotesView({ vault, onVaultChange }) {
             </div>
           </div>
 
-          <div style={styles.folderBar}>
+          <div className="notesResponsiveFolderBar" style={styles.folderBar}>
             <div style={styles.folderScroll}>
               <button
                 type="button"
@@ -6052,7 +6254,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
     return (
       <>
-        <div style={styles.page}>
+        <div className="notesResponsivePage" style={styles.page}>
           <div style={styles.centerPanel}>
             <div style={styles.iconLarge}>
               <Lock size={25} />
@@ -6150,2663 +6352,3556 @@ export default function NotesView({ vault, onVaultChange }) {
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.headerRow}>
-        <div>
-          <div style={styles.eyebrow}>PRIVATE NOTES</div>
+    <>
+      <style>{`
+        .notesResponsivePage {
+          width: 100%;
+          max-width: 100%;
+          overflow-x: hidden;
+        }
 
-          <h1 style={styles.titleSmall}>Notes</h1>
+        .notesResponsiveHeader {
+          align-items: flex-start !important;
+          gap: 18px !important;
+        }
 
-          <div style={styles.currentNotesView}>
-            <span style={styles.currentNotesViewBadge}>
+        .notesResponsiveHeader > :first-child {
+          min-width: 150px;
+          flex: 1 1 220px;
+        }
+
+        .notesResponsiveHeaderActions {
+          flex: 0 1 auto;
+          min-width: 0;
+          display: flex !important;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 8px !important;
+        }
+
+        .notesHeaderPrimaryGroup,
+        .notesHeaderUtilityGroup {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .notesHeaderUtilityGroup {
+          align-items: stretch;
+        }
+
+        .notesHeaderActionButton {
+          white-space: nowrap;
+        }
+
+        .notesHeaderActionButton > span:first-of-type {
+          min-width: 0;
+        }
+
+        .notesHeaderNewButton {
+          white-space: nowrap;
+        }
+
+        .notesToolsButtonActive {
+          border-color: #3a5e43 !important;
+          background: #1a241d !important;
+          color: #9bd3a2 !important;
+        }
+
+        .notesToolsChevron {
+          font-size: 11px;
+          line-height: 1;
+          color: #707985;
+          transform: translateY(-1px);
+        }
+
+        .notesToolsMenuModern {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          z-index: 90;
+          width: min(520px, calc(100vw - 28px));
+          max-height: none;
+          overflow: visible;
+          padding: 12px;
+          border: 1px solid #30363e;
+          border-radius: 14px;
+          background: #15191e;
+          box-shadow: 0 24px 60px rgba(0,0,0,.52);
+          box-sizing: border-box;
+        }
+
+        .notesToolsMenuHeading,
+        .notesToolsSectionLabel {
+          padding: 2px 4px 8px;
+          color: #727b86;
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 1px;
+        }
+
+        .notesToolsSectionLabel {
+          padding-top: 14px;
+          margin-top: 12px;
+          border-top: 1px solid #292f37;
+        }
+
+        .notesToolsMenuGrid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 6px;
+          align-items: start;
+        }
+
+        .notesToolsMenuButton {
+          min-width: 0;
+          min-height: 38px;
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 8px 10px;
+          border: 1px solid #2b323b;
+          border-radius: 9px;
+          background: #1a1f25;
+          color: #c3c8cf;
+          font: inherit;
+          font-size: 10px;
+          text-align: left;
+          cursor: pointer;
+          box-sizing: border-box;
+        }
+
+        .notesToolsMenuButton:hover {
+          border-color: #3a424c;
+          background: #1f252c;
+        }
+
+        .notesToolsMenuButton span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .notesToolsMenuChevron {
+          margin-left: auto;
+          color: #7a838d;
+          font-size: 14px;
+        }
+
+        .notesToolsValue {
+          margin-left: auto;
+          color: #7a838d;
+          font-size: 9px;
+          white-space: nowrap;
+        }
+
+        .notesToolsNestedFull,
+        .notesToolsMenuNested {
+          position: relative;
+          min-width: 0;
+          align-self: start;
+          z-index: 1;
+        }
+
+        .notesToolsInlinePanel {
+          position: absolute;
+          top: calc(100% + 5px);
+          left: 0;
+          right: auto;
+          width: min(300px, calc(100vw - 48px));
+          z-index: 96;
+          max-height: none;
+          overflow: visible;
+          padding: 5px;
+          border: 1px solid #343b45;
+          border-radius: 9px;
+          background: #14181d;
+          box-shadow: 0 18px 38px rgba(0,0,0,.46);
+        }
+
+        .notesToolsSubmenu {
+          position: absolute;
+          top: 0;
+          right: calc(100% + 7px);
+          width: 250px;
+          padding: 6px;
+          border: 1px solid #343b45;
+          border-radius: 10px;
+          background: #161a1f;
+          box-shadow: 0 18px 38px rgba(0,0,0,.46);
+          z-index: 94;
+        }
+
+        .notesToolsSubmenuTitle {
+          padding: 6px 8px;
+          color: #737c86;
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: .9px;
+        }
+
+        .notesToolsSubmenuItem,
+        .notesToolsChoice {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 9px;
+          padding: 9px;
+          border: none;
+          border-radius: 7px;
+          background: transparent;
+          color: #bcc3ca;
+          font: inherit;
+          font-size: 10px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .notesToolsSubmenuItem:hover,
+        .notesToolsChoice:hover {
+          background: #20252b;
+        }
+
+        .notesToolsSubmenuItem span {
+          color: #737c86;
+          font-size: 8px;
+          margin-left: auto;
+          text-align: right;
+        }
+
+        .notesToolsChoice {
+          min-height: 34px;
+        }
+
+        .notesToolsTemplateChoice {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .notesToolsTemplateChoice span {
+          color: #69717b;
+          font-size: 8px;
+        }
+
+        .notesResponsiveSearchRow {
+          flex-wrap: wrap !important;
+          min-height: 44px;
+        }
+
+        .notesResponsiveSearchRow > input {
+          min-width: 120px;
+        }
+
+        .notesResponsiveSearchRow > .savedViewsWrap,
+        .notesResponsiveSearchRow > .searchFilterWrap {
+          flex: 0 0 auto;
+        }
+
+        .notesResponsiveViewSwitcher {
+          align-items: center !important;
+        }
+
+        .notesResponsiveFolderBar,
+        .notesResponsiveTagToolbar {
+          min-width: 0;
+        }
+
+        .notesResponsiveFolderBar {
+          overflow: hidden;
+        }
+
+        .notesResponsiveFolderBar > div {
+          max-width: 100%;
+        }
+
+        .notesResponsiveBulkToolbar {
+          flex-wrap: wrap !important;
+        }
+
+        .notesResponsiveContentGrid {
+          min-width: 0;
+        }
+
+        .notesResponsiveListPanel,
+        .notesResponsiveDetailPanel {
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .notesResponsiveDetailPanel {
+          position: relative;
+        }
+
+        .notesResponsiveDetailHeader {
+          min-width: 0;
+        }
+
+        @media (max-width: 1180px) {
+          .notesResponsivePage {
+            padding-left: 24px !important;
+            padding-right: 24px !important;
+          }
+
+          .notesResponsiveHeader {
+            flex-direction: column !important;
+          }
+
+          .notesResponsiveHeader > :first-child {
+            width: 100%;
+          }
+
+          .notesResponsiveHeaderActions {
+            width: 100%;
+            align-items: stretch;
+          }
+
+          .notesHeaderPrimaryGroup,
+          .notesHeaderUtilityGroup {
+            justify-content: flex-start;
+          }
+
+          .notesResponsiveContentGrid {
+            grid-template-columns: minmax(260px, .9fr) minmax(0, 1.3fr) !important;
+          }
+        }
+
+        @media (max-width: 920px) {
+          .notesResponsivePage {
+            padding: 0 16px 24px !important;
+          }
+
+          .notesResponsiveContentGrid {
+            grid-template-columns: 1fr !important;
+          }
+
+          .notesResponsiveDetailPanel {
+            min-height: 420px !important;
+          }
+
+          .notesHeaderPrimaryGroup,
+          .notesHeaderUtilityGroup {
+            width: 100%;
+            justify-content: flex-start;
+          }
+
+          .notesResponsiveSearchRow {
+            gap: 6px !important;
+          }
+
+          .notesResponsiveSearchRow > input {
+            flex: 1 1 220px !important;
+          }
+
+          .notesResponsiveSearchRow > button,
+          .notesResponsiveSearchRow > div {
+            flex: 0 0 auto;
+          }
+
+          .notesResponsiveViewSwitcher {
+            overflow-x: auto;
+            flex-wrap: nowrap !important;
+            scrollbar-width: thin;
+          }
+
+          .notesResponsiveViewSwitcher .noteViewStatus {
+            display: none;
+          }
+
+          .notesResponsiveTagToolbar {
+            overflow-x: auto;
+            scrollbar-width: thin;
+          }
+
+          .notesResponsiveTagToolbar > div {
+            min-width: max-content;
+          }
+
+          .notesToolsMenuModern {
+            left: 0;
+            right: auto;
+          }
+
+          .notesToolsSubmenu {
+            position: static;
+            width: auto;
+            margin-top: 4px;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .notesResponsivePage {
+            padding: 0 10px 18px !important;
+          }
+
+          .notesResponsiveHeader {
+            margin-bottom: 12px !important;
+          }
+
+          .titleSmall {
+            font-size: 24px !important;
+          }
+
+          .currentNotesView {
+            max-width: 100%;
+          }
+
+          .currentNotesViewDetail {
+            display: none;
+          }
+
+          .notesHeaderPrimaryGroup,
+          .notesHeaderUtilityGroup {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            width: 100%;
+          }
+
+          .notesHeaderActionButton,
+          .notesHeaderNewButton {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .notesHeaderNewButton {
+            min-height: 34px;
+          }
+
+          .notesToolsWrap {
+            width: 100%;
+          }
+
+          .notesToolsWrap > .notesHeaderActionButton {
+            width: 100%;
+            justify-content: center;
+          }
+
+          .notesToolsMenuModern {
+            position: fixed;
+            top: auto;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            width: auto;
+            max-height: none;
+            overflow: visible;
+            max-width: calc(100vw - 20px);
+          }
+
+          .notesToolsMenuGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .notesToolsInlinePanel {
+            position: absolute;
+            top: calc(100% + 5px);
+            left: 0;
+            right: auto;
+            width: min(300px, calc(100vw - 40px));
+            max-height: none;
+            margin-top: 0;
+          }
+
+          .notesToolsSubmenu {
+            position: absolute;
+            top: 0;
+            right: calc(100% + 7px);
+            width: min(270px, calc(100vw - 40px));
+            margin-top: 0;
+          }
+
+          .notesToolsMenuModern {
+            padding: 10px;
+          }
+
+          .notesToolsMenuButton {
+            min-height: 36px;
+            font-size: 9px;
+            padding: 7px 8px;
+          }
+
+          .notesResponsiveSearchRow {
+            padding: 8px !important;
+          }
+
+          .notesResponsiveSearchRow > input {
+            flex-basis: 100% !important;
+            order: 1;
+          }
+
+          .notesResponsiveSearchRow > svg {
+            position: absolute;
+            margin-left: 2px;
+          }
+
+          .notesResponsiveSearchRow > input {
+            padding-left: 24px !important;
+          }
+
+          .notesResponsiveSearchRow > button,
+          .notesResponsiveSearchRow > div {
+            flex: 1 1 calc(33.333% - 6px);
+            justify-content: center;
+          }
+
+          .notesResponsiveViewSwitcher {
+            padding: 4px !important;
+          }
+
+          .notesResponsiveViewSwitcher .noteViewTab {
+            flex: 1 0 auto;
+            justify-content: center;
+          }
+
+          .notesResponsiveFolderBar .folderScroll {
+            padding-bottom: 5px !important;
+          }
+
+          .notesResponsiveTagToolbar {
+            padding-bottom: 3px;
+          }
+
+          .notesResponsiveBulkToolbar {
+            align-items: stretch !important;
+          }
+
+          .notesResponsiveBulkToolbar > div {
+            width: 100%;
+          }
+
+          .notesResponsiveBulkToolbar button {
+            min-height: 32px;
+          }
+
+          .notesResponsiveDetailPanel {
+            padding: 14px !important;
+            border-radius: 10px !important;
+          }
+
+          .notesResponsiveDetailHeader {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+          }
+
+          .notesResponsiveDetailHeader .detailToolbarArea {
+            width: 100%;
+          }
+
+          .notesResponsiveDetailHeader .detailPrimaryActions {
+            width: 100%;
+            justify-content: flex-start;
+            overflow-x: auto;
+          }
+
+          .notesResponsiveDetailHeader .detailPrimaryActions button {
+            flex: 0 0 auto;
+          }
+
+          .noteInfoBar {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+
+          .noteInfoRight {
+            width: 100% !important;
+            justify-content: flex-start !important;
+            flex-wrap: wrap;
+          }
+
+          .noteActivityListWide {
+            grid-template-columns: 1fr !important;
+          }
+
+          .noteFindBar {
+            flex-wrap: wrap;
+          }
+
+          .detailAttachmentRow {
+            min-width: 0;
+          }
+        }
+      `}</style>
+      <div className="notesResponsivePage" style={styles.page}>
+        <div className="notesResponsiveHeader" style={styles.headerRow}>
+          <div>
+            <div style={styles.eyebrow}>PRIVATE NOTES</div>
+
+            <h1 style={styles.titleSmall}>Notes</h1>
+
+            <div style={styles.currentNotesView}>
+              <span style={styles.currentNotesViewBadge}>
+                {showTrash
+                  ? "Trash"
+                  : showArchivedNotes
+                    ? "Archived"
+                    : "All Notes"}
+              </span>
+
+              <span style={styles.currentNotesViewDetail}>
+                {showTrash
+                  ? "Deleted notes"
+                  : showArchivedNotes
+                    ? "Archived notes"
+                    : "Active notes"}
+              </span>
+            </div>
+
+            <div style={styles.subtle}>
               {showTrash
-                ? "Trash"
+                ? notes.filter((note) => Boolean(note.trashed)).length
                 : showArchivedNotes
-                  ? "Archived"
-                  : "All Notes"}
-            </span>
-
-            <span style={styles.currentNotesViewDetail}>
+                  ? notes.filter(
+                      (note) => Boolean(note.archived) && !note.trashed,
+                    ).length
+                  : notes.filter((note) => !note.trashed).length}{" "}
               {showTrash
-                ? "Deleted notes"
+                ? "notes in Trash"
                 : showArchivedNotes
-                  ? "Archived notes"
-                  : "Active notes"}
-            </span>
+                  ? "archived notes"
+                  : "notes"}
+            </div>
           </div>
 
-          <div style={styles.subtle}>
-            {showTrash
-              ? notes.filter((note) => Boolean(note.trashed)).length
-              : showArchivedNotes
-                ? notes.filter(
-                    (note) => Boolean(note.archived) && !note.trashed,
-                  ).length
-                : notes.filter((note) => !note.trashed).length}{" "}
-            {showTrash
-              ? "notes in Trash"
-              : showArchivedNotes
-                ? "archived notes"
-                : "notes"}
+          <div
+            className="notesResponsiveHeaderActions"
+            style={styles.headerActions}
+          >
+            <div className="notesHeaderPrimaryGroup">
+              <button
+                type="button"
+                className="notesHeaderActionButton"
+                style={styles.secondaryButton}
+                onClick={() => setShowReminderCenter(true)}
+              >
+                <CalendarDays size={14} />
+                <span>Reminders</span>
+                {activeReminderCount > 0 && (
+                  <span style={styles.reminderCountPill}>
+                    {activeReminderCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className="notesHeaderActionButton"
+                style={{
+                  ...styles.secondaryButton,
+                  ...(showArchivedNotes ? styles.archiveButtonActive : {}),
+                }}
+                onClick={() => {
+                  setShowArchivedNotes((value) => !value);
+                  setSelectedFolder("all");
+                  setSelectedTag("all");
+                  setSelectedId(null);
+                  setSelectedNoteIds([]);
+                }}
+                title="Show archived notes"
+              >
+                <Archive size={14} />
+                <span>{showArchivedNotes ? "Archived" : "Archive"}</span>
+              </button>
+
+              <button
+                type="button"
+                className="notesHeaderActionButton"
+                style={{
+                  ...styles.secondaryButton,
+                  ...(showTrash ? styles.trashButtonActive : {}),
+                }}
+                onClick={() => {
+                  setShowTrash((value) => !value);
+                  setShowArchivedNotes(false);
+                  setSelectedFolder("all");
+                  setSelectedTag("all");
+                  setSelectedId(null);
+                  setSelectedNoteIds([]);
+                }}
+                title="Show trashed notes"
+              >
+                <Trash2 size={14} />
+                <span>Trash</span>
+              </button>
+
+              <button
+                type="button"
+                className="notesHeaderActionButton"
+                style={styles.secondaryButton}
+                onClick={() => {
+                  setShowNotesToolsMenu(false);
+                  setShowReminderHistory(true);
+                  loadReminderHistory();
+                }}
+                title="Reminder history"
+              >
+                <History size={14} />
+                <span>History</span>
+              </button>
+            </div>
+
+            <div className="notesHeaderUtilityGroup">
+              <div className="notesToolsWrap" style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  className="notesHeaderActionButton"
+                  style={{
+                    ...styles.secondaryButton,
+                    ...(showNotesToolsMenu
+                      ? styles.notesToolsButtonActive
+                      : {}),
+                  }}
+                  onClick={() => {
+                    setShowNotesToolsMenu((value) => {
+                      const next = !value;
+                      if (next) {
+                        setShowExportMenu(false);
+                        setShowAutoLockMenu(false);
+                        setShowTrashRetentionMenu(false);
+                        setShowTemplateMenu(false);
+                      }
+                      return next;
+                    });
+                  }}
+                  aria-haspopup="menu"
+                  aria-expanded={showNotesToolsMenu}
+                  title="Notes tools and settings"
+                >
+                  <SlidersHorizontal size={14} />
+                  <span>Tools</span>
+                  <span className="notesToolsChevron" aria-hidden="true">
+                    ⌄
+                  </span>
+                </button>
+
+                {showNotesToolsMenu && (
+                  <div className="notesToolsMenuModern" role="menu">
+                    <div className="notesToolsMenuHeading">NOTES TOOLS</div>
+
+                    <div className="notesToolsMenuGrid">
+                      {!recoveryEnabled && (
+                        <button
+                          type="button"
+                          className="notesToolsMenuButton"
+                          onClick={() => {
+                            setShowNotesToolsMenu(false);
+                            setShowRecoverySetup(true);
+                          }}
+                        >
+                          <Fingerprint size={14} />
+                          <span>Passkey recovery</span>
+                        </button>
+                      )}
+
+                      <label
+                        className="notesToolsMenuButton"
+                        title="Import notes"
+                      >
+                        <Download size={14} />
+                        <span>Import</span>
+                        <input
+                          type="file"
+                          accept=".json,.md,.markdown,.csv"
+                          style={{ display: "none" }}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            setShowNotesToolsMenu(false);
+                            try {
+                              await parseImportedFile(file);
+                            } catch (error) {
+                              setError(
+                                error.message || "Could not read import file.",
+                              );
+                            }
+                          }}
+                        />
+                      </label>
+
+                      <div className="notesToolsMenuNested">
+                        <button
+                          type="button"
+                          className="notesToolsMenuButton"
+                          onClick={() => {
+                            setShowAutoLockMenu(false);
+                            setShowTrashRetentionMenu(false);
+                            setShowTemplateMenu(false);
+                            setShowExportMenu((value) => !value);
+                          }}
+                        >
+                          <Upload size={14} />
+                          <span>Export</span>
+                          <span className="notesToolsMenuChevron">›</span>
+                        </button>
+
+                        {showExportMenu && (
+                          <div className="notesToolsSubmenu">
+                            <div className="notesToolsSubmenuTitle">
+                              EXPORT NOTES
+                            </div>
+                            <button
+                              type="button"
+                              className="notesToolsSubmenuItem"
+                              onClick={() => {
+                                setShowExportMenu(false);
+                                setShowNotesToolsMenu(false);
+                                exportNotes("json");
+                              }}
+                            >
+                              <strong>JSON</strong>
+                              <span>Backup with all note data</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="notesToolsSubmenuItem"
+                              onClick={() => {
+                                setShowExportMenu(false);
+                                setShowNotesToolsMenu(false);
+                                exportNotes("markdown");
+                              }}
+                            >
+                              <strong>Markdown</strong>
+                              <span>Readable notes document</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="notesToolsSubmenuItem"
+                              onClick={() => {
+                                setShowExportMenu(false);
+                                setShowNotesToolsMenu(false);
+                                exportNotes("csv");
+                              }}
+                            >
+                              <strong>CSV</strong>
+                              <span>Spreadsheet-friendly</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="notesToolsMenuButton"
+                        onClick={() => {
+                          setShowNotesToolsMenu(false);
+                          telegramConnected
+                            ? setShowTelegramConnect(true)
+                            : connectTelegram();
+                        }}
+                      >
+                        <Bell size={14} />
+                        <span>
+                          {telegramConnected ? "Telegram" : "Connect Telegram"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="notesToolsMenuButton"
+                        onClick={() => {
+                          setShowNotesToolsMenu(false);
+                          enableNotifications();
+                        }}
+                      >
+                        <Bell size={14} />
+                        <span>
+                          {notificationsEnabled
+                            ? "Notifications on"
+                            : "Enable notifications"}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="notesToolsMenuButton"
+                        onClick={() => {
+                          setShowNotesToolsMenu(false);
+                          openChangePassword();
+                        }}
+                      >
+                        <ShieldCheck size={14} />
+                        <span>Change password</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="notesToolsMenuButton"
+                        onClick={() => {
+                          setShowNotesToolsMenu(false);
+                          setShowShortcuts(true);
+                        }}
+                      >
+                        <Keyboard size={14} />
+                        <span>Shortcuts</span>
+                      </button>
+                    </div>
+
+                    <div className="notesToolsSectionLabel">
+                      SECURITY & RETENTION
+                    </div>
+
+                    <div className="notesToolsMenuGrid">
+                      <div className="notesToolsNestedFull">
+                        <button
+                          type="button"
+                          className="notesToolsMenuButton"
+                          onClick={() => {
+                            setShowTrashRetentionMenu(false);
+                            setShowTemplateMenu(false);
+                            setShowAutoLockMenu((value) => !value);
+                          }}
+                        >
+                          <Lock size={14} />
+                          <span>Auto-lock</span>
+                          <span className="notesToolsValue">
+                            {autoLockMinutes === 0
+                              ? "Off"
+                              : `${autoLockMinutes}m`}
+                          </span>
+                        </button>
+                        {showAutoLockMenu && (
+                          <div className="notesToolsInlinePanel">
+                            {[
+                              [0, "Off"],
+                              [5, "5 minutes"],
+                              [15, "15 minutes"],
+                              [30, "30 minutes"],
+                              [60, "1 hour"],
+                            ].map(([value, label]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                className="notesToolsChoice"
+                                onClick={() => {
+                                  setAutoLockDuration(value);
+                                  setShowAutoLockMenu(false);
+                                }}
+                              >
+                                {label}
+                                {autoLockMinutes === value && (
+                                  <Check size={13} />
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="notesToolsNestedFull">
+                        <button
+                          type="button"
+                          className="notesToolsMenuButton"
+                          onClick={() => {
+                            setShowAutoLockMenu(false);
+                            setShowTemplateMenu(false);
+                            setShowTrashRetentionMenu((value) => !value);
+                          }}
+                        >
+                          <Trash2 size={14} />
+                          <span>Trash retention</span>
+                          <span className="notesToolsValue">
+                            {trashRetentionDays === 0
+                              ? "Never"
+                              : `${trashRetentionDays}d`}
+                          </span>
+                        </button>
+                        {showTrashRetentionMenu && (
+                          <div className="notesToolsInlinePanel">
+                            {[
+                              [0, "Never"],
+                              [7, "7 days"],
+                              [30, "30 days"],
+                              [90, "90 days"],
+                            ].map(([value, label]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                className="notesToolsChoice"
+                                onClick={() => {
+                                  setTrashRetention(value);
+                                  setShowTrashRetentionMenu(false);
+                                }}
+                              >
+                                {label}
+                                {trashRetentionDays === value && (
+                                  <Check size={13} />
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="notesToolsMenuButton"
+                        onClick={() => {
+                          setShowNotesToolsMenu(false);
+                          lockVault();
+                        }}
+                      >
+                        <Lock size={14} />
+                        <span>Lock vault</span>
+                      </button>
+
+                      <div className="notesToolsNestedFull">
+                        <button
+                          type="button"
+                          className="notesToolsMenuButton"
+                          onClick={() => {
+                            setShowAutoLockMenu(false);
+                            setShowTrashRetentionMenu(false);
+                            setShowTemplateMenu((value) => !value);
+                          }}
+                        >
+                          <Repeat size={14} />
+                          <span>Templates</span>
+                          <span className="notesToolsMenuChevron">›</span>
+                        </button>
+                        {showTemplateMenu && (
+                          <div className="notesToolsInlinePanel">
+                            {NOTE_TEMPLATES.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                className="notesToolsChoice notesToolsTemplateChoice"
+                                onClick={() => {
+                                  setShowTemplateMenu(false);
+                                  setShowNotesToolsMenu(false);
+                                  applyNoteTemplate(template.id);
+                                }}
+                              >
+                                <strong>{template.name}</strong>
+                                <span>{template.description}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="notesHeaderNewButton"
+                style={styles.primaryCompactButton}
+                onClick={openNewWithDraftCheck}
+              >
+                <Plus size={15} />
+                <span>New note</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        <div style={styles.headerActions}>
-          {!recoveryEnabled && (
-            <button
-              type="button"
-              style={styles.secondaryButton}
-              onClick={() => setShowRecoverySetup(true)}
-            >
-              <Fingerprint size={14} />
-              Enable passkey recovery
-            </button>
-          )}
+        <div className="notesResponsiveSearchRow" style={styles.searchRow}>
+          <Search size={15} color="#626873" />
 
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={() => setShowReminderCenter(true)}
-          >
-            <CalendarDays size={14} />
-            Reminders
-            {activeReminderCount > 0 && (
-              <span style={styles.reminderCountPill}>
-                {activeReminderCount}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            style={{
-              ...styles.secondaryButton,
-              ...(showArchivedNotes ? styles.archiveButtonActive : {}),
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSearchActiveIndex(e.target.value.trim() ? 0 : -1);
             }}
-            onClick={() => {
-              setShowArchivedNotes((value) => !value);
-              setSelectedFolder("all");
-              setSelectedTag("all");
-              setSelectedId(null);
-              setSelectedNoteIds([]);
-            }}
-            title="Show archived notes"
-          >
-            <Archive size={14} />
-            {showArchivedNotes ? "Archived" : "Archive"}
-          </button>
-          <button
-            type="button"
-            style={{
-              ...styles.secondaryButton,
-              ...(showTrash ? styles.trashButtonActive : {}),
-            }}
-            onClick={() => {
-              setShowTrash((value) => !value);
-              setShowArchivedNotes(false);
-              setSelectedFolder("all");
-              setSelectedTag("all");
-              setSelectedId(null);
-              setSelectedNoteIds([]);
-            }}
-            title="Show trashed notes"
-          >
-            <Trash2 size={14} />
-            Trash
-          </button>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={async () => {
-              setShowReminderHistory(true);
-              await loadReminderHistory();
-            }}
-          >
-            <CalendarDays size={14} />
-            History
-          </button>
-
-          <label style={styles.secondaryButton} title="Import notes">
-            <Download size={14} />
-            Import
-            <input
-              type="file"
-              accept=".json,.md,.markdown,.csv"
-              style={{ display: "none" }}
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-
-                e.target.value = "";
-
-                if (!file) {
-                  return;
-                }
-
-                try {
-                  await parseImportedFile(file);
-                } catch (error) {
-                  setError(error.message || "Could not read import file.");
-                }
-              }}
-            />
-          </label>
-
-          <div style={styles.exportWrap}>
-            <button
-              type="button"
-              style={styles.secondaryButton}
-              onClick={() => setShowExportMenu((value) => !value)}
-              title="Export notes"
-            >
-              <Upload size={14} />
-              Export
-            </button>
-
-            {showExportMenu && (
-              <div style={styles.exportMenu}>
-                <div style={styles.exportMenuTitle}>Export notes</div>
-
-                <button
-                  type="button"
-                  style={styles.exportMenuItem}
-                  onClick={() => exportNotes("json")}
-                >
-                  <strong>JSON</strong>
-                  <span>Backup with all note data</span>
-                </button>
-
-                <button
-                  type="button"
-                  style={styles.exportMenuItem}
-                  onClick={() => exportNotes("markdown")}
-                >
-                  <strong>Markdown</strong>
-                  <span>Readable notes document</span>
-                </button>
-
-                <button
-                  type="button"
-                  style={styles.exportMenuItem}
-                  onClick={() => exportNotes("csv")}
-                >
-                  <strong>CSV</strong>
-                  <span>Spreadsheet-friendly</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={
-              telegramConnected
-                ? () => setShowTelegramConnect(true)
-                : connectTelegram
-            }
-          >
-            <Bell size={14} />
-            {telegramConnected ? "Telegram connected" : "Connect Telegram"}
-          </button>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={enableNotifications}
-          >
-            <Bell size={14} />
-            {notificationsEnabled ? "Notifications on" : "Enable notifications"}
-          </button>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={openChangePassword}
-          >
-            <ShieldCheck size={14} />
-            Change password
-          </button>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={() => setShowShortcuts(true)}
-            title="Keyboard shortcuts"
-          >
-            <Keyboard size={14} />
-            Shortcuts
-          </button>
-
-          <div style={styles.autoLockWrap}>
-            <button
-              type="button"
-              style={styles.secondaryButton}
-              onClick={() => setShowAutoLockMenu((value) => !value)}
-              title="Auto-lock settings"
-              aria-haspopup="menu"
-              aria-expanded={showAutoLockMenu}
-            >
-              <Lock size={14} />
-              Auto-lock
-              <span style={styles.autoLockValue}>
-                {autoLockMinutes === 0 ? "Off" : `${autoLockMinutes}m`}
-              </span>
-            </button>
-
-            {showAutoLockMenu && (
-              <div style={styles.autoLockMenu}>
-                <div style={styles.autoLockMenuTitle}>AUTO-LOCK NOTES</div>
-
-                <div style={styles.autoLockMenuCopy}>
-                  Lock the Notes vault after inactivity.
-                </div>
-
-                {[
-                  [0, "Off"],
-                  [5, "5 minutes"],
-                  [15, "15 minutes"],
-                  [30, "30 minutes"],
-                  [60, "1 hour"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    style={{
-                      ...styles.autoLockMenuItem,
-                      ...(autoLockMinutes === value
-                        ? styles.autoLockMenuItemActive
-                        : {}),
-                    }}
-                    onClick={() => setAutoLockDuration(value)}
-                  >
-                    {label}
-                    {autoLockMinutes === value && <Check size={13} />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={styles.trashRetentionWrap}>
-            <button
-              type="button"
-              style={styles.secondaryButton}
-              onClick={() => setShowTrashRetentionMenu((value) => !value)}
-              title="Trash retention"
-              aria-haspopup="menu"
-              aria-expanded={showTrashRetentionMenu}
-            >
-              <Trash2 size={14} />
-              Trash retention
-              <span style={styles.trashRetentionValue}>
-                {trashRetentionDays === 0 ? "Never" : `${trashRetentionDays}d`}
-              </span>
-            </button>
-
-            {showTrashRetentionMenu && (
-              <div style={styles.trashRetentionMenu}>
-                <div style={styles.trashRetentionTitle}>AUTO-CLEAN TRASH</div>
-
-                <div style={styles.trashRetentionCopy}>
-                  Notes are permanently deleted after the selected time.
-                </div>
-
-                {[
-                  [0, "Never"],
-                  [7, "7 days"],
-                  [30, "30 days"],
-                  [90, "90 days"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    style={{
-                      ...styles.trashRetentionItem,
-                      ...(trashRetentionDays === value
-                        ? styles.trashRetentionItemActive
-                        : {}),
-                    }}
-                    onClick={() => setTrashRetention(value)}
-                  >
-                    {label}
-                    {trashRetentionDays === value && <Check size={13} />}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            style={styles.secondaryButton}
-            onClick={lockVault}
-          >
-            <Lock size={14} />
-            Lock
-          </button>
-
-          <div style={styles.templateWrap}>
-            <button
-              type="button"
-              style={styles.secondaryButton}
-              onClick={() => setShowTemplateMenu((value) => !value)}
-              aria-haspopup="menu"
-              aria-expanded={showTemplateMenu}
-            >
-              <Repeat size={14} />
-              Templates
-            </button>
-
-            {showTemplateMenu && (
-              <div style={styles.templateMenu}>
-                <div style={styles.templateMenuTitle}>New from template</div>
-
-                {NOTE_TEMPLATES.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    style={styles.templateMenuItem}
-                    onClick={() => applyNoteTemplate(template.id)}
-                  >
-                    <strong>{template.name}</strong>
-                    <span>{template.description}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            style={styles.primaryCompactButton}
-            onClick={openNewWithDraftCheck}
-          >
-            <Plus size={15} />
-            New note
-          </button>
-        </div>
-      </div>
-
-      <div style={styles.searchRow}>
-        <Search size={15} color="#626873" />
-
-        <input
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setSearchActiveIndex(e.target.value.trim() ? 0 : -1);
-          }}
-          onKeyDown={(event) => {
-            if (!query.trim()) {
-              return;
-            }
-
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-              event.preventDefault();
-
-              if (!filteredNotes.length) {
-                setSearchActiveIndex(-1);
+            onKeyDown={(event) => {
+              if (!query.trim()) {
                 return;
               }
 
-              setSearchActiveIndex((current) => {
-                const start = current < 0 ? 0 : current;
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
 
-                return event.key === "ArrowDown"
-                  ? (start + 1) % filteredNotes.length
-                  : (start - 1 + filteredNotes.length) % filteredNotes.length;
-              });
+                if (!filteredNotes.length) {
+                  setSearchActiveIndex(-1);
+                  return;
+                }
 
-              return;
-            }
+                setSearchActiveIndex((current) => {
+                  const start = current < 0 ? 0 : current;
 
-            if (event.key === "Enter" && filteredNotes.length) {
-              event.preventDefault();
+                  return event.key === "ArrowDown"
+                    ? (start + 1) % filteredNotes.length
+                    : (start - 1 + filteredNotes.length) % filteredNotes.length;
+                });
 
-              const index = searchActiveIndex >= 0 ? searchActiveIndex : 0;
-
-              const note = filteredNotes[index];
-
-              if (note) {
-                setSelectedId(note.id);
-                setShowNoteExportMenu(false);
-                setShowSearchFilters(false);
-                setShowSortMenu(false);
-                setSearchActiveIndex(index);
+                return;
               }
-            }
 
-            if (event.key === "Escape") {
-              setQuery("");
-              setSearchActiveIndex(-1);
-            }
-          }}
-          placeholder="Search notes…"
-          style={styles.searchInput}
-        />
+              if (event.key === "Enter" && filteredNotes.length) {
+                event.preventDefault();
 
-        {query.trim() && (
-          <span style={styles.searchResultCount}>
-            {filteredNotes.length}{" "}
-            {filteredNotes.length === 1 ? "result" : "results"}
-          </span>
-        )}
+                const index = searchActiveIndex >= 0 ? searchActiveIndex : 0;
 
-        <div style={styles.savedViewsWrap}>
+                const note = filteredNotes[index];
+
+                if (note) {
+                  setSelectedId(note.id);
+                  setShowNoteExportMenu(false);
+                  setShowSearchFilters(false);
+                  setShowSortMenu(false);
+                  setSearchActiveIndex(index);
+                }
+              }
+
+              if (event.key === "Escape") {
+                setQuery("");
+                setSearchActiveIndex(-1);
+              }
+            }}
+            placeholder="Search notes…"
+            style={styles.searchInput}
+          />
+
+          {query.trim() && (
+            <span style={styles.searchResultCount}>
+              {filteredNotes.length}{" "}
+              {filteredNotes.length === 1 ? "result" : "results"}
+            </span>
+          )}
+
           <button
             type="button"
             style={{
               ...styles.searchFilterButton,
-              ...(showSavedViewsMenu ? styles.searchFilterButtonActive : {}),
-            }}
-            onClick={() => setShowSavedViewsMenu((value) => !value)}
-            title="Saved search views"
-            aria-haspopup="menu"
-            aria-expanded={showSavedViewsMenu}
-          >
-            <Bookmark size={13} />
-            Saved
-            {savedSearchViews.length > 0 && (
-              <span style={styles.searchFilterBadge}>
-                {savedSearchViews.length}
-              </span>
-            )}
-          </button>
-
-          {showSavedViewsMenu && (
-            <div style={styles.savedViewsMenu}>
-              <div style={styles.savedViewsTitle}>SAVED VIEWS</div>
-
-              <div style={styles.savedViewsHint}>
-                Click a view to apply it. Use the icons to update, rename, or
-                delete.
-              </div>
-
-              {savedSearchViews.length === 0 ? (
-                <div style={styles.savedViewsEmpty}>No saved views yet.</div>
-              ) : (
-                savedSearchViews.map((view) => (
-                  <div key={view.id} style={styles.savedViewRow}>
-                    <button
-                      type="button"
-                      style={styles.savedViewButton}
-                      onClick={() => applySavedSearchView(view)}
-                      title={`Apply ${view.name}`}
-                    >
-                      <Bookmark size={12} />
-                      <span style={styles.savedViewButtonLabel}>
-                        {view.name}
-                      </span>
-                    </button>
-
-                    <div style={styles.savedViewActionsInline}>
-                      <button
-                        type="button"
-                        style={styles.savedViewIconAction}
-                        onClick={() => updateSavedSearchView(view.id)}
-                        title="Update to current view"
-                        aria-label={`Update ${view.name}`}
-                      >
-                        <RefreshCw size={11} />
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.savedViewIconAction}
-                        onClick={() => openRenameSavedSearchView(view)}
-                        title="Rename saved view"
-                        aria-label={`Rename ${view.name}`}
-                      >
-                        <Pencil size={11} />
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.savedViewIconActionDanger}
-                        onClick={() => {
-                          deleteSavedSearchView(view.id);
-                          setSavedViewActionId(null);
-                        }}
-                        title="Delete saved view"
-                        aria-label={`Delete ${view.name}`}
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-
-              <button
-                type="button"
-                style={styles.savedViewSaveButton}
-                onClick={() => {
-                  setSavedViewName("");
-                  setShowSaveViewDialog(true);
-                  setShowSavedViewsMenu(false);
-                }}
-              >
-                <Plus size={12} />
-                {savedViewEditingId ? "Rename saved view" : "Save current view"}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div style={styles.searchFilterWrap}>
-          <button
-            type="button"
-            style={{
-              ...styles.searchFilterButton,
-              ...(searchPinnedOnly || searchHasReminder
-                ? styles.searchFilterButtonActive
-                : {}),
-            }}
-            onClick={() => setShowSearchFilters((value) => !value)}
-            title="Filter search results"
-            aria-haspopup="menu"
-            aria-expanded={showSearchFilters}
-          >
-            <SlidersHorizontal size={13} />
-            Filters
-            {(searchPinnedOnly || searchHasReminder) && (
-              <span style={styles.searchFilterBadge}>
-                {[searchPinnedOnly, searchHasReminder].filter(Boolean).length}
-              </span>
-            )}
-          </button>
-
-          {showSearchFilters && (
-            <div style={styles.searchFilterMenu}>
-              <div style={styles.searchFilterTitle}>SEARCH FILTERS</div>
-
-              <button
-                type="button"
-                style={styles.searchFilterItem}
-                onClick={() => setSearchPinnedOnly((value) => !value)}
-              >
-                <span>Pinned notes only</span>
-                <span
-                  style={
-                    searchPinnedOnly
-                      ? styles.searchFilterCheckActive
-                      : styles.searchFilterCheck
-                  }
-                >
-                  {searchPinnedOnly ? "✓" : ""}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                style={styles.searchFilterItem}
-                onClick={() => setSearchHasReminder((value) => !value)}
-              >
-                <span>Notes with reminders</span>
-                <span
-                  style={
-                    searchHasReminder
-                      ? styles.searchFilterCheckActive
-                      : styles.searchFilterCheck
-                  }
-                >
-                  {searchHasReminder ? "✓" : ""}
-                </span>
-              </button>
-
-              {(searchPinnedOnly || searchHasReminder) && (
-                <button
-                  type="button"
-                  style={styles.searchFilterClear}
-                  onClick={() => {
-                    setSearchPinnedOnly(false);
-                    setSearchHasReminder(false);
-                    setShowSearchFilters(false);
-                  }}
-                >
-                  Clear filters
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={styles.tagFilterToolbar}>
-        <div style={styles.tagFilterScroll}>
-          <span style={styles.filterLabel}>Tags</span>
-
-          <button
-            type="button"
-            style={{
-              ...styles.folderChip,
-              ...(showFavorites ? styles.folderChipActive : {}),
+              ...(showRecentlyOpened ? styles.searchFilterButtonActive : {}),
             }}
             onClick={() => {
-              setShowFavorites((value) => !value);
+              setShowRecentlyOpened((value) => !value);
               setShowTrash(false);
               setShowArchivedNotes(false);
-              setSelectedFolder("all");
+              setShowFavorites(false);
             }}
-            title="Show favorite notes"
+            title="Recently opened notes"
           >
-            <Star size={11} fill={showFavorites ? "currentColor" : "none"} />
-            Favorites
+            <Clock3 size={13} />
+            Recent
+            {recentNoteIds.length > 0 && (
+              <span style={styles.searchFilterBadge}>
+                {Math.min(recentNoteIds.length, 8)}
+              </span>
+            )}
           </button>
 
-          <button
-            type="button"
-            style={{
-              ...styles.folderChip,
-              ...(selectedTag === "all" ? styles.folderChipActive : {}),
-            }}
-            onClick={() => setSelectedTag("all")}
-          >
-            All
-          </button>
-
-          {availableTags.map((tag) => (
+          <div style={styles.savedViewsWrap}>
             <button
-              key={tag}
+              type="button"
+              style={{
+                ...styles.searchFilterButton,
+                ...(showSavedViewsMenu ? styles.searchFilterButtonActive : {}),
+              }}
+              onClick={() => setShowSavedViewsMenu((value) => !value)}
+              title="Saved search views"
+              aria-haspopup="menu"
+              aria-expanded={showSavedViewsMenu}
+            >
+              <Bookmark size={13} />
+              Saved
+              {savedSearchViews.length > 0 && (
+                <span style={styles.searchFilterBadge}>
+                  {savedSearchViews.length}
+                </span>
+              )}
+            </button>
+
+            {showSavedViewsMenu && (
+              <div style={styles.savedViewsMenu}>
+                <div style={styles.savedViewsTitle}>SAVED VIEWS</div>
+
+                <div style={styles.savedViewsHint}>
+                  Click a view to apply it. Use the icons to update, rename, or
+                  delete.
+                </div>
+
+                {savedSearchViews.length === 0 ? (
+                  <div style={styles.savedViewsEmpty}>No saved views yet.</div>
+                ) : (
+                  savedSearchViews.map((view) => (
+                    <div key={view.id} style={styles.savedViewRow}>
+                      <button
+                        type="button"
+                        style={styles.savedViewButton}
+                        onClick={() => applySavedSearchView(view)}
+                        title={`Apply ${view.name}`}
+                      >
+                        <Bookmark size={12} />
+                        <span style={styles.savedViewButtonLabel}>
+                          {view.name}
+                        </span>
+                      </button>
+
+                      <div style={styles.savedViewActionsInline}>
+                        <button
+                          type="button"
+                          style={styles.savedViewIconAction}
+                          onClick={() => updateSavedSearchView(view.id)}
+                          title="Update to current view"
+                          aria-label={`Update ${view.name}`}
+                        >
+                          <RefreshCw size={11} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.savedViewIconAction}
+                          onClick={() => openRenameSavedSearchView(view)}
+                          title="Rename saved view"
+                          aria-label={`Rename ${view.name}`}
+                        >
+                          <Pencil size={11} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.savedViewIconActionDanger}
+                          onClick={() => {
+                            deleteSavedSearchView(view.id);
+                            setSavedViewActionId(null);
+                          }}
+                          title="Delete saved view"
+                          aria-label={`Delete ${view.name}`}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                <button
+                  type="button"
+                  style={styles.savedViewSaveButton}
+                  onClick={() => {
+                    setSavedViewName("");
+                    setShowSaveViewDialog(true);
+                    setShowSavedViewsMenu(false);
+                  }}
+                >
+                  <Plus size={12} />
+                  {savedViewEditingId
+                    ? "Rename saved view"
+                    : "Save current view"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.searchFilterWrap}>
+            <button
+              type="button"
+              style={{
+                ...styles.searchFilterButton,
+                ...(searchPinnedOnly || searchHasReminder
+                  ? styles.searchFilterButtonActive
+                  : {}),
+              }}
+              onClick={() => setShowSearchFilters((value) => !value)}
+              title="Filter search results"
+              aria-haspopup="menu"
+              aria-expanded={showSearchFilters}
+            >
+              <SlidersHorizontal size={13} />
+              Filters
+              {(searchPinnedOnly || searchHasReminder) && (
+                <span style={styles.searchFilterBadge}>
+                  {[searchPinnedOnly, searchHasReminder].filter(Boolean).length}
+                </span>
+              )}
+            </button>
+
+            {showSearchFilters && (
+              <div style={styles.searchFilterMenu}>
+                <div style={styles.searchFilterTitle}>SEARCH FILTERS</div>
+
+                <button
+                  type="button"
+                  style={styles.searchFilterItem}
+                  onClick={() => setSearchPinnedOnly((value) => !value)}
+                >
+                  <span>Pinned notes only</span>
+                  <span
+                    style={
+                      searchPinnedOnly
+                        ? styles.searchFilterCheckActive
+                        : styles.searchFilterCheck
+                    }
+                  >
+                    {searchPinnedOnly ? "✓" : ""}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.searchFilterItem}
+                  onClick={() => setSearchHasReminder((value) => !value)}
+                >
+                  <span>Notes with reminders</span>
+                  <span
+                    style={
+                      searchHasReminder
+                        ? styles.searchFilterCheckActive
+                        : styles.searchFilterCheck
+                    }
+                  >
+                    {searchHasReminder ? "✓" : ""}
+                  </span>
+                </button>
+
+                {(searchPinnedOnly || searchHasReminder) && (
+                  <button
+                    type="button"
+                    style={styles.searchFilterClear}
+                    onClick={() => {
+                      setSearchPinnedOnly(false);
+                      setSearchHasReminder(false);
+                      setShowSearchFilters(false);
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div
+          className="notesResponsiveTagToolbar"
+          style={styles.tagFilterToolbar}
+        >
+          <div style={styles.tagFilterScroll}>
+            <span style={styles.filterLabel}>Tags</span>
+
+            <button
               type="button"
               style={{
                 ...styles.folderChip,
-                ...(selectedTag === tag ? styles.folderChipActive : {}),
+                ...(showFavorites ? styles.folderChipActive : {}),
               }}
-              onClick={() => setSelectedTag(tag)}
+              onClick={() => {
+                setShowFavorites((value) => !value);
+                setShowTrash(false);
+                setShowArchivedNotes(false);
+                setSelectedFolder("all");
+              }}
+              title="Show favorite notes"
             >
-              #{tag}
+              <Star size={11} fill={showFavorites ? "currentColor" : "none"} />
+              Favorites
             </button>
-          ))}
 
-          <button
-            type="button"
-            style={styles.tagManageButton}
-            onClick={() => setShowTagManager(true)}
-            title="Manage tags"
-          >
-            Manage tags
-          </button>
-
-          <div style={styles.notesSortWrap}>
             <button
               type="button"
-              style={styles.notesSortButton}
-              onClick={() => setShowSortMenu((value) => !value)}
-              title="Sort notes"
-              aria-haspopup="menu"
-              aria-expanded={showSortMenu}
+              style={{
+                ...styles.folderChip,
+                ...(selectedTag === "all" ? styles.folderChipActive : {}),
+              }}
+              onClick={() => setSelectedTag("all")}
             >
-              <SlidersHorizontal size={13} />
-              Sort
-              <span style={styles.notesSortCurrent}>
-                {
+              All
+            </button>
+
+            {availableTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                style={{
+                  ...styles.folderChip,
+                  ...(selectedTag === tag ? styles.folderChipActive : {}),
+                }}
+                onClick={() => setSelectedTag(tag)}
+              >
+                #{tag}
+              </button>
+            ))}
+
+            <button
+              type="button"
+              style={styles.tagManageButton}
+              onClick={() => setShowTagManager(true)}
+              title="Manage tags"
+            >
+              Manage tags
+            </button>
+
+            <div style={styles.notesSortWrap}>
+              <button
+                type="button"
+                style={styles.notesSortButton}
+                onClick={() => setShowSortMenu((value) => !value)}
+                title="Sort notes"
+                aria-haspopup="menu"
+                aria-expanded={showSortMenu}
+              >
+                <SlidersHorizontal size={13} />
+                Sort
+                <span style={styles.notesSortCurrent}>
                   {
-                    updated: "Recent",
-                    created: "Created",
-                    oldestUpdated: "Oldest",
-                    titleAsc: "A–Z",
-                    titleDesc: "Z–A",
-                    reminder: "Reminders",
-                  }[sortMode]
-                }
-              </span>
-            </button>
+                    {
+                      updated: "Recent",
+                      created: "Created",
+                      oldestUpdated: "Oldest",
+                      titleAsc: "A–Z",
+                      titleDesc: "Z–A",
+                      reminder: "Reminders",
+                    }[sortMode]
+                  }
+                </span>
+              </button>
 
-            {showSortMenu && (
-              <div style={styles.notesSortMenu}>
-                {[
-                  ["updated", "Recently updated"],
-                  ["created", "Recently created"],
-                  ["oldestUpdated", "Oldest updated"],
-                  ["titleAsc", "Title A → Z"],
-                  ["titleDesc", "Title Z → A"],
-                  ["reminder", "Reminders soonest"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    style={{
-                      ...styles.notesSortItem,
-                      ...(sortMode === value ? styles.notesSortItemActive : {}),
-                    }}
-                    onClick={() => {
-                      setSortMode(value);
-                      setShowSortMenu(false);
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+              {showSortMenu && (
+                <div style={styles.notesSortMenu}>
+                  {[
+                    ["updated", "Recently updated"],
+                    ["created", "Recently created"],
+                    ["oldestUpdated", "Oldest updated"],
+                    ["titleAsc", "Title A → Z"],
+                    ["titleDesc", "Title Z → A"],
+                    ["reminder", "Reminders soonest"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      style={{
+                        ...styles.notesSortItem,
+                        ...(sortMode === value
+                          ? styles.notesSortItemActive
+                          : {}),
+                      }}
+                      onClick={() => {
+                        setSortMode(value);
+                        setShowSortMenu(false);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {error && <div style={styles.errorBanner}>{error}</div>}
+        {error && <div style={styles.errorBanner}>{error}</div>}
 
-      {noteCopied && (
-        <div style={styles.copiedToast} role="status">
-          <Check size={14} />
-          Copied to clipboard
-        </div>
-      )}
-
-      {query.trim() && filteredNotes.length > 0 && (
-        <div style={styles.searchKeyboardHint}>
-          ↑ ↓ to navigate · Enter to open
-        </div>
-      )}
-
-      {selectedNoteIds.length > 0 && (
-        <div style={styles.bulkToolbar}>
-          <div style={styles.bulkToolbarLeft}>
-            <button
-              type="button"
-              style={styles.bulkSelectButton}
-              onClick={toggleSelectAllVisible}
-            >
-              {filteredNotes.length > 0 &&
-              filteredNotes.every((note) => selectedNoteIds.includes(note.id))
-                ? "Clear visible"
-                : "Select visible"}
-            </button>
-
-            <strong>{selectedNoteIds.length} selected</strong>
+        {noteCopied && (
+          <div style={styles.copiedToast} role="status">
+            <Check size={14} />
+            Copied to clipboard
           </div>
+        )}
 
-          <div style={styles.bulkToolbarActions}>
-            {showTrash ? (
-              <>
-                <button
-                  type="button"
-                  style={styles.bulkActionButton}
-                  disabled={bulkBusy}
-                  onClick={() => applyBulkTrashAction("restore")}
-                >
-                  <Archive size={12} />
-                  Restore
-                </button>
+        {query.trim() && filteredNotes.length > 0 && (
+          <div style={styles.searchKeyboardHint}>
+            ↑ ↓ to navigate · Enter to open
+          </div>
+        )}
 
-                <button
-                  type="button"
-                  style={{
-                    ...styles.bulkActionButton,
-                    ...styles.bulkPermanentDeleteButton,
-                  }}
-                  disabled={bulkBusy}
-                  onClick={() => applyBulkTrashAction("permanentDelete")}
-                >
-                  <Trash2 size={12} />
-                  Delete permanently
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  style={styles.bulkActionButton}
-                  disabled={bulkBusy}
-                  onClick={() => {
-                    const allFavorite =
-                      selectedNoteIds.length > 0 &&
-                      selectedNoteIds.every(
-                        (id) => notes.find((note) => note.id === id)?.favorite,
-                      );
+        {selectedNoteIds.length > 0 && (
+          <div
+            className="notesResponsiveBulkToolbar"
+            style={styles.bulkToolbar}
+          >
+            <div style={styles.bulkToolbarLeft}>
+              <button
+                type="button"
+                style={styles.bulkSelectButton}
+                onClick={toggleSelectAllVisible}
+              >
+                {filteredNotes.length > 0 &&
+                filteredNotes.every((note) => selectedNoteIds.includes(note.id))
+                  ? "Clear visible"
+                  : "Select visible"}
+              </button>
 
-                    applyBulkAction(allFavorite ? "unfavorite" : "favorite");
-                  }}
-                  title="Favorite selected notes"
-                >
-                  <Star
-                    size={12}
-                    fill={
-                      selectedNoteIds.length > 0 &&
-                      selectedNoteIds.every(
-                        (id) => notes.find((note) => note.id === id)?.favorite,
-                      )
-                        ? "currentColor"
-                        : "none"
-                    }
-                  />
-                  {selectedNoteIds.length > 0 &&
-                  selectedNoteIds.every(
-                    (id) => notes.find((note) => note.id === id)?.favorite,
-                  )
-                    ? "Unfavorite"
-                    : "Favorite"}
-                </button>
+              <strong>{selectedNoteIds.length} selected</strong>
+            </div>
 
-                <button
-                  type="button"
-                  style={styles.bulkActionButton}
-                  disabled={bulkBusy}
-                  onClick={() => {
-                    const allPinned =
-                      selectedNoteIds.length > 0 &&
-                      selectedNoteIds.every(
-                        (id) => notes.find((note) => note.id === id)?.pinned,
-                      );
-
-                    applyBulkAction(allPinned ? "unpin" : "pin");
-                  }}
-                  title="Pin or unpin selected notes"
-                >
-                  <Pin size={12} />
-                  {selectedNoteIds.length > 0 &&
-                  selectedNoteIds.every(
-                    (id) => notes.find((note) => note.id === id)?.pinned,
-                  )
-                    ? "Unpin"
-                    : "Pin"}
-                </button>
-
-                <button
-                  type="button"
-                  style={styles.bulkActionButton}
-                  disabled={bulkBusy}
-                  onClick={() => applyBulkAction("archive")}
-                >
-                  <Archive size={12} />
-                  Archive
-                </button>
-
-                <div style={styles.bulkMoveWrap}>
+            <div style={styles.bulkToolbarActions}>
+              {showTrash ? (
+                <>
                   <button
                     type="button"
                     style={styles.bulkActionButton}
                     disabled={bulkBusy}
-                    onClick={() => setShowBulkMoveMenu((value) => !value)}
-                    title="Move selected notes"
+                    onClick={() => applyBulkTrashAction("restore")}
                   >
-                    <Folder size={12} />
-                    Move to
+                    <Archive size={12} />
+                    Restore
                   </button>
 
-                  {showBulkMoveMenu && (
-                    <div style={styles.bulkMoveMenu}>
-                      <div style={styles.bulkMoveMenuTitle}>MOVE TO FOLDER</div>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.bulkActionButton,
+                      ...styles.bulkPermanentDeleteButton,
+                    }}
+                    disabled={bulkBusy}
+                    onClick={() => applyBulkTrashAction("permanentDelete")}
+                  >
+                    <Trash2 size={12} />
+                    Delete permanently
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    style={styles.bulkActionButton}
+                    disabled={bulkBusy}
+                    onClick={() => {
+                      const allFavorite =
+                        selectedNoteIds.length > 0 &&
+                        selectedNoteIds.every(
+                          (id) =>
+                            notes.find((note) => note.id === id)?.favorite,
+                        );
 
-                      {folders.map((folder) => (
+                      applyBulkAction(allFavorite ? "unfavorite" : "favorite");
+                    }}
+                    title="Favorite selected notes"
+                  >
+                    <Star
+                      size={12}
+                      fill={
+                        selectedNoteIds.length > 0 &&
+                        selectedNoteIds.every(
+                          (id) =>
+                            notes.find((note) => note.id === id)?.favorite,
+                        )
+                          ? "currentColor"
+                          : "none"
+                      }
+                    />
+                    {selectedNoteIds.length > 0 &&
+                    selectedNoteIds.every(
+                      (id) => notes.find((note) => note.id === id)?.favorite,
+                    )
+                      ? "Unfavorite"
+                      : "Favorite"}
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.bulkActionButton}
+                    disabled={bulkBusy}
+                    onClick={() => {
+                      const allPinned =
+                        selectedNoteIds.length > 0 &&
+                        selectedNoteIds.every(
+                          (id) => notes.find((note) => note.id === id)?.pinned,
+                        );
+
+                      applyBulkAction(allPinned ? "unpin" : "pin");
+                    }}
+                    title="Pin or unpin selected notes"
+                  >
+                    <Pin size={12} />
+                    {selectedNoteIds.length > 0 &&
+                    selectedNoteIds.every(
+                      (id) => notes.find((note) => note.id === id)?.pinned,
+                    )
+                      ? "Unpin"
+                      : "Pin"}
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.bulkActionButton}
+                    disabled={bulkBusy}
+                    onClick={() => applyBulkAction("archive")}
+                  >
+                    <Archive size={12} />
+                    Archive
+                  </button>
+
+                  <div style={styles.bulkMoveWrap}>
+                    <button
+                      type="button"
+                      style={styles.bulkActionButton}
+                      disabled={bulkBusy}
+                      onClick={() => setShowBulkMoveMenu((value) => !value)}
+                      title="Move selected notes"
+                    >
+                      <Folder size={12} />
+                      Move to
+                    </button>
+
+                    {showBulkMoveMenu && (
+                      <div style={styles.bulkMoveMenu}>
+                        <div style={styles.bulkMoveMenuTitle}>
+                          MOVE TO FOLDER
+                        </div>
+
+                        {folders.map((folder) => (
+                          <button
+                            key={folder.id}
+                            type="button"
+                            style={styles.bulkMoveItem}
+                            disabled={bulkBusy}
+                            onClick={async () => {
+                              setShowBulkMoveMenu(false);
+                              await applyBulkAction(`move:${folder.id}`);
+                            }}
+                          >
+                            <Folder size={12} />
+                            {folder.name}
+                          </button>
+                        ))}
+
                         <button
-                          key={folder.id}
                           type="button"
                           style={styles.bulkMoveItem}
                           disabled={bulkBusy}
                           onClick={async () => {
                             setShowBulkMoveMenu(false);
-                            await applyBulkAction(`move:${folder.id}`);
+                            await applyBulkAction("move:none");
                           }}
                         >
                           <Folder size={12} />
-                          {folder.name}
+                          No folder
                         </button>
-                      ))}
+                      </div>
+                    )}
+                  </div>
 
-                      <button
-                        type="button"
-                        style={styles.bulkMoveItem}
-                        disabled={bulkBusy}
-                        onClick={async () => {
-                          setShowBulkMoveMenu(false);
-                          await applyBulkAction("move:none");
-                        }}
-                      >
-                        <Folder size={12} />
-                        No folder
-                      </button>
-                    </div>
-                  )}
-                </div>
+                  <div style={styles.bulkExportWrap}>
+                    <button
+                      type="button"
+                      style={styles.bulkActionButton}
+                      disabled={bulkBusy}
+                      onClick={() => setShowBulkExportMenu((value) => !value)}
+                      title="Export selected notes"
+                      aria-haspopup="menu"
+                      aria-expanded={showBulkExportMenu}
+                    >
+                      <Upload size={12} />
+                      Export
+                    </button>
 
-                <div style={styles.bulkExportWrap}>
+                    {showBulkExportMenu && (
+                      <div style={styles.bulkExportMenu}>
+                        <div style={styles.bulkExportMenuTitle}>
+                          EXPORT SELECTED
+                        </div>
+
+                        <button
+                          type="button"
+                          style={styles.bulkExportItem}
+                          disabled={bulkBusy}
+                          onClick={() => exportSelectedNotes("markdown")}
+                        >
+                          Markdown (.md)
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.bulkExportItem}
+                          disabled={bulkBusy}
+                          onClick={() => exportSelectedNotes("txt")}
+                        >
+                          Plain text (.txt)
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.bulkExportItem}
+                          disabled={bulkBusy}
+                          onClick={() => exportSelectedNotes("json")}
+                        >
+                          JSON (.json)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     style={styles.bulkActionButton}
                     disabled={bulkBusy}
-                    onClick={() => setShowBulkExportMenu((value) => !value)}
-                    title="Export selected notes"
-                    aria-haspopup="menu"
-                    aria-expanded={showBulkExportMenu}
+                    onClick={() => applyBulkAction("delete")}
                   >
-                    <Upload size={12} />
-                    Export
+                    <Trash2 size={12} />
+                    Delete
                   </button>
+                </>
+              )}
 
-                  {showBulkExportMenu && (
-                    <div style={styles.bulkExportMenu}>
-                      <div style={styles.bulkExportMenuTitle}>
-                        EXPORT SELECTED
-                      </div>
+              <button
+                type="button"
+                style={styles.bulkClearButton}
+                disabled={bulkBusy}
+                onClick={() => {
+                  setSelectedNoteIds([]);
+                  setShowBulkMoveMenu(false);
+                  setShowBulkExportMenu(false);
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
 
+        <div
+          className="notesResponsiveContentGrid"
+          style={{
+            ...styles.contentGrid,
+            ...(focusMode ? styles.contentGridFocus : {}),
+          }}
+        >
+          {!focusMode && (
+            <div className="notesResponsiveListPanel" style={styles.listPanel}>
+              {filteredNotes.length === 0 ? (
+                <div style={styles.emptyState}>
+                  <FileText size={24} color="#4FE36B" />
+
+                  <div style={styles.emptyTitle}>
+                    {notes.length === 0
+                      ? "Your notes are empty"
+                      : "Nothing found"}
+                  </div>
+
+                  <div style={styles.emptyCopy}>
+                    {notes.length === 0
+                      ? "Create your first private note."
+                      : "Try another search term."}
+                  </div>
+
+                  {notes.length === 0 ? (
+                    <button
+                      type="button"
+                      style={styles.secondaryButton}
+                      onClick={openNewWithDraftCheck}
+                    >
+                      <Plus size={14} />
+                      New note
+                    </button>
+                  ) : (
+                    <div style={styles.emptyStateActions}>
                       <button
                         type="button"
-                        style={styles.bulkExportItem}
-                        disabled={bulkBusy}
-                        onClick={() => exportSelectedNotes("markdown")}
+                        style={styles.secondaryButton}
+                        onClick={() => {
+                          setQuery("");
+                          setSelectedFolder("all");
+                          setSelectedTag("all");
+                          setShowFavorites(false);
+                          setShowRecentlyOpened(false);
+                          setSearchPinnedOnly(false);
+                          setSearchHasReminder(false);
+                          setShowArchivedNotes(false);
+                          setShowTrash(false);
+                        }}
                       >
-                        Markdown (.md)
+                        Clear filters
                       </button>
 
                       <button
                         type="button"
-                        style={styles.bulkExportItem}
-                        disabled={bulkBusy}
-                        onClick={() => exportSelectedNotes("txt")}
+                        style={styles.primaryButton}
+                        onClick={openNewWithDraftCheck}
                       >
-                        Plain text (.txt)
-                      </button>
-
-                      <button
-                        type="button"
-                        style={styles.bulkExportItem}
-                        disabled={bulkBusy}
-                        onClick={() => exportSelectedNotes("json")}
-                      >
-                        JSON (.json)
+                        <Plus size={13} />
+                        New note
                       </button>
                     </div>
                   )}
                 </div>
-
-                <button
-                  type="button"
-                  style={styles.bulkActionButton}
-                  disabled={bulkBusy}
-                  onClick={() => applyBulkAction("delete")}
-                >
-                  <Trash2 size={12} />
-                  Delete
-                </button>
-              </>
-            )}
-
-            <button
-              type="button"
-              style={styles.bulkClearButton}
-              disabled={bulkBusy}
-              onClick={() => {
-                setSelectedNoteIds([]);
-                setShowBulkMoveMenu(false);
-                setShowBulkExportMenu(false);
-              }}
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div style={styles.contentGrid}>
-        <div style={styles.listPanel}>
-          {filteredNotes.length === 0 ? (
-            <div style={styles.emptyState}>
-              <FileText size={24} color="#4FE36B" />
-
-              <div style={styles.emptyTitle}>
-                {notes.length === 0 ? "Your notes are empty" : "Nothing found"}
-              </div>
-
-              <div style={styles.emptyCopy}>
-                {notes.length === 0
-                  ? "Create your first private note."
-                  : "Try another search term."}
-              </div>
-
-              {notes.length === 0 && (
-                <button
-                  type="button"
-                  style={styles.secondaryButton}
-                  onClick={openNewWithDraftCheck}
-                >
-                  <Plus size={14} />
-                  New note
-                </button>
-              )}
-            </div>
-          ) : (
-            filteredNotes.map((note, noteIndex) => (
-              <div
-                key={note.id}
-                style={{
-                  ...styles.noteRowWrap,
-                  ...(searchActiveIndex === noteIndex && query.trim()
-                    ? styles.noteRowWrapSearchActive
-                    : {}),
-                  ...(selectedNoteIds.includes(note.id)
-                    ? styles.noteRowWrapSelected
-                    : {}),
-                }}
-                onMouseEnter={() => setHoveredNoteId(note.id)}
-                onMouseLeave={() => setHoveredNoteId(null)}
-              >
-                <button
-                  type="button"
-                  style={styles.noteSelectCheckbox}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggleNoteSelection(note.id);
-                  }}
-                  title={
-                    selectedNoteIds.includes(note.id)
-                      ? "Deselect note"
-                      : "Select note"
-                  }
-                  aria-label={
-                    selectedNoteIds.includes(note.id)
-                      ? "Deselect note"
-                      : "Select note"
-                  }
-                >
-                  {selectedNoteIds.includes(note.id) ? "✓" : ""}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedId(note.id);
-                    setShowNoteExportMenu(false);
-                    setShowSearchFilters(false);
-                    setShowSortMenu(false);
-                  }}
-                  style={{
-                    ...styles.noteRow,
-                    flex: 1,
-                    minWidth: 0,
-                    paddingRight: 175,
-                    background:
-                      selectedId === note.id ? "#20242B" : "transparent",
-                  }}
-                >
-                  <div style={styles.noteIcon}>
-                    {note.favorite ? (
-                      <Star size={14} fill="currentColor" />
-                    ) : note.pinned ? (
-                      <Pin size={14} />
-                    ) : (
-                      <FileText size={14} />
-                    )}
-                  </div>
-
-                  <div style={styles.rowText}>
-                    <div style={styles.rowTitle}>
-                      {renderSearchHighlight(note.title, query)}
-                    </div>
-
-                    <div style={styles.rowMeta}>
-                      {renderSearchHighlight(
-                        String(note.content || "")
-                          .replace(/\s+/g, " ")
-                          .slice(0, 70),
-                        query,
-                      )}
-                    </div>
-
-                    <div style={styles.rowCompactMeta}>
-                      <span>
-                        Updated{" "}
-                        {formatNoteDateTime(note.updatedAt || note.createdAt)}
-                      </span>
-
-                      <span>·</span>
-
-                      <span>{getNoteShareStatus(note.id).label}</span>
-
-                      {Array.isArray(note.attachments) &&
-                        note.attachments.length > 0 && (
-                          <>
-                            <span>·</span>
-                            <span>
-                              {note.attachments.length}{" "}
-                              {note.attachments.length === 1
-                                ? "attachment"
-                                : "attachments"}
-                            </span>
-                          </>
-                        )}
-                    </div>
-                  </div>
-                </button>
-
-                {!note.trashed && hoveredNoteId === note.id && (
-                  <div style={styles.noteQuickActions}>
+              ) : (
+                filteredNotes.map((note, noteIndex) => (
+                  <div
+                    key={note.id}
+                    style={{
+                      ...styles.noteRowWrap,
+                      ...(searchActiveIndex === noteIndex && query.trim()
+                        ? styles.noteRowWrapSearchActive
+                        : {}),
+                      ...(selectedNoteIds.includes(note.id)
+                        ? styles.noteRowWrapSelected
+                        : {}),
+                    }}
+                    onMouseEnter={() => setHoveredNoteId(note.id)}
+                    onMouseLeave={() => setHoveredNoteId(null)}
+                  >
                     <button
                       type="button"
-                      style={styles.noteQuickActionButton}
+                      style={styles.noteSelectCheckbox}
                       onClick={(event) => {
                         event.stopPropagation();
-                        toggleFavorite(note.id);
+                        toggleNoteSelection(note.id);
                       }}
                       title={
-                        note.favorite
-                          ? "Remove from favorites"
-                          : "Add to favorites"
+                        selectedNoteIds.includes(note.id)
+                          ? "Deselect note"
+                          : "Select note"
                       }
                       aria-label={
-                        note.favorite
-                          ? "Remove from favorites"
-                          : "Add to favorites"
+                        selectedNoteIds.includes(note.id)
+                          ? "Deselect note"
+                          : "Select note"
                       }
                     >
-                      <Star
-                        size={12}
-                        fill={note.favorite ? "currentColor" : "none"}
-                      />
+                      {selectedNoteIds.includes(note.id) ? "✓" : ""}
                     </button>
 
                     <button
                       type="button"
-                      style={styles.noteQuickActionButton}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        togglePin(note.id);
+                      onClick={() => {
+                        setSelectedId(note.id);
+                        rememberRecentlyOpened(note.id);
+                        setShowNoteExportMenu(false);
+                        setShowSearchFilters(false);
+                        setShowSortMenu(false);
                       }}
-                      title={note.pinned ? "Unpin note" : "Pin note"}
-                      aria-label={note.pinned ? "Unpin note" : "Pin note"}
-                    >
-                      <Pin
-                        size={12}
-                        fill={note.pinned ? "currentColor" : "none"}
-                      />
-                    </button>
-
-                    <button
-                      type="button"
-                      style={styles.noteQuickActionButton}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleArchive(note.id);
+                      style={{
+                        ...styles.noteRow,
+                        flex: 1,
+                        minWidth: 0,
+                        paddingRight: 175,
+                        borderLeft: note.color
+                          ? `3px solid ${note.color}`
+                          : "3px solid transparent",
+                        background:
+                          selectedId === note.id ? "#20242B" : "transparent",
                       }}
-                      title="Archive note"
-                      aria-label="Archive note"
                     >
-                      <Archive size={12} />
-                    </button>
+                      <div style={styles.noteIcon}>
+                        {note.favorite ? (
+                          <Star size={14} fill="currentColor" />
+                        ) : note.pinned ? (
+                          <Pin size={14} />
+                        ) : (
+                          <FileText size={14} />
+                        )}
+                      </div>
 
-                    <button
-                      type="button"
-                      style={styles.noteQuickActionButton}
-                      onClick={async (event) => {
-                        event.stopPropagation();
+                      <div style={styles.rowText}>
+                        <div style={styles.rowTitle}>
+                          <span>
+                            {renderSearchHighlight(note.title, query)}
+                          </span>
 
-                        try {
-                          await navigator.clipboard.writeText(
-                            [
-                              note.title || "Untitled note",
-                              "",
-                              note.content || "",
-                            ].join("\n"),
-                          );
-                          setError("");
-                          setNoteCopied(true);
-
-                          window.setTimeout(() => setNoteCopied(false), 1200);
-                        } catch {
-                          setError("Could not copy the note.");
-                        }
-                      }}
-                      title="Copy note"
-                      aria-label="Copy note"
-                    >
-                      {noteCopied && selectedId === note.id ? (
-                        <Check size={12} />
-                      ) : (
-                        <Copy size={12} />
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      style={styles.noteQuickActionDanger}
-                      onClick={async (event) => {
-                        event.stopPropagation();
-
-                        if (
-                          window.confirm(
-                            `Move "${note.title || "Untitled note"}" to Trash?`,
-                          )
-                        ) {
-                          await deleteNote(note.id);
-                        }
-                      }}
-                      title="Move to Trash"
-                      aria-label="Move to Trash"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-
-        <div style={styles.detailPanel}>
-          {selected ? (
-            <>
-              <div style={styles.detailHeader}>
-                <div>
-                  <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
-
-                  <h2 style={styles.detailTitle}>{selected.title}</h2>
-
-                  <div style={styles.noteFolderBreadcrumb}>
-                    <Folder size={10} />
-                    {selected.folderId
-                      ? folders.find(
-                          (folder) => folder.id === selected.folderId,
-                        )?.name || "Folder"
-                      : "No folder"}
-                  </div>
-
-                  {(() => {
-                    const shareStatus = getNoteShareStatus(selected.id);
-
-                    return (
-                      <span
-                        style={{
-                          ...styles.noteShareStatus,
-                          ...(shareStatus.key === "shared"
-                            ? styles.noteShareStatusShared
-                            : shareStatus.key === "revoked"
-                              ? styles.noteShareStatusRevoked
-                              : styles.noteShareStatusPrivate),
-                        }}
-                      >
-                        <Link2 size={11} />
-                        {shareStatus.label}
-                      </span>
-                    );
-                  })()}
-
-                  <div style={styles.metadataRow}>
-                    {(Array.isArray(selected.tags) ? selected.tags : []).map(
-                      (tag) => (
-                        <span key={tag} style={styles.tagBadge}>
-                          #{tag}
-                        </span>
-                      ),
-                    )}
-
-                    {customTemplates.length > 0 && (
-                      <>
-                        <div style={styles.templateMenuSection}>
-                          YOUR TEMPLATES
+                          {Array.isArray(note.attachments) &&
+                            note.attachments.length > 0 && (
+                              <span
+                                style={styles.rowAttachmentBadge}
+                                title={`${note.attachments.length} attachment${
+                                  note.attachments.length === 1 ? "" : "s"
+                                }`}
+                              >
+                                <Paperclip size={9} />
+                                {note.attachments.length}
+                              </span>
+                            )}
                         </div>
 
-                        {customTemplates.map((template) => (
-                          <button
-                            key={template.id}
-                            type="button"
-                            style={styles.templateMenuItem}
-                            onClick={() => createFromCustomTemplate(template)}
+                        <div style={styles.rowMeta}>
+                          {renderSearchHighlight(
+                            String(note.content || "")
+                              .replace(/\s+/g, " ")
+                              .slice(0, 70),
+                            query,
+                          )}
+                        </div>
+
+                        <div style={styles.rowCompactMeta}>
+                          <span>
+                            Updated{" "}
+                            {formatNoteDateTime(
+                              note.updatedAt || note.createdAt,
+                            )}
+                          </span>
+
+                          <span>·</span>
+
+                          <span>{getNoteShareStatus(note.id).label}</span>
+
+                          {Array.isArray(note.attachments) &&
+                            note.attachments.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span>
+                                  {note.attachments.length}{" "}
+                                  {note.attachments.length === 1
+                                    ? "attachment"
+                                    : "attachments"}
+                                </span>
+                              </>
+                            )}
+                        </div>
+                      </div>
+                    </button>
+
+                    {!note.trashed && hoveredNoteId === note.id && (
+                      <div style={styles.noteQuickActions}>
+                        <button
+                          type="button"
+                          style={styles.noteQuickActionButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleFavorite(note.id);
+                          }}
+                          title={
+                            note.favorite
+                              ? "Remove from favorites"
+                              : "Add to favorites"
+                          }
+                          aria-label={
+                            note.favorite
+                              ? "Remove from favorites"
+                              : "Add to favorites"
+                          }
+                        >
+                          <Star
+                            size={12}
+                            fill={note.favorite ? "currentColor" : "none"}
+                          />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.noteQuickActionButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            togglePin(note.id);
+                          }}
+                          title={note.pinned ? "Unpin note" : "Pin note"}
+                          aria-label={note.pinned ? "Unpin note" : "Pin note"}
+                        >
+                          <Pin
+                            size={12}
+                            fill={note.pinned ? "currentColor" : "none"}
+                          />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.noteQuickActionButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleArchive(note.id);
+                          }}
+                          title="Archive note"
+                          aria-label="Archive note"
+                        >
+                          <Archive size={12} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.noteQuickActionButton}
+                          onClick={async (event) => {
+                            event.stopPropagation();
+
+                            try {
+                              await navigator.clipboard.writeText(
+                                [
+                                  note.title || "Untitled note",
+                                  "",
+                                  note.content || "",
+                                ].join("\n"),
+                              );
+                              setError("");
+                              setNoteCopied(true);
+
+                              window.setTimeout(
+                                () => setNoteCopied(false),
+                                1200,
+                              );
+                            } catch {
+                              setError("Could not copy the note.");
+                            }
+                          }}
+                          title="Copy note"
+                          aria-label="Copy note"
+                        >
+                          {noteCopied && selectedId === note.id ? (
+                            <Check size={12} />
+                          ) : (
+                            <Copy size={12} />
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          style={styles.noteQuickActionDanger}
+                          onClick={async (event) => {
+                            event.stopPropagation();
+
+                            if (
+                              window.confirm(
+                                `Move "${note.title || "Untitled note"}" to Trash?`,
+                              )
+                            ) {
+                              await deleteNote(note.id);
+                            }
+                          }}
+                          title="Move to Trash"
+                          aria-label="Move to Trash"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          <div
+            style={{
+              ...styles.detailPanel,
+              ...(focusMode ? styles.detailPanelFocus : {}),
+              ...(selected.color
+                ? { boxShadow: `inset 0 3px 0 ${selected.color}` }
+                : {}),
+            }}
+          >
+            {selected ? (
+              <>
+                <div
+                  className="notesResponsiveDetailHeader"
+                  style={styles.detailHeader}
+                >
+                  <div style={styles.detailHeaderMain}>
+                    <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
+                    <h2 style={styles.detailTitle}>{selected.title}</h2>
+
+                    <div style={styles.detailSubline}>
+                      <span style={styles.detailFolderPill}>
+                        <Folder size={10} />
+                        {selected.folderId
+                          ? folders.find(
+                              (folder) => folder.id === selected.folderId,
+                            )?.name || "Folder"
+                          : "No folder"}
+                      </span>
+
+                      {(() => {
+                        const shareStatus = getNoteShareStatus(selected.id);
+                        return (
+                          <span
+                            style={{
+                              ...styles.detailStatusPill,
+                              ...(shareStatus.key === "shared"
+                                ? styles.noteShareStatusShared
+                                : shareStatus.key === "revoked"
+                                  ? styles.noteShareStatusRevoked
+                                  : styles.noteShareStatusPrivate),
+                            }}
                           >
-                            <strong>{template.name}</strong>
+                            <Link2 size={10} />
+                            {shareStatus.label}
+                          </span>
+                        );
+                      })()}
+
+                      {selected.pinned && (
+                        <span style={styles.detailMiniPill}>
+                          <Pin size={9} /> Pinned
+                        </span>
+                      )}
+                      {selected.favorite && (
+                        <span style={styles.detailMiniPill}>
+                          <Star size={9} fill="currentColor" /> Favorite
+                        </span>
+                      )}
+                    </div>
+
+                    <div style={styles.detailMetaLine}>
+                      <span>
+                        Updated {formatNoteDateTime(selected.updatedAt)}
+                      </span>
+                      {(() => {
+                        const stats = getNoteStatistics(selected);
+                        return (
+                          <>
+                            <span>·</span>
+                            <span>{stats.words} words</span>
+                            <span>·</span>
                             <span>
-                              {template.description || "Custom template"}
+                              {stats.readingSeconds < 60
+                                ? `${stats.readingSeconds} sec read`
+                                : `${Math.ceil(stats.readingSeconds / 60)} min read`}
                             </span>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  <div style={styles.detailToolbarArea}>
+                    <div style={styles.detailPrimaryActions}>
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.primaryToolbarButton,
+                          ...(focusMode ? styles.focusModeActiveButton : {}),
+                        }}
+                        onClick={() => {
+                          setFocusMode((value) => !value);
+                          setShowNoteFind(false);
+                          setNoteFindQuery("");
+                        }}
+                        title={focusMode ? "Exit focus mode" : "Focus mode"}
+                      >
+                        <Eye size={14} />
+                        <span>{focusMode ? "Exit focus" : "Focus"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.primaryToolbarButton}
+                        onClick={() => openEdit(selected)}
+                        title="Edit note"
+                      >
+                        <Pencil size={14} />
+                        <span>Edit</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.iconButtonCompact,
+                          ...(showNoteFind ? styles.focusModeActiveButton : {}),
+                        }}
+                        onClick={() => setShowNoteFind((value) => !value)}
+                        title="Find in this note"
+                        aria-label="Find in this note"
+                      >
+                        <SearchCheck size={14} />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={{
+                          ...styles.iconButtonCompact,
+                          ...(selected.favorite
+                            ? styles.favoriteActiveButton
+                            : {}),
+                        }}
+                        onClick={() => toggleFavorite(selected.id)}
+                        title={
+                          selected.favorite
+                            ? "Remove from favorites"
+                            : "Add to favorites"
+                        }
+                      >
+                        <Star
+                          size={14}
+                          fill={selected.favorite ? "currentColor" : "none"}
+                        />
+                      </button>
+
+                      <button
+                        type="button"
+                        style={styles.moreToolbarButton}
+                        onClick={() => setShowNoteToolsMenu((value) => !value)}
+                        aria-haspopup="menu"
+                        aria-expanded={showNoteToolsMenu}
+                        title="More note actions"
+                      >
+                        <SlidersHorizontal size={14} />
+                        <span>More</span>
+                      </button>
+                    </div>
+
+                    {showNoteToolsMenu && (
+                      <div style={styles.noteToolsMenu}>
+                        <div style={styles.noteToolsMenuHeader}>
+                          NOTE ACTIONS
+                        </div>
+
+                        <div style={styles.noteToolsMenuSection}>
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              togglePin(selected.id);
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            {selected.pinned ? (
+                              <PinOff size={13} />
+                            ) : (
+                              <Pin size={13} />
+                            )}
+                            {selected.pinned ? "Unpin note" : "Pin note"}
+                          </button>
+
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              copySelectedNote();
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            <Copy size={13} /> Copy note
+                          </button>
+
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              duplicateSelectedNote();
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            <Files size={13} /> Duplicate
+                          </button>
+
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              setShowVersionHistory(true);
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            <History size={13} /> Version history
+                          </button>
+
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              printSelectedNote();
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            <Printer size={13} /> Print note
+                          </button>
+                        </div>
+
+                        <div style={styles.noteToolsMenuDivider} />
+
+                        <div style={styles.noteToolsMenuSection}>
+                          <div style={styles.noteToolsMenuLabel}>ORGANIZE</div>
+                          <select
+                            value={selected.folderId || ""}
+                            onChange={(e) => {
+                              moveSelectedNote(e.target.value || "all");
+                              setShowNoteToolsMenu(false);
+                            }}
+                            style={styles.folderSelectCompact}
+                            title="Move to folder"
+                          >
+                            <option value="">No folder</option>
+                            {folders.map((folder) => (
+                              <option key={folder.id} value={folder.id}>
+                                {folder.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          {!showTrash && (
+                            <button
+                              type="button"
+                              style={styles.noteToolsMenuItem}
+                              onClick={() => {
+                                toggleArchive(selected.id);
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              <Archive size={13} />
+                              {selected.archived ? "Unarchive" : "Archive"}
+                            </button>
+                          )}
+
+                          {!showTrash && !selected.archived && (
+                            <button
+                              type="button"
+                              style={styles.noteToolsMenuItem}
+                              onClick={() => {
+                                openShareModal();
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              <Share2 size={13} /> Share note
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            style={styles.noteToolsMenuItem}
+                            onClick={() => {
+                              openShareManager();
+                              setShowNoteToolsMenu(false);
+                            }}
+                          >
+                            <Link2 size={13} /> Manage shared links
+                          </button>
+                        </div>
+
+                        <div style={styles.noteToolsMenuDivider} />
+
+                        <div style={styles.noteToolsMenuSection}>
+                          <div style={styles.noteToolsMenuLabel}>EXPORT</div>
+                          <div style={styles.noteExportMiniGrid}>
+                            <button
+                              type="button"
+                              style={styles.noteExportMiniButton}
+                              onClick={() => {
+                                exportSelectedNote("markdown");
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              Markdown
+                            </button>
+                            <button
+                              type="button"
+                              style={styles.noteExportMiniButton}
+                              onClick={() => {
+                                exportSelectedNote("txt");
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              TXT
+                            </button>
+                            <button
+                              type="button"
+                              style={styles.noteExportMiniButton}
+                              onClick={() => {
+                                exportSelectedNote("json");
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              JSON
+                            </button>
+                          </div>
+                        </div>
+
+                        <div style={styles.noteToolsMenuDivider} />
+
+                        <div style={styles.noteToolsMenuSection}>
+                          {showTrash ? (
+                            <>
+                              <button
+                                type="button"
+                                style={styles.noteToolsMenuItem}
+                                onClick={() => {
+                                  restoreNote(selected.id);
+                                  setShowNoteToolsMenu(false);
+                                }}
+                              >
+                                ↶ Restore note
+                              </button>
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.noteToolsMenuItem,
+                                  ...styles.noteToolsMenuDanger,
+                                }}
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      "Permanently delete this note? This cannot be undone.",
+                                    )
+                                  ) {
+                                    permanentlyDeleteNote(selected.id);
+                                    setShowNoteToolsMenu(false);
+                                  }
+                                }}
+                              >
+                                <Trash2 size={13} /> Delete permanently
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.noteToolsMenuItem,
+                                ...styles.noteToolsMenuDanger,
+                              }}
+                              onClick={() => {
+                                deleteNote(selected.id);
+                                setShowNoteToolsMenu(false);
+                              }}
+                            >
+                              <Trash2 size={13} /> Move to trash
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={styles.noteInfoBar}>
+                  <div style={styles.noteInfoLeft}>
+                    <div style={styles.noteInfoTitle}>NOTE INFO</div>
+                    <div style={styles.noteInfoStats}>
+                      <span>
+                        Created {formatNoteDateTime(selected.createdAt)}
+                      </span>
+                      <span>
+                        Updated {formatNoteDateTime(selected.updatedAt)}
+                      </span>
+                      {Array.isArray(selected.tags) &&
+                        selected.tags.length > 0 && (
+                          <span>{selected.tags.length} tags</span>
+                        )}
+                      {selected.reminderAt && (
+                        <span>
+                          <CalendarDays size={10} /> Reminder set
+                        </span>
+                      )}
+                      {selected.archived && <span>Archived</span>}
+                      {selected.trashed && <span>Trash</span>}
+                    </div>
+                  </div>
+
+                  <div style={styles.noteInfoRight}>
+                    <div
+                      style={styles.noteColorControlCompact}
+                      title="Note color"
+                    >
+                      <span style={styles.noteColorLabel}>Color</span>
+                      <div style={styles.noteColorSwatches}>
+                        {NOTE_COLOR_OPTIONS.map((option) => (
+                          <button
+                            key={option.value || "default"}
+                            type="button"
+                            style={{
+                              ...styles.noteColorSwatch,
+                              ...(selected.color === option.value
+                                ? styles.noteColorSwatchActive
+                                : {}),
+                              ...(option.value
+                                ? { background: option.value }
+                                : {}),
+                            }}
+                            onClick={() => setSelectedNoteColor(option.value)}
+                            title={option.label}
+                            aria-label={`Set note color: ${option.label}`}
+                          >
+                            {!option.value && (
+                              <span style={styles.noteColorDefaultDot} />
+                            )}
                           </button>
                         ))}
-                      </>
-                    )}
+                      </div>
+                    </div>
 
                     <button
                       type="button"
-                      style={{
-                        ...styles.templateMenuManage,
-                      }}
-                      onClick={openTemplateManager}
+                      style={styles.noteInfoToggle}
+                      onClick={() => setShowNoteInfo((value) => !value)}
                     >
-                      <FolderPlus size={14} />
-                      Manage templates
+                      {showNoteInfo
+                        ? "Hide activity"
+                        : `Activity ${buildNoteActivityTimeline(selected).length > 0 ? `· ${buildNoteActivityTimeline(selected).length}` : ""}`}
+                      <ChevronRight
+                        size={12}
+                        style={{
+                          transform: showNoteInfo ? "rotate(90deg)" : "none",
+                        }}
+                      />
                     </button>
-
-                    {selected.reminderAt && (
-                      <span style={styles.reminderBadge}>
-                        <CalendarDays size={11} />
-                        {new Date(selected.reminderAt).toLocaleString(
-                          undefined,
-                          {
-                            dateStyle: "medium",
-                            timeStyle: "short",
-                          },
-                        )}
-                      </span>
-                    )}
-
-                    {selected.reminderAt && selected.notifyTelegram && (
-                      <span style={styles.telegramBadge}>Telegram</span>
-                    )}
-
-                    {selected.archived && (
-                      <span style={styles.archivedBadge}>Archived</span>
-                    )}
-                    {selected.trashed && (
-                      <span style={styles.trashBadge}>Trash</span>
-                    )}
                   </div>
+                </div>
 
-                  <div style={styles.noteCreatedMeta}>
-                    <span>
-                      Created {formatNoteDateTime(selected.createdAt)}
-                    </span>
-
-                    <span>
-                      Updated {formatNoteDateTime(selected.updatedAt)}
-                    </span>
-                  </div>
-
-                  {(() => {
-                    const stats = getNoteStatistics(selected);
-
-                    return (
-                      <div style={styles.noteStatsRow}>
-                        <span>
-                          {stats.words} {stats.words === 1 ? "word" : "words"}
-                        </span>
-                        <span>
-                          {stats.characters}{" "}
-                          {stats.characters === 1 ? "character" : "characters"}
-                        </span>
-                        <span>
-                          {stats.lines} {stats.lines === 1 ? "line" : "lines"}
-                        </span>
-                        <span>
-                          {stats.readingSeconds < 60
-                            ? `${stats.readingSeconds} sec read`
-                            : `${Math.ceil(
-                                stats.readingSeconds / 60,
-                              )} min read`}
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {buildNoteActivityTimeline(selected).length > 0 && (
-                    <div style={styles.noteActivity}>
-                      <div style={styles.noteActivityTitle}>ACTIVITY</div>
-
-                      <div style={styles.noteActivityList}>
-                        {buildNoteActivityTimeline(selected).map((event) => (
+                {showNoteInfo && (
+                  <div style={styles.noteActivityPanel}>
+                    <div style={styles.noteActivityListWide}>
+                      {buildNoteActivityTimeline(selected).length > 0 ? (
+                        buildNoteActivityTimeline(selected).map((event) => (
                           <div key={event.id} style={styles.noteActivityItem}>
                             <span style={styles.noteActivityDot} />
-
                             <div style={styles.noteActivityBody}>
                               <div style={styles.noteActivityText}>
-                                {event.label}
-                                {" · "}
-                                {event.detail}
+                                {event.label} · {event.detail}
                               </div>
-
                               <div style={styles.noteActivityTime}>
                                 {formatNoteDateTime(event.at)}
                               </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div style={styles.detailActions}>
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.iconButton,
-                      ...(selected.favorite ? styles.favoriteActiveButton : {}),
-                    }}
-                    onClick={() => toggleFavorite(selected.id)}
-                    title={
-                      selected.favorite
-                        ? "Remove from favorites"
-                        : "Add to favorites"
-                    }
-                  >
-                    <Star
-                      size={15}
-                      fill={selected.favorite ? "currentColor" : "none"}
-                    />
-                  </button>
-
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={() => togglePin(selected.id)}
-                    title={selected.pinned ? "Unpin" : "Pin"}
-                  >
-                    {selected.pinned ? <PinOff size={15} /> : <Pin size={15} />}
-                  </button>
-
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={() => openEdit(selected)}
-                    title="Edit"
-                  >
-                    <Pencil size={15} />
-                  </button>
-
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={copySelectedNote}
-                    title="Copy note"
-                  >
-                    {noteCopied ? <Check size={15} /> : <Copy size={15} />}
-                  </button>
-
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={duplicateSelectedNote}
-                    title="Duplicate note"
-                  >
-                    <Files size={15} />
-                  </button>
-
-                  <button
-                    type="button"
-                    style={{
-                      ...styles.iconButton,
-                      opacity: 1,
-                    }}
-                    onClick={() => setShowVersionHistory(true)}
-                    title={
-                      getNoteHistory(selected).length
-                        ? `Version history · ${getNoteHistory(selected).length} saved version${
-                            getNoteHistory(selected).length === 1 ? "" : "s"
-                          }`
-                        : "Version history · no saved versions yet"
-                    }
-                  >
-                    <History size={15} />
-                  </button>
-
-                  <div style={styles.noteExportWrap}>
-                    <button
-                      type="button"
-                      style={styles.iconButton}
-                      onClick={() => setShowNoteExportMenu((value) => !value)}
-                      title="Export selected note"
-                      aria-haspopup="menu"
-                      aria-expanded={showNoteExportMenu}
-                    >
-                      <Download size={15} />
-                    </button>
-
-                    {showNoteExportMenu && (
-                      <div style={styles.noteExportMenu}>
-                        <div style={styles.noteExportMenuTitle}>
-                          Export note
-                        </div>
-
-                        <button
-                          type="button"
-                          style={styles.exportMenuItem}
-                          onClick={() => exportSelectedNote("markdown")}
-                        >
-                          <strong>Markdown</strong>
-                          <span>Best for notes and backups</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          style={styles.exportMenuItem}
-                          onClick={() => exportSelectedNote("txt")}
-                        >
-                          <strong>Plain text</strong>
-                          <span>Simple .txt file</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          style={styles.exportMenuItem}
-                          onClick={() => exportSelectedNote("json")}
-                        >
-                          <strong>JSON</strong>
-                          <span>Full note data</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {!showTrash && !selected.archived && (
-                    <button
-                      type="button"
-                      style={styles.iconButton}
-                      onClick={openShareModal}
-                      title="Share note"
-                    >
-                      <Share2 size={15} />
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    style={styles.iconButton}
-                    onClick={openShareManager}
-                    title="Manage shared links"
-                  >
-                    <Link2 size={15} />
-                  </button>
-
-                  <select
-                    value={selected.folderId || ""}
-                    onChange={(e) => moveSelectedNote(e.target.value || "all")}
-                    style={styles.folderSelect}
-                    title="Move to folder"
-                  >
-                    <option value="">No folder</option>
-
-                    {folders.map((folder) => (
-                      <option key={folder.id} value={folder.id}>
-                        {folder.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  {!showTrash && (
-                    <button
-                      type="button"
-                      style={styles.iconButton}
-                      onClick={() => toggleArchive(selected.id)}
-                      title={selected.archived ? "Unarchive" : "Archive"}
-                    >
-                      {selected.archived ? "↗" : "→"}
-                    </button>
-                  )}
-
-                  {showTrash ? (
-                    <>
-                      <button
-                        type="button"
-                        style={styles.iconButton}
-                        onClick={() => restoreNote(selected.id)}
-                        title="Restore"
-                      >
-                        ↶
-                      </button>
-
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.iconButton,
-                          ...styles.reminderDeleteButton,
-                        }}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              "Permanently delete this note? This cannot be undone.",
-                            )
-                          ) {
-                            permanentlyDeleteNote(selected.id);
-                          }
-                        }}
-                        title="Delete permanently"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      style={styles.iconButton}
-                      onClick={() => deleteNote(selected.id)}
-                      title="Move to Trash"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div style={styles.noteContent}>{selected.content}</div>
-
-              {Array.isArray(selected.attachments) &&
-                selected.attachments.length > 0 && (
-                  <div style={styles.detailAttachmentSection}>
-                    <div style={styles.detailAttachmentTitle}>Attachments</div>
-                    <div style={styles.detailAttachmentList}>
-                      {selected.attachments.map((attachment) => (
-                        <div
-                          key={attachment.id}
-                          style={styles.detailAttachmentRow}
-                        >
-                          <button
-                            type="button"
-                            style={styles.detailAttachmentInfoButton}
-                            onClick={() => {
-                              if (attachment?.dataUrl) {
-                                previewAttachmentInNewTab(attachment);
-                              }
-                            }}
-                            title="Preview attachment"
-                          >
-                            <div style={styles.detailAttachmentInfo}>
-                              {attachment?.type?.startsWith("image/") ? (
-                                <img
-                                  src={attachment.dataUrl}
-                                  alt=""
-                                  style={styles.detailAttachmentThumb}
-                                />
-                              ) : (
-                                <Paperclip size={13} />
-                              )}
-                              <div
-                                style={styles.detailAttachmentName}
-                                title={attachment.name}
-                              >
-                                {attachment.name}
-                              </div>
-                              <span>
-                                {formatAttachmentSize(attachment.size)}
-                              </span>
-                            </div>
-                          </button>
-
-                          <button
-                            type="button"
-                            style={styles.attachmentAction}
-                            onClick={() => downloadAttachment(attachment)}
-                            title="Download attachment"
-                          >
-                            <Download size={13} />
-                          </button>
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <span style={styles.subtle}>No activity yet.</span>
+                      )}
                     </div>
                   </div>
                 )}
 
-              <div style={styles.detailFooter}>
-                <ShieldCheck size={14} />
-                Encrypted note • decrypted only while unlocked
-              </div>
-            </>
-          ) : (
-            <div style={styles.noSelection}>
-              <FileText size={28} color="#4FE36B" />
-
-              <div style={styles.emptyTitle}>Select a note</div>
-
-              <div style={styles.emptyCopy}>
-                Your decrypted notes stay in memory only while the vault is
-                unlocked.
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {showTemplateManager && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 760,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowTemplateManager(false);
-                setTemplateEditingId(null);
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>CUSTOM TEMPLATES</div>
-
-            <h2 style={styles.formTitle}>
-              {templateEditingId ? "Edit template" : "Create template"}
-            </h2>
-
-            <label style={styles.label}>Template name</label>
-            <input
-              value={templateName}
-              onChange={(e) => setTemplateName(e.target.value)}
-              placeholder="e.g. Weekly review"
-              style={styles.input}
-              autoFocus
-            />
-
-            <label style={styles.label}>Description</label>
-            <input
-              value={templateDescription}
-              onChange={(e) => setTemplateDescription(e.target.value)}
-              placeholder="What is this template for?"
-              style={styles.input}
-            />
-
-            <label style={styles.label}>Note title</label>
-            <input
-              value={templateTitle}
-              onChange={(e) => setTemplateTitle(e.target.value)}
-              placeholder="Default note title"
-              style={styles.input}
-            />
-
-            <label style={styles.label}>Tags</label>
-            <input
-              value={templateTags}
-              onChange={(e) => setTemplateTags(e.target.value)}
-              placeholder="work, weekly, review"
-              style={styles.input}
-            />
-
-            <label style={styles.label}>Template content</label>
-            <textarea
-              value={form.content || ""}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  content: e.target.value,
-                })
-              }
-              placeholder="Write the reusable note structure here…"
-              style={{
-                ...styles.textarea,
-                minHeight: 180,
-              }}
-            />
-
-            {customTemplates.length > 0 && (
-              <div style={styles.customTemplateList}>
-                <div style={styles.templateListTitle}>Your templates</div>
-
-                {customTemplates.map((template) => (
-                  <div key={template.id} style={styles.customTemplateRow}>
-                    <div style={styles.customTemplateInfo}>
-                      <strong>{template.name}</strong>
-                      <span>{template.description || "No description"}</span>
-                    </div>
-
-                    <div style={styles.customTemplateActions}>
-                      <button
-                        type="button"
-                        style={styles.reminderActionButton}
-                        onClick={() => startEditCustomTemplate(template)}
-                      >
-                        <Pencil size={13} />
-                      </button>
-
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.reminderActionButton,
-                          ...styles.reminderDeleteButton,
-                        }}
-                        onClick={() => deleteCustomTemplate(template.id)}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+                {showNoteFind && (
+                  <div style={styles.noteFindBar}>
+                    <Search size={13} />
+                    <input
+                      value={noteFindQuery}
+                      onChange={(event) => setNoteFindQuery(event.target.value)}
+                      placeholder="Find in this note…"
+                      style={styles.noteFindInput}
+                      autoFocus
+                    />
+                    {noteFindQuery.trim() && (
+                      <span style={styles.noteFindCount}>
+                        {getNoteFindCount(selected.content, noteFindQuery)}{" "}
+                        {getNoteFindCount(selected.content, noteFindQuery) === 1
+                          ? "match"
+                          : "matches"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      style={styles.noteFindClose}
+                      onClick={() => {
+                        setShowNoteFind(false);
+                        setNoteFindQuery("");
+                      }}
+                      title="Close note search"
+                    >
+                      <X size={12} />
+                    </button>
                   </div>
-                ))}
+                )}
+
+                <div style={styles.noteContent}>
+                  {renderNoteFindHighlight(selected.content, noteFindQuery)}
+                </div>
+
+                {Array.isArray(selected.attachments) &&
+                  selected.attachments.length > 0 && (
+                    <div style={styles.detailAttachmentSection}>
+                      <div style={styles.detailAttachmentTitle}>
+                        Attachments
+                      </div>
+                      <div style={styles.detailAttachmentList}>
+                        {selected.attachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            style={styles.detailAttachmentRow}
+                          >
+                            <button
+                              type="button"
+                              style={styles.detailAttachmentInfoButton}
+                              onClick={() => {
+                                if (attachment?.dataUrl) {
+                                  previewAttachmentInNewTab(attachment);
+                                }
+                              }}
+                              title="Preview attachment"
+                            >
+                              <div style={styles.detailAttachmentInfo}>
+                                {attachment?.type?.startsWith("image/") ? (
+                                  <img
+                                    src={attachment.dataUrl}
+                                    alt=""
+                                    style={styles.detailAttachmentThumb}
+                                  />
+                                ) : (
+                                  <Paperclip size={13} />
+                                )}
+                                <div
+                                  style={styles.detailAttachmentName}
+                                  title={attachment.name}
+                                >
+                                  {attachment.name}
+                                </div>
+                                <span>
+                                  {formatAttachmentSize(attachment.size)}
+                                </span>
+                              </div>
+                            </button>
+
+                            <button
+                              type="button"
+                              style={styles.attachmentAction}
+                              onClick={() => downloadAttachment(attachment)}
+                              title="Download attachment"
+                            >
+                              <Download size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                <div style={styles.detailFooter}>
+                  <ShieldCheck size={14} />
+                  Encrypted note • decrypted only while unlocked
+                </div>
+              </>
+            ) : (
+              <div style={styles.noSelection}>
+                <FileText size={28} color="#4FE36B" />
+
+                <div style={styles.emptyTitle}>Select a note</div>
+
+                <div style={styles.emptyCopy}>
+                  Your decrypted notes stay in memory only while the vault is
+                  unlocked.
+                </div>
               </div>
             )}
+          </div>
+        </div>
 
-            {error && <div style={styles.error}>{error}</div>}
-
-            <div style={styles.importFooter}>
+        {showTemplateManager && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 760,
+              }}
+            >
               <button
                 type="button"
-                style={styles.linkButton}
+                style={styles.modalClose}
                 onClick={() => {
                   setShowTemplateManager(false);
                   setTemplateEditingId(null);
                   setError("");
                 }}
               >
-                Cancel
+                <X size={17} />
               </button>
 
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={saveCustomTemplate}
-              >
-                {templateEditingId ? "Save changes" : "Create template"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <div style={styles.detailEyebrow}>CUSTOM TEMPLATES</div>
 
-      {showShortcuts && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 520,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => setShowShortcuts(false)}
-              title="Close"
-            >
-              <X size={17} />
-            </button>
+              <h2 style={styles.formTitle}>
+                {templateEditingId ? "Edit template" : "Create template"}
+              </h2>
 
-            <div style={styles.detailEyebrow}>KEYBOARD</div>
+              <label style={styles.label}>Template name</label>
+              <input
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="e.g. Weekly review"
+                style={styles.input}
+                autoFocus
+              />
 
-            <h2 style={styles.formTitle}>Keyboard shortcuts</h2>
+              <label style={styles.label}>Description</label>
+              <input
+                value={templateDescription}
+                onChange={(e) => setTemplateDescription(e.target.value)}
+                placeholder="What is this template for?"
+                style={styles.input}
+              />
 
-            <div style={styles.shortcutList}>
-              {[
-                ["⌘/Ctrl + N", "New note"],
-                ["⌘/Ctrl + F", "Focus note search"],
-                ["⌘/Ctrl + B", "Bold in editor"],
-                ["⌘/Ctrl + I", "Italic in editor"],
-                ["?", "Open this shortcut panel"],
-                ["Esc", "Close menus and dialogs"],
-              ].map(([keys, label]) => (
-                <div key={keys} style={styles.shortcutRow}>
-                  <kbd style={styles.shortcutKeys}>{keys}</kbd>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
+              <label style={styles.label}>Note title</label>
+              <input
+                value={templateTitle}
+                onChange={(e) => setTemplateTitle(e.target.value)}
+                placeholder="Default note title"
+                style={styles.input}
+              />
 
-            <div style={styles.shortcutHint}>
-              Navigation shortcuts stay inactive while you are typing.
-            </div>
+              <label style={styles.label}>Tags</label>
+              <input
+                value={templateTags}
+                onChange={(e) => setTemplateTags(e.target.value)}
+                placeholder="work, weekly, review"
+                style={styles.input}
+              />
 
-            <div style={styles.importFooter}>
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={() => setShowShortcuts(false)}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              <label style={styles.label}>Template content</label>
+              <textarea
+                value={form.content || ""}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    content: e.target.value,
+                  })
+                }
+                placeholder="Write the reusable note structure here…"
+                style={{
+                  ...styles.textarea,
+                  minHeight: 180,
+                }}
+              />
 
-      {showTagManager && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 620,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => setShowTagManager(false)}
-            >
-              <X size={17} />
-            </button>
+              {customTemplates.length > 0 && (
+                <div style={styles.customTemplateList}>
+                  <div style={styles.templateListTitle}>Your templates</div>
 
-            <div style={styles.detailEyebrow}>TAGS</div>
-
-            <h2 style={styles.formTitle}>Manage tags</h2>
-
-            <p style={styles.copy}>
-              Rename a tag everywhere or remove it from every note.
-            </p>
-
-            <div style={styles.tagManagerList}>
-              {availableTags.length === 0 ? (
-                <div style={styles.shareManagerEmpty}>No tags yet</div>
-              ) : (
-                availableTags.map((tag) => (
-                  <div key={tag} style={styles.tagManagerRow}>
-                    <div style={styles.tagManagerInfo}>
-                      <strong style={styles.tagManagerStrong}>#{tag}</strong>
-                      <span style={styles.tagManagerCount}>
-                        {getTagUsage(tag)}{" "}
-                        {getTagUsage(tag) === 1 ? "note" : "notes"}
-                      </span>
-                    </div>
-
-                    <div style={styles.tagManagerActions}>
-                      <button
-                        type="button"
-                        style={styles.reminderActionButton}
-                        disabled={tagManagerBusy}
-                        onClick={() => {
-                          setTagManagerName(tag);
-
-                          const next = window.prompt(`Rename #${tag} to:`, tag);
-
-                          if (next !== null) {
-                            renameTagEverywhere(tag, next);
-                          }
-                        }}
-                        title="Rename tag"
-                      >
-                        <Pencil size={13} />
-                      </button>
-
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.reminderActionButton,
-                          ...styles.reminderDeleteButton,
-                        }}
-                        disabled={tagManagerBusy}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Remove #${tag} from all notes? This cannot be undone.`,
-                            )
-                          ) {
-                            deleteTagEverywhere(tag);
-                          }
-                        }}
-                        title="Delete tag from all notes"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <div style={styles.importFooter}>
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={() => setShowTagManager(false)}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showVersionHistory && selected && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 700,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => setShowVersionHistory(false)}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>VERSION HISTORY</div>
-
-            <h2 style={styles.formTitle}>
-              {selected.title || "Untitled note"}
-            </h2>
-
-            <p style={styles.copy}>
-              The last 20 saved versions are kept with the encrypted note.
-              Version history starts recording when you save an edit after this
-              feature is installed.
-            </p>
-
-            {getNoteHistory(selected).length === 0 ? (
-              <div style={styles.shareManagerEmpty}>
-                <History size={24} />
-                <strong>No previous versions</strong>
-                <span>
-                  Edit and save this note to create its first version.
-                </span>
-              </div>
-            ) : (
-              <div style={styles.versionHistoryList}>
-                {[...getNoteHistory(selected)].reverse().map((version) => (
-                  <div key={version.id} style={styles.versionHistoryRow}>
-                    <div style={styles.versionHistoryInfo}>
-                      <strong style={styles.versionHistoryStrong}>
-                        {version.title || "Untitled note"}
-                      </strong>
-                      <span style={styles.versionHistoryDate}>
-                        {new Date(version.savedAt).toLocaleString()}
-                      </span>
-                      <p style={styles.versionHistoryPreview}>
-                        {String(version.content || "").slice(0, 140) ||
-                          "Empty note"}
-                        {String(version.content || "").length > 140 ? "…" : ""}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      style={styles.secondaryButton}
-                      onClick={() => restoreNoteVersion(version)}
-                    >
-                      Restore to editor
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={styles.importFooter}>
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={() => setShowVersionHistory(false)}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showShareManager && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 720,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={closeShareManager}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>SHARED LINKS</div>
-
-            <h2 style={styles.formTitle}>Manage shared links</h2>
-
-            <p style={styles.copy}>
-              These links are created for individual notes. Revoke a link to
-              immediately disable it.
-            </p>
-
-            {sharedLinks.length === 0 ? (
-              <div style={styles.shareManagerEmpty}>
-                <Link2 size={24} />
-                <strong>No shared links yet</strong>
-                <span>Create a Share link from any active note.</span>
-              </div>
-            ) : (
-              <div style={styles.shareManagerList}>
-                {sharedLinks.map((link) => {
-                  const expired =
-                    Boolean(link.expiresAt) &&
-                    new Date(link.expiresAt).getTime() <= Date.now();
-
-                  const status = link.revoked
-                    ? "Revoked"
-                    : expired
-                      ? "Expired"
-                      : "Active";
-
-                  return (
-                    <div key={link.shareId} style={styles.shareManagerRow}>
-                      <div style={styles.shareManagerInfo}>
-                        <div style={styles.shareManagerTitle}>
-                          {link.title || "Untitled note"}
-                        </div>
-                        <div style={styles.shareManagerMeta}>
-                          {status}
-                          {" · "}
-                          {link.expiresAt
-                            ? `${formatShareCountdown(
-                                link.expiresAt,
-                              )} · expires ${new Date(
-                                link.expiresAt,
-                              ).toLocaleString()}`
-                            : "never expires"}
-                        </div>
+                  {customTemplates.map((template) => (
+                    <div key={template.id} style={styles.customTemplateRow}>
+                      <div style={styles.customTemplateInfo}>
+                        <strong>{template.name}</strong>
+                        <span>{template.description || "No description"}</span>
                       </div>
 
-                      <div style={styles.shareManagerActions}>
+                      <div style={styles.customTemplateActions}>
                         <button
                           type="button"
                           style={styles.reminderActionButton}
-                          disabled={Boolean(link.revoked)}
-                          onClick={() => copyShareManagerLink(link.url)}
-                          title="Copy link"
+                          onClick={() => startEditCustomTemplate(template)}
                         >
-                          <Copy size={13} />
+                          <Pencil size={13} />
                         </button>
 
-                        {link.revoked ? (
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.reminderActionButton,
+                            ...styles.reminderDeleteButton,
+                          }}
+                          onClick={() => deleteCustomTemplate(template.id)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.linkButton}
+                  onClick={() => {
+                    setShowTemplateManager(false);
+                    setTemplateEditingId(null);
+                    setError("");
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={saveCustomTemplate}
+                >
+                  {templateEditingId ? "Save changes" : "Create template"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showShortcuts && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 520,
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowShortcuts(false)}
+                title="Close"
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>KEYBOARD</div>
+
+              <h2 style={styles.formTitle}>Keyboard shortcuts</h2>
+
+              <div style={styles.shortcutList}>
+                {[
+                  ["⌘/Ctrl + N", "New note"],
+                  ["⌘/Ctrl + F", "Focus note search"],
+                  ["⌘/Ctrl + B", "Bold in editor"],
+                  ["⌘/Ctrl + I", "Italic in editor"],
+                  ["?", "Open this shortcut panel"],
+                  ["Esc", "Close menus and dialogs"],
+                ].map(([keys, label]) => (
+                  <div key={keys} style={styles.shortcutRow}>
+                    <kbd style={styles.shortcutKeys}>{keys}</kbd>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={styles.shortcutHint}>
+                Navigation shortcuts stay inactive while you are typing.
+              </div>
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={() => setShowShortcuts(false)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showTagManager && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 620,
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowTagManager(false)}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>TAGS</div>
+
+              <h2 style={styles.formTitle}>Manage tags</h2>
+
+              <p style={styles.copy}>
+                Rename a tag everywhere or remove it from every note.
+              </p>
+
+              <div style={styles.tagManagerList}>
+                {availableTags.length === 0 ? (
+                  <div style={styles.shareManagerEmpty}>No tags yet</div>
+                ) : (
+                  availableTags.map((tag) => (
+                    <div key={tag} style={styles.tagManagerRow}>
+                      <div style={styles.tagManagerInfo}>
+                        <strong style={styles.tagManagerStrong}>#{tag}</strong>
+                        <span style={styles.tagManagerCount}>
+                          {getTagUsage(tag)}{" "}
+                          {getTagUsage(tag) === 1 ? "note" : "notes"}
+                        </span>
+                      </div>
+
+                      <div style={styles.tagManagerActions}>
+                        <button
+                          type="button"
+                          style={styles.reminderActionButton}
+                          disabled={tagManagerBusy}
+                          onClick={() => {
+                            setTagManagerName(tag);
+
+                            const next = window.prompt(
+                              `Rename #${tag} to:`,
+                              tag,
+                            );
+
+                            if (next !== null) {
+                              renameTagEverywhere(tag, next);
+                            }
+                          }}
+                          title="Rename tag"
+                        >
+                          <Pencil size={13} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.reminderActionButton,
+                            ...styles.reminderDeleteButton,
+                          }}
+                          disabled={tagManagerBusy}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Remove #${tag} from all notes? This cannot be undone.`,
+                              )
+                            ) {
+                              deleteTagEverywhere(tag);
+                            }
+                          }}
+                          title="Delete tag from all notes"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={() => setShowTagManager(false)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showVersionHistory && selected && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 700,
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowVersionHistory(false)}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>VERSION HISTORY</div>
+
+              <h2 style={styles.formTitle}>
+                {selected.title || "Untitled note"}
+              </h2>
+
+              <p style={styles.copy}>
+                The last 20 saved versions are kept with the encrypted note.
+                Version history starts recording when you save an edit after
+                this feature is installed.
+              </p>
+
+              {getNoteHistory(selected).length === 0 ? (
+                <div style={styles.shareManagerEmpty}>
+                  <History size={24} />
+                  <strong>No previous versions</strong>
+                  <span>
+                    Edit and save this note to create its first version.
+                  </span>
+                </div>
+              ) : (
+                <div style={styles.versionHistoryList}>
+                  {[...getNoteHistory(selected)].reverse().map((version) => (
+                    <div key={version.id} style={styles.versionHistoryRow}>
+                      <div style={styles.versionHistoryInfo}>
+                        <strong style={styles.versionHistoryStrong}>
+                          {version.title || "Untitled note"}
+                        </strong>
+                        <span style={styles.versionHistoryDate}>
+                          {new Date(version.savedAt).toLocaleString()}
+                        </span>
+                        <p style={styles.versionHistoryPreview}>
+                          {String(version.content || "").slice(0, 140) ||
+                            "Empty note"}
+                          {String(version.content || "").length > 140
+                            ? "…"
+                            : ""}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        style={styles.secondaryButton}
+                        onClick={() => restoreNoteVersion(version)}
+                      >
+                        Restore to editor
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={() => setShowVersionHistory(false)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showShareManager && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 720,
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={closeShareManager}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>SHARED LINKS</div>
+
+              <h2 style={styles.formTitle}>Manage shared links</h2>
+
+              <p style={styles.copy}>
+                These links are created for individual notes. Revoke a link to
+                immediately disable it.
+              </p>
+
+              {sharedLinks.length === 0 ? (
+                <div style={styles.shareManagerEmpty}>
+                  <Link2 size={24} />
+                  <strong>No shared links yet</strong>
+                  <span>Create a Share link from any active note.</span>
+                </div>
+              ) : (
+                <div style={styles.shareManagerList}>
+                  {sharedLinks.map((link) => {
+                    const expired =
+                      Boolean(link.expiresAt) &&
+                      new Date(link.expiresAt).getTime() <= Date.now();
+
+                    const status = link.revoked
+                      ? "Revoked"
+                      : expired
+                        ? "Expired"
+                        : "Active";
+
+                    return (
+                      <div key={link.shareId} style={styles.shareManagerRow}>
+                        <div style={styles.shareManagerInfo}>
+                          <div style={styles.shareManagerTitle}>
+                            {link.title || "Untitled note"}
+                          </div>
+                          <div style={styles.shareManagerMeta}>
+                            {status}
+                            {" · "}
+                            {link.expiresAt
+                              ? `${formatShareCountdown(
+                                  link.expiresAt,
+                                )} · expires ${new Date(
+                                  link.expiresAt,
+                                ).toLocaleString()}`
+                              : "never expires"}
+                          </div>
+                        </div>
+
+                        <div style={styles.shareManagerActions}>
                           <button
                             type="button"
-                            style={{
-                              ...styles.reminderActionButton,
-                              ...styles.reminderDeleteButton,
-                            }}
+                            style={styles.reminderActionButton}
+                            disabled={Boolean(link.revoked)}
+                            onClick={() => copyShareManagerLink(link.url)}
+                            title="Copy link"
+                          >
+                            <Copy size={13} />
+                          </button>
+
+                          {link.revoked ? (
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.reminderActionButton,
+                                ...styles.reminderDeleteButton,
+                              }}
+                              disabled={shareManagerBusy}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    "Remove this revoked share from Share Management? This cannot be undone.",
+                                  )
+                                ) {
+                                  removeShareFromManagerOnly(link);
+                                }
+                              }}
+                              title="Remove revoked link"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              style={{
+                                ...styles.reminderActionButton,
+                                ...styles.reminderDeleteButton,
+                              }}
+                              disabled={shareManagerBusy}
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    "Revoke this share link? Anyone using it will lose access.",
+                                  )
+                                ) {
+                                  revokeSharedLink(link);
+                                }
+                              }}
+                              title="Revoke link"
+                            >
+                              <Ban size={13} />
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            style={styles.reminderActionButton}
                             disabled={shareManagerBusy}
                             onClick={() => {
                               if (
                                 window.confirm(
-                                  "Remove this revoked share from Share Management? This cannot be undone.",
+                                  "Remove this link from Share Management? This only removes it from your manager; it does not revoke the server link.",
                                 )
                               ) {
                                 removeShareFromManagerOnly(link);
                               }
                             }}
-                            title="Remove revoked link"
+                            title="Remove from manager"
                           >
-                            <Trash2 size={13} />
+                            <X size={13} />
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            style={{
-                              ...styles.reminderActionButton,
-                              ...styles.reminderDeleteButton,
-                            }}
-                            disabled={shareManagerBusy}
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  "Revoke this share link? Anyone using it will lose access.",
-                                )
-                              ) {
-                                revokeSharedLink(link);
-                              }
-                            }}
-                            title="Revoke link"
-                          >
-                            <Ban size={13} />
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          style={styles.reminderActionButton}
-                          disabled={shareManagerBusy}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                "Remove this link from Share Management? This only removes it from your manager; it does not revoke the server link.",
-                              )
-                            ) {
-                              removeShareFromManagerOnly(link);
-                            }
-                          }}
-                          title="Remove from manager"
-                        >
-                          <X size={13} />
-                        </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <div style={styles.importFooter}>
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={closeShareManager}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showShareModal && selected && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 560,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={closeShareModal}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>SHARE NOTE</div>
-
-            <h2 style={styles.formTitle}>
-              Share “{selected.title || "Untitled note"}”
-            </h2>
-
-            <p style={styles.copy}>
-              Share only this note. Your main Notes vault remains private.
-            </p>
-
-            <div style={styles.shareOptionGroup}>
-              <div style={styles.importSectionTitle}>Access</div>
-
-              <label style={styles.shareOption}>
-                <input
-                  type="radio"
-                  name="share-access"
-                  value="link"
-                  checked={shareAccess === "link"}
-                  onChange={() => setShareAccess("link")}
-                />
-                <span>
-                  <strong>Anyone with the link</strong>
-                  <span style={styles.shareOptionDetail}>
-                    The recipient can open this note only.
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            <div style={styles.shareOptionGroup}>
-              <div style={styles.importSectionTitle}>Permission</div>
-
-              <label style={styles.shareOption}>
-                <input
-                  type="radio"
-                  name="share-permission"
-                  value="read-only"
-                  checked={sharePermission === "read-only"}
-                  onChange={() => setSharePermission("read-only")}
-                />
-                <span>
-                  <strong>Read only</strong>
-                  <span style={styles.shareOptionDetail}>
-                    Recipients cannot edit the note.
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            <div style={styles.shareOptionGroup}>
-              <div style={styles.importSectionTitle}>Expires</div>
-
-              <select
-                value={shareExpiration}
-                onChange={(e) => setShareExpiration(e.target.value)}
-                style={styles.input}
-              >
-                <option value="never">Never</option>
-                <option value="1h">In 1 hour</option>
-                <option value="1d">In 1 day</option>
-                <option value="7d">In 7 days</option>
-                <option value="30d">In 30 days</option>
-              </select>
-            </div>
-
-            <div style={styles.shareSecurityNotice}>
-              <ShieldCheck size={15} />
-              <span>
-                Sharing will use a separate encrypted share record, not your
-                vault password.
-              </span>
-            </div>
-
-            <div style={styles.shareExpiryPreview}>
-              <Clock3 size={13} />
-              <span>
-                {shareCreated
-                  ? formatShareCountdown(
-                      sharedLinks.find(
-                        (link) =>
-                          link.shareId ===
-                          shareUrl.split("/share/")[1]?.split("#")[0],
-                      )?.expiresAt || null,
-                    )
-                  : shareExpiration === "never"
-                    ? "Never expires"
-                    : `Link will expire ${
-                        shareExpiration === "1h"
-                          ? "in 1 hour"
-                          : shareExpiration === "1d"
-                            ? "in 1 day"
-                            : shareExpiration === "7d"
-                              ? "in 7 days"
-                              : "in 30 days"
-                      }`}
-              </span>
-            </div>
-
-            {shareCreated && shareUrl && (
-              <div style={styles.shareCreatedBox}>
-                <div style={styles.shareCreatedLabel}>
-                  Secure read-only link
+                    );
+                  })}
                 </div>
-                <input
-                  readOnly
-                  value={shareUrl}
-                  style={styles.shareLinkInput}
-                  onFocus={(e) => e.target.select()}
-                />
+              )}
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <div style={styles.importFooter}>
                 <button
                   type="button"
-                  style={styles.secondaryFullButton}
-                  onClick={copyShareUrl}
+                  style={styles.primaryButton}
+                  onClick={closeShareManager}
                 >
-                  {shareCopied ? "Copied" : "Copy share link"}
+                  Done
                 </button>
-                <div style={styles.shareCreatedHint}>
-                  The encryption key is kept in the URL fragment and is never
-                  sent to the server.
-                </div>
               </div>
-            )}
+            </div>
+          </div>
+        )}
 
-            {error && <div style={styles.error}>{error}</div>}
-
-            <div style={styles.importFooter}>
+        {showShareModal && selected && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 560,
+              }}
+            >
               <button
                 type="button"
-                style={styles.linkButton}
+                style={styles.modalClose}
                 onClick={closeShareModal}
               >
-                Cancel
+                <X size={17} />
               </button>
 
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={prepareShareLink}
-                disabled={
-                  shareBusy || Boolean(selected?.trashed || selected?.archived)
-                }
-              >
-                <Share2 size={14} />
-                {shareBusy
-                  ? "Creating…"
-                  : shareCreated
-                    ? "Create another link"
-                    : "Create secure link"}
-              </button>
+              <div style={styles.detailEyebrow}>SHARE NOTE</div>
+
+              <h2 style={styles.formTitle}>
+                Share “{selected.title || "Untitled note"}”
+              </h2>
+
+              <p style={styles.copy}>
+                Share only this note. Your main Notes vault remains private.
+              </p>
+
+              <div style={styles.shareOptionGroup}>
+                <div style={styles.importSectionTitle}>Access</div>
+
+                <label style={styles.shareOption}>
+                  <input
+                    type="radio"
+                    name="share-access"
+                    value="link"
+                    checked={shareAccess === "link"}
+                    onChange={() => setShareAccess("link")}
+                  />
+                  <span>
+                    <strong>Anyone with the link</strong>
+                    <span style={styles.shareOptionDetail}>
+                      The recipient can open this note only.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div style={styles.shareOptionGroup}>
+                <div style={styles.importSectionTitle}>Permission</div>
+
+                <label style={styles.shareOption}>
+                  <input
+                    type="radio"
+                    name="share-permission"
+                    value="read-only"
+                    checked={sharePermission === "read-only"}
+                    onChange={() => setSharePermission("read-only")}
+                  />
+                  <span>
+                    <strong>Read only</strong>
+                    <span style={styles.shareOptionDetail}>
+                      Recipients cannot edit the note.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div style={styles.shareOptionGroup}>
+                <div style={styles.importSectionTitle}>Expires</div>
+
+                <select
+                  value={shareExpiration}
+                  onChange={(e) => setShareExpiration(e.target.value)}
+                  style={styles.input}
+                >
+                  <option value="never">Never</option>
+                  <option value="1h">In 1 hour</option>
+                  <option value="1d">In 1 day</option>
+                  <option value="7d">In 7 days</option>
+                  <option value="30d">In 30 days</option>
+                </select>
+              </div>
+
+              <div style={styles.shareSecurityNotice}>
+                <ShieldCheck size={15} />
+                <span>
+                  Sharing will use a separate encrypted share record, not your
+                  vault password.
+                </span>
+              </div>
+
+              <div style={styles.shareExpiryPreview}>
+                <Clock3 size={13} />
+                <span>
+                  {shareCreated
+                    ? formatShareCountdown(
+                        sharedLinks.find(
+                          (link) =>
+                            link.shareId ===
+                            shareUrl.split("/share/")[1]?.split("#")[0],
+                        )?.expiresAt || null,
+                      )
+                    : shareExpiration === "never"
+                      ? "Never expires"
+                      : `Link will expire ${
+                          shareExpiration === "1h"
+                            ? "in 1 hour"
+                            : shareExpiration === "1d"
+                              ? "in 1 day"
+                              : shareExpiration === "7d"
+                                ? "in 7 days"
+                                : "in 30 days"
+                        }`}
+                </span>
+              </div>
+
+              {shareCreated && shareUrl && (
+                <div style={styles.shareCreatedBox}>
+                  <div style={styles.shareCreatedLabel}>
+                    Secure read-only link
+                  </div>
+                  <input
+                    readOnly
+                    value={shareUrl}
+                    style={styles.shareLinkInput}
+                    onFocus={(e) => e.target.select()}
+                  />
+                  <button
+                    type="button"
+                    style={styles.secondaryFullButton}
+                    onClick={copyShareUrl}
+                  >
+                    {shareCopied ? "Copied" : "Copy share link"}
+                  </button>
+                  <div style={styles.shareCreatedHint}>
+                    The encryption key is kept in the URL fragment and is never
+                    sent to the server.
+                  </div>
+                </div>
+              )}
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.linkButton}
+                  onClick={closeShareModal}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={prepareShareLink}
+                  disabled={
+                    shareBusy ||
+                    Boolean(selected?.trashed || selected?.archived)
+                  }
+                >
+                  <Share2 size={14} />
+                  {shareBusy
+                    ? "Creating…"
+                    : shareCreated
+                      ? "Create another link"
+                      : "Create secure link"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {showSaveViewDialog && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 420,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowSaveViewDialog(false);
-                setSavedViewEditingId(null);
-                setSavedViewName("");
+        {showSaveViewDialog && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 420,
               }}
-              title="Close"
             >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>SAVED VIEW</div>
-
-            <h2 style={styles.formTitle}>Save current view</h2>
-
-            <div style={styles.savedViewDialogHint}>
-              Saves the current search, filters, folder, Favorites,
-              archive/trash view, and sort order.
-            </div>
-
-            <label style={styles.label}>View name</label>
-
-            <input
-              autoFocus
-              value={savedViewName}
-              onChange={(event) => setSavedViewName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  saveCurrentSearchView();
-                }
-              }}
-              placeholder="e.g. Important work"
-              style={styles.input}
-            />
-
-            <div style={styles.importFooter}>
               <button
                 type="button"
-                style={styles.secondaryButton}
-                onClick={() => setShowSaveViewDialog(false)}
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={saveCurrentSearchView}
-              >
-                <Bookmark size={13} />
-                {savedViewEditingId ? "Save name" : "Save view"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showImportModal && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 820,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowImportModal(false);
-                setImportPreview([]);
-                setImportSelectedIds([]);
-              }}
-              disabled={importBusy}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>IMPORT NOTES</div>
-
-            <h2 style={styles.formTitle}>Import notes</h2>
-
-            <p style={styles.copy}>
-              {importFileName || "Selected file"} · {importFormat.toUpperCase()}{" "}
-              · {importPreview.length} note
-              {importPreview.length === 1 ? "" : "s"}
-            </p>
-
-            <div style={styles.importStats}>
-              <span style={styles.importStatNew}>✓ {importNewCount} new</span>
-              <span
-                style={{
-                  ...styles.importStatDuplicate,
-                  ...(importDuplicateCount === 0 ? styles.importStatZero : {}),
-                }}
-              >
-                {importDuplicateCount > 0 ? "⚠" : "✓"} {importDuplicateCount}{" "}
-                duplicate
-                {importDuplicateCount === 1 ? "" : "s"}
-              </span>
-              <span style={styles.importStatSelected}>
-                {importSelectedCount} selected
-              </span>
-            </div>
-
-            <div style={styles.importDuplicateBox}>
-              <div style={styles.importSectionTitle}>Duplicate handling</div>
-
-              <label style={styles.importRadio}>
-                <input
-                  type="radio"
-                  name="import-duplicate-mode"
-                  checked={importDuplicateMode === "skip"}
-                  onChange={() => setImportDuplicateMode("skip")}
-                />
-                <span>
-                  <strong>Skip duplicates</strong>
-                  <span style={styles.importRadioText}>
-                    <span style={styles.importRadioDetail}>
-                      Recommended · keeps existing notes
-                    </span>
-                  </span>
-                </span>
-              </label>
-
-              <label style={styles.importRadio}>
-                <input
-                  type="radio"
-                  name="import-duplicate-mode"
-                  checked={importDuplicateMode === "keep"}
-                  onChange={() => setImportDuplicateMode("keep")}
-                />
-                <span>
-                  <strong>Keep both</strong>
-                  <span style={styles.importRadioText}>
-                    <span style={styles.importRadioDetail}>
-                      Imports everything as a new note
-                    </span>
-                  </span>
-                </span>
-              </label>
-
-              <label style={styles.importRadio}>
-                <input
-                  type="radio"
-                  name="import-duplicate-mode"
-                  checked={importDuplicateMode === "replace"}
-                  onChange={() => setImportDuplicateMode("replace")}
-                />
-                <span>
-                  <strong>Replace existing</strong>
-                  <span style={styles.importRadioText}>
-                    <span style={styles.importRadioDetail}>
-                      Match by title + content
-                    </span>
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            <div style={styles.importPreviewHeader}>
-              <span>Preview</span>
-
-              <button
-                type="button"
-                style={styles.linkButton}
+                style={styles.modalClose}
                 onClick={() => {
-                  const all = importPreview.map((note) => note.id);
-
-                  setImportSelectedIds(
-                    importSelectedIds.length === all.length ? [] : all,
-                  );
+                  setShowSaveViewDialog(false);
+                  setSavedViewEditingId(null);
+                  setSavedViewName("");
                 }}
+                title="Close"
               >
-                {importSelectedIds.length === importPreview.length
-                  ? "Clear all"
-                  : "Select all"}
+                <X size={17} />
               </button>
+
+              <div style={styles.detailEyebrow}>SAVED VIEW</div>
+
+              <h2 style={styles.formTitle}>Save current view</h2>
+
+              <div style={styles.savedViewDialogHint}>
+                Saves the current search, filters, folder, Favorites,
+                archive/trash view, and sort order.
+              </div>
+
+              <label style={styles.label}>View name</label>
+
+              <input
+                autoFocus
+                value={savedViewName}
+                onChange={(event) => setSavedViewName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    saveCurrentSearchView();
+                  }
+                }}
+                placeholder="e.g. Important work"
+                style={styles.input}
+              />
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={() => setShowSaveViewDialog(false)}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={saveCurrentSearchView}
+                >
+                  <Bookmark size={13} />
+                  {savedViewEditingId ? "Save name" : "Save view"}
+                </button>
+              </div>
             </div>
+          </div>
+        )}
 
-            <div style={styles.importPreviewList}>
-              {importPreview.map((note) => {
-                const checked = importSelectedIds.includes(note.id);
-
-                return (
-                  <label key={note.id} style={styles.importPreviewRow}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => {
-                        setImportSelectedIds((current) =>
-                          current.includes(note.id)
-                            ? current.filter((id) => id !== note.id)
-                            : [...current, note.id],
-                        );
-                      }}
-                    />
-
-                    <div style={styles.importPreviewText}>
-                      <strong>{note.title}</strong>
-
-                      <span>
-                        {String(note.content || "")
-                          .replace(/\s+/g, " ")
-                          .slice(0, 100) || "Empty note"}
-                      </span>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <div style={styles.importFooter}>
+        {showImportModal && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 820,
+              }}
+            >
               <button
                 type="button"
-                style={styles.linkButton}
+                style={styles.modalClose}
                 onClick={() => {
                   setShowImportModal(false);
                   setImportPreview([]);
                   setImportSelectedIds([]);
-                  setError("");
                 }}
                 disabled={importBusy}
               >
-                Cancel
+                <X size={17} />
               </button>
 
-              <button
-                type="button"
-                style={styles.primaryButton}
-                onClick={handleImportNotes}
-                disabled={importBusy || importSelectedIds.length === 0}
-              >
-                {importBusy
-                  ? "Importing…"
-                  : `Import ${Math.max(
-                      0,
-                      importSelectedCount -
-                        (importDuplicateMode === "skip"
-                          ? importPreview.filter(
-                              (note) =>
-                                importSelectedIds.includes(note.id) &&
-                                notes.some(
-                                  (existing) =>
-                                    String(existing.title || "")
-                                      .trim()
-                                      .toLowerCase() ===
-                                      String(note.title || "")
-                                        .trim()
-                                        .toLowerCase() &&
-                                    String(existing.content || "").trim() ===
-                                      String(note.content || "").trim(),
-                                ),
-                            ).length
-                          : 0),
-                    )} note${
-                      Math.max(
+              <div style={styles.detailEyebrow}>IMPORT NOTES</div>
+
+              <h2 style={styles.formTitle}>Import notes</h2>
+
+              <p style={styles.copy}>
+                {importFileName || "Selected file"} ·{" "}
+                {importFormat.toUpperCase()} · {importPreview.length} note
+                {importPreview.length === 1 ? "" : "s"}
+              </p>
+
+              <div style={styles.importStats}>
+                <span style={styles.importStatNew}>✓ {importNewCount} new</span>
+                <span
+                  style={{
+                    ...styles.importStatDuplicate,
+                    ...(importDuplicateCount === 0
+                      ? styles.importStatZero
+                      : {}),
+                  }}
+                >
+                  {importDuplicateCount > 0 ? "⚠" : "✓"} {importDuplicateCount}{" "}
+                  duplicate
+                  {importDuplicateCount === 1 ? "" : "s"}
+                </span>
+                <span style={styles.importStatSelected}>
+                  {importSelectedCount} selected
+                </span>
+              </div>
+
+              <div style={styles.importDuplicateBox}>
+                <div style={styles.importSectionTitle}>Duplicate handling</div>
+
+                <label style={styles.importRadio}>
+                  <input
+                    type="radio"
+                    name="import-duplicate-mode"
+                    checked={importDuplicateMode === "skip"}
+                    onChange={() => setImportDuplicateMode("skip")}
+                  />
+                  <span>
+                    <strong>Skip duplicates</strong>
+                    <span style={styles.importRadioText}>
+                      <span style={styles.importRadioDetail}>
+                        Recommended · keeps existing notes
+                      </span>
+                    </span>
+                  </span>
+                </label>
+
+                <label style={styles.importRadio}>
+                  <input
+                    type="radio"
+                    name="import-duplicate-mode"
+                    checked={importDuplicateMode === "keep"}
+                    onChange={() => setImportDuplicateMode("keep")}
+                  />
+                  <span>
+                    <strong>Keep both</strong>
+                    <span style={styles.importRadioText}>
+                      <span style={styles.importRadioDetail}>
+                        Imports everything as a new note
+                      </span>
+                    </span>
+                  </span>
+                </label>
+
+                <label style={styles.importRadio}>
+                  <input
+                    type="radio"
+                    name="import-duplicate-mode"
+                    checked={importDuplicateMode === "replace"}
+                    onChange={() => setImportDuplicateMode("replace")}
+                  />
+                  <span>
+                    <strong>Replace existing</strong>
+                    <span style={styles.importRadioText}>
+                      <span style={styles.importRadioDetail}>
+                        Match by title + content
+                      </span>
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              <div style={styles.importPreviewHeader}>
+                <span>Preview</span>
+
+                <button
+                  type="button"
+                  style={styles.linkButton}
+                  onClick={() => {
+                    const all = importPreview.map((note) => note.id);
+
+                    setImportSelectedIds(
+                      importSelectedIds.length === all.length ? [] : all,
+                    );
+                  }}
+                >
+                  {importSelectedIds.length === importPreview.length
+                    ? "Clear all"
+                    : "Select all"}
+                </button>
+              </div>
+
+              <div style={styles.importPreviewList}>
+                {importPreview.map((note) => {
+                  const checked = importSelectedIds.includes(note.id);
+
+                  return (
+                    <label key={note.id} style={styles.importPreviewRow}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setImportSelectedIds((current) =>
+                            current.includes(note.id)
+                              ? current.filter((id) => id !== note.id)
+                              : [...current, note.id],
+                          );
+                        }}
+                      />
+
+                      <div style={styles.importPreviewText}>
+                        <strong>{note.title}</strong>
+
+                        <span>
+                          {String(note.content || "")
+                            .replace(/\s+/g, " ")
+                            .slice(0, 100) || "Empty note"}
+                        </span>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.linkButton}
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportPreview([]);
+                    setImportSelectedIds([]);
+                    setError("");
+                  }}
+                  disabled={importBusy}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  style={styles.primaryButton}
+                  onClick={handleImportNotes}
+                  disabled={importBusy || importSelectedIds.length === 0}
+                >
+                  {importBusy
+                    ? "Importing…"
+                    : `Import ${Math.max(
                         0,
                         importSelectedCount -
                           (importDuplicateMode === "skip"
@@ -8826,1131 +9921,1222 @@ export default function NotesView({ vault, onVaultChange }) {
                                   ),
                               ).length
                             : 0),
-                      ) === 1
-                        ? ""
-                        : "s"
-                    }`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showReminderHistory && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 760,
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => setShowReminderHistory(false)}
-              aria-label="Close reminder history"
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.detailEyebrow}>REMINDER HISTORY</div>
-
-            <h2 style={styles.formTitle}>Reminder History</h2>
-
-            <p style={styles.copy}>Recent Telegram reminder activity.</p>
-
-            <p style={styles.copy}>Recent Telegram reminder activity.</p>
-
-            <div style={styles.historyControls}>
-              <div style={styles.historySearch}>
-                <Search size={14} color="#626873" />
-                <input
-                  value={reminderHistoryQuery}
-                  onChange={(e) => setReminderHistoryQuery(e.target.value)}
-                  placeholder="Search history…"
-                  style={styles.historySearchInput}
-                />
-              </div>
-
-              <div style={styles.historyFilters}>
-                {[
-                  ["all", "All"],
-                  ["sent", "Sent"],
-                  ["snoozed", "Snoozed"],
-                  ["failed", "Failed"],
-                  ["cancelled", "Cancelled"],
-                  ["scheduled", "Scheduled"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    style={{
-                      ...styles.historyFilterButton,
-                      ...(reminderHistoryFilter === value
-                        ? styles.historyFilterButtonActive
-                        : {}),
-                    }}
-                    onClick={() => setReminderHistoryFilter(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
+                      )} note${
+                        Math.max(
+                          0,
+                          importSelectedCount -
+                            (importDuplicateMode === "skip"
+                              ? importPreview.filter(
+                                  (note) =>
+                                    importSelectedIds.includes(note.id) &&
+                                    notes.some(
+                                      (existing) =>
+                                        String(existing.title || "")
+                                          .trim()
+                                          .toLowerCase() ===
+                                          String(note.title || "")
+                                            .trim()
+                                            .toLowerCase() &&
+                                        String(
+                                          existing.content || "",
+                                        ).trim() ===
+                                          String(note.content || "").trim(),
+                                    ),
+                                ).length
+                              : 0),
+                        ) === 1
+                          ? ""
+                          : "s"
+                      }`}
+                </button>
               </div>
             </div>
-
-            {reminderHistoryLoading ? (
-              <div style={styles.historyState}>Loading history…</div>
-            ) : reminderHistoryError ? (
-              <div style={styles.error}>{reminderHistoryError}</div>
-            ) : reminderHistory.length === 0 ? (
-              <div style={styles.reminderCenterEmpty}>
-                <Bell size={26} />
-                <strong>No reminder history yet</strong>
-                <span>
-                  Sent, snoozed and failed reminder activity will appear here.
-                </span>
-              </div>
-            ) : filteredReminderHistory.length === 0 ? (
-              <div style={styles.reminderCenterEmpty}>
-                <Bell size={26} />
-                <strong>No matching history</strong>
-                <span>Try another search or filter.</span>
-              </div>
-            ) : (
-              <div style={styles.historyList}>
-                {filteredReminderHistory.map((item) => {
-                  const date = new Date(item.created_at);
-
-                  const symbol =
-                    item.action === "sent"
-                      ? "✓"
-                      : item.action === "snoozed"
-                        ? "◷"
-                        : item.action === "failed"
-                          ? "!"
-                          : item.action === "cancelled"
-                            ? "×"
-                            : item.action === "paused"
-                              ? "Ⅱ"
-                              : item.action === "resumed"
-                                ? "▶"
-                                : "•";
-
-                  return (
-                    <div key={item.id} style={styles.historyRow}>
-                      <div
-                        style={{
-                          ...styles.historyIcon,
-                          ...(item.action === "failed"
-                            ? styles.historyIconFailed
-                            : item.action === "cancelled"
-                              ? styles.historyIconCancelled
-                              : {}),
-                        }}
-                      >
-                        {symbol}
-                      </div>
-
-                      <div style={styles.historyBody}>
-                        <div style={styles.historyTitle}>
-                          <strong>{item.title || "Untitled reminder"}</strong>
-
-                          <span style={styles.historyAction}>
-                            {String(item.action || "updated")
-                              .charAt(0)
-                              .toUpperCase() +
-                              String(item.action || "updated").slice(1)}
-                          </span>
-                        </div>
-
-                        <div style={styles.historyMeta}>
-                          {Number.isNaN(date.getTime())
-                            ? "Unknown time"
-                            : date.toLocaleString(undefined, {
-                                dateStyle: "medium",
-                                timeStyle: "short",
-                              })}
-
-                          {item.detail ? ` · ${item.detail}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <button
-              type="button"
-              style={styles.secondaryFullButton}
-              onClick={loadReminderHistory}
-              disabled={reminderHistoryLoading}
-            >
-              Refresh history
-            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {showReminderCenter && (
-        <div style={styles.overlay}>
-          <div
-            style={{
-              ...styles.formModal,
-              maxWidth: 760,
-              width: "min(760px, calc(100vw - 32px))",
-            }}
-          >
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowReminderCenter(false);
-                setReminderQuery("");
-                setReminderFilter("all");
-                setReminderSort("soonest");
+        {showReminderHistory && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 760,
               }}
             >
-              <X size={17} />
-            </button>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowReminderHistory(false)}
+                aria-label="Close reminder history"
+              >
+                <X size={17} />
+              </button>
 
-            <div style={styles.detailEyebrow}>REMINDER CENTER</div>
+              <div style={styles.detailEyebrow}>REMINDER HISTORY</div>
 
-            <h2 style={styles.formTitle}>Reminders</h2>
+              <h2 style={styles.formTitle}>Reminder History</h2>
 
-            <p style={styles.copy}>
-              View and manage all your upcoming note reminders.
-            </p>
+              <p style={styles.copy}>Recent Telegram reminder activity.</p>
 
-            {error && <div style={styles.error}>{error}</div>}
+              <p style={styles.copy}>Recent Telegram reminder activity.</p>
 
-            {reminderCenterItems.length > 0 && (
-              <>
-                <div style={styles.reminderCenterSearch}>
-                  <Search size={14} color="#69717B" />
+              <div style={styles.historyControls}>
+                <div style={styles.historySearch}>
+                  <Search size={14} color="#626873" />
                   <input
-                    value={reminderQuery}
-                    onChange={(e) => setReminderQuery(e.target.value)}
-                    placeholder="Search reminders…"
-                    style={styles.reminderCenterSearchInput}
+                    value={reminderHistoryQuery}
+                    onChange={(e) => setReminderHistoryQuery(e.target.value)}
+                    placeholder="Search history…"
+                    style={styles.historySearchInput}
                   />
-                  {reminderQuery && (
+                </div>
+
+                <div style={styles.historyFilters}>
+                  {[
+                    ["all", "All"],
+                    ["sent", "Sent"],
+                    ["snoozed", "Snoozed"],
+                    ["failed", "Failed"],
+                    ["cancelled", "Cancelled"],
+                    ["scheduled", "Scheduled"],
+                  ].map(([value, label]) => (
                     <button
+                      key={value}
                       type="button"
-                      style={styles.reminderCenterClearSearch}
-                      onClick={() => setReminderQuery("")}
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-
-                <div style={styles.reminderCenterToolbar}>
-                  <div style={styles.reminderFilterScroll}>
-                    {[
-                      ["all", "All"],
-                      ["today", "Today"],
-                      ["upcoming", "Upcoming"],
-                      ["paused", "Paused"],
-                      ["telegram", "Telegram"],
-                      ["browser", "Browser"],
-                    ].map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        style={{
-                          ...styles.reminderFilterChip,
-                          ...(reminderFilter === value
-                            ? styles.reminderFilterChipActive
-                            : {}),
-                        }}
-                        onClick={() => setReminderFilter(value)}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div style={styles.reminderSortWrap}>
-                    <SlidersHorizontal size={13} color="#69717B" />
-                    <select
-                      value={reminderSort}
-                      onChange={(e) => setReminderSort(e.target.value)}
-                      style={styles.reminderSortSelect}
-                    >
-                      <option value="soonest">Soonest</option>
-                      <option value="latest">Latest</option>
-                      <option value="recurring">Recurring</option>
-                    </select>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {reminderCenterItems.length > 0 &&
-            reminderCenterFilteredItems.length === 0 ? (
-              <div style={styles.reminderCenterEmpty}>
-                <Search size={24} />
-                <strong>No matching reminders</strong>
-                <span>Try another search or filter.</span>
-              </div>
-            ) : null}
-
-            {reminderCenterItems.length === 0 ? (
-              <div style={styles.reminderCenterEmpty}>
-                <CalendarDays size={28} />
-                <strong>No reminders yet</strong>
-                <span>Add a reminder from a note to see it here.</span>
-              </div>
-            ) : (
-              <div style={styles.reminderCenterList}>
-                {reminderCenterFilteredItems.map((note) => {
-                  const date = new Date(note.reminderAt);
-                  const paused = Boolean(note.reminderPaused);
-
-                  return (
-                    <div
-                      key={note.id}
                       style={{
-                        ...styles.reminderCenterRow,
-                        ...(paused ? styles.reminderCenterRowPaused : {}),
+                        ...styles.historyFilterButton,
+                        ...(reminderHistoryFilter === value
+                          ? styles.historyFilterButtonActive
+                          : {}),
                       }}
+                      onClick={() => setReminderHistoryFilter(value)}
                     >
-                      <button
-                        type="button"
-                        style={styles.reminderCenterMain}
-                        onClick={() => openReminderFromCenter(note)}
-                      >
-                        <span style={styles.reminderCenterIcon}>
-                          <CalendarDays size={15} />
-                        </span>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                        <span style={styles.reminderCenterContent}>
-                          <span style={styles.reminderCenterTitle}>
-                            {note.title}
-                          </span>
+              {reminderHistoryLoading ? (
+                <div style={styles.historyState}>Loading history…</div>
+              ) : reminderHistoryError ? (
+                <div style={styles.error}>{reminderHistoryError}</div>
+              ) : reminderHistory.length === 0 ? (
+                <div style={styles.reminderCenterEmpty}>
+                  <Bell size={26} />
+                  <strong>No reminder history yet</strong>
+                  <span>
+                    Sent, snoozed and failed reminder activity will appear here.
+                  </span>
+                </div>
+              ) : filteredReminderHistory.length === 0 ? (
+                <div style={styles.reminderCenterEmpty}>
+                  <Bell size={26} />
+                  <strong>No matching history</strong>
+                  <span>Try another search or filter.</span>
+                </div>
+              ) : (
+                <div style={styles.historyList}>
+                  {filteredReminderHistory.map((item) => {
+                    const date = new Date(item.created_at);
 
-                          <span style={styles.reminderCenterDate}>
+                    const symbol =
+                      item.action === "sent"
+                        ? "✓"
+                        : item.action === "snoozed"
+                          ? "◷"
+                          : item.action === "failed"
+                            ? "!"
+                            : item.action === "cancelled"
+                              ? "×"
+                              : item.action === "paused"
+                                ? "Ⅱ"
+                                : item.action === "resumed"
+                                  ? "▶"
+                                  : "•";
+
+                    return (
+                      <div key={item.id} style={styles.historyRow}>
+                        <div
+                          style={{
+                            ...styles.historyIcon,
+                            ...(item.action === "failed"
+                              ? styles.historyIconFailed
+                              : item.action === "cancelled"
+                                ? styles.historyIconCancelled
+                                : {}),
+                          }}
+                        >
+                          {symbol}
+                        </div>
+
+                        <div style={styles.historyBody}>
+                          <div style={styles.historyTitle}>
+                            <strong>{item.title || "Untitled reminder"}</strong>
+
+                            <span style={styles.historyAction}>
+                              {String(item.action || "updated")
+                                .charAt(0)
+                                .toUpperCase() +
+                                String(item.action || "updated").slice(1)}
+                            </span>
+                          </div>
+
+                          <div style={styles.historyMeta}>
                             {Number.isNaN(date.getTime())
-                              ? "Invalid reminder date"
+                              ? "Unknown time"
                               : date.toLocaleString(undefined, {
                                   dateStyle: "medium",
                                   timeStyle: "short",
                                 })}
-                          </span>
 
-                          <span style={styles.reminderCenterMeta}>
-                            <span style={styles.reminderCenterBadge}>
-                              {note.notifyTelegram ? "Telegram" : "Browser"}
-                            </span>
+                            {item.detail ? ` · ${item.detail}` : ""}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
-                            <span style={styles.reminderCenterBadge}>
-                              {reminderRecurrenceLabel(note)}
-                            </span>
+              <button
+                type="button"
+                style={styles.secondaryFullButton}
+                onClick={loadReminderHistory}
+                disabled={reminderHistoryLoading}
+              >
+                Refresh history
+              </button>
+            </div>
+          </div>
+        )}
 
-                            {paused && (
-                              <span style={styles.reminderPausedBadge}>
-                                Paused
-                              </span>
-                            )}
-                          </span>
-                        </span>
+        {showReminderCenter && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                maxWidth: 760,
+                width: "min(760px, calc(100vw - 32px))",
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowReminderCenter(false);
+                  setReminderQuery("");
+                  setReminderFilter("all");
+                  setReminderSort("soonest");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>REMINDER CENTER</div>
+
+              <h2 style={styles.formTitle}>Reminders</h2>
+
+              <p style={styles.copy}>
+                View and manage all your upcoming note reminders.
+              </p>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              {reminderCenterItems.length > 0 && (
+                <>
+                  <div style={styles.reminderCenterSearch}>
+                    <Search size={14} color="#69717B" />
+                    <input
+                      value={reminderQuery}
+                      onChange={(e) => setReminderQuery(e.target.value)}
+                      placeholder="Search reminders…"
+                      style={styles.reminderCenterSearchInput}
+                    />
+                    {reminderQuery && (
+                      <button
+                        type="button"
+                        style={styles.reminderCenterClearSearch}
+                        onClick={() => setReminderQuery("")}
+                      >
+                        <X size={13} />
                       </button>
+                    )}
+                  </div>
 
-                      <div style={styles.reminderCenterActions}>
+                  <div style={styles.reminderCenterToolbar}>
+                    <div style={styles.reminderFilterScroll}>
+                      {[
+                        ["all", "All"],
+                        ["today", "Today"],
+                        ["upcoming", "Upcoming"],
+                        ["paused", "Paused"],
+                        ["telegram", "Telegram"],
+                        ["browser", "Browser"],
+                      ].map(([value, label]) => (
                         <button
-                          type="button"
-                          style={styles.reminderActionButton}
-                          onClick={() => openEdit(note)}
-                          title="Edit reminder"
-                        >
-                          <Pencil size={14} />
-                        </button>
-
-                        {!paused && note.notifyTelegram && (
-                          <select
-                            defaultValue=""
-                            style={styles.snoozeSelect}
-                            onChange={async (e) => {
-                              const value = e.target.value;
-
-                              if (!value) {
-                                return;
-                              }
-
-                              if (value === "custom") {
-                                const input = window.prompt(
-                                  "Snooze for how many minutes?",
-                                  "30",
-                                );
-
-                                if (input === null) {
-                                  e.target.value = "";
-                                  return;
-                                }
-
-                                const minutes = Number(input);
-
-                                if (
-                                  !Number.isFinite(minutes) ||
-                                  minutes < 1 ||
-                                  minutes > 10080
-                                ) {
-                                  setError(
-                                    "Enter a snooze time between 1 and 10080 minutes.",
-                                  );
-                                  e.target.value = "";
-                                  return;
-                                }
-
-                                await snoozeReminder(note, Math.round(minutes));
-                              } else {
-                                await snoozeReminder(note, Number(value));
-                              }
-
-                              e.target.value = "";
-                            }}
-                            title="Snooze reminder"
-                            aria-label="Snooze reminder"
-                          >
-                            <option value="">Snooze</option>
-                            <option value="5">5 min</option>
-                            <option value="15">15 min</option>
-                            <option value="30">30 min</option>
-                            <option value="60">1 hour</option>
-                            <option value="1440">Tomorrow</option>
-                            <option value="custom">Custom…</option>
-                          </select>
-                        )}
-
-                        <button
-                          type="button"
-                          style={styles.reminderActionButton}
-                          onClick={() =>
-                            paused ? resumeReminder(note) : pauseReminder(note)
-                          }
-                          title={paused ? "Resume reminder" : "Pause reminder"}
-                        >
-                          {paused ? <Play size={14} /> : <Pause size={14} />}
-                        </button>
-
-                        <button
+                          key={value}
                           type="button"
                           style={{
-                            ...styles.reminderActionButton,
-                            ...styles.reminderDeleteButton,
+                            ...styles.reminderFilterChip,
+                            ...(reminderFilter === value
+                              ? styles.reminderFilterChipActive
+                              : {}),
                           }}
-                          onClick={() => cancelReminder(note)}
-                          title="Cancel reminder"
+                          onClick={() => setReminderFilter(value)}
                         >
-                          <Trash2 size={14} />
+                          {label}
                         </button>
-                      </div>
+                      ))}
                     </div>
-                  );
-                })}
+
+                    <div style={styles.reminderSortWrap}>
+                      <SlidersHorizontal size={13} color="#69717B" />
+                      <select
+                        value={reminderSort}
+                        onChange={(e) => setReminderSort(e.target.value)}
+                        style={styles.reminderSortSelect}
+                      >
+                        <option value="soonest">Soonest</option>
+                        <option value="latest">Latest</option>
+                        <option value="recurring">Recurring</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {reminderCenterItems.length > 0 &&
+              reminderCenterFilteredItems.length === 0 ? (
+                <div style={styles.reminderCenterEmpty}>
+                  <Search size={24} />
+                  <strong>No matching reminders</strong>
+                  <span>Try another search or filter.</span>
+                </div>
+              ) : null}
+
+              {reminderCenterItems.length === 0 ? (
+                <div style={styles.reminderCenterEmpty}>
+                  <CalendarDays size={28} />
+                  <strong>No reminders yet</strong>
+                  <span>Add a reminder from a note to see it here.</span>
+                </div>
+              ) : (
+                <div style={styles.reminderCenterList}>
+                  {reminderCenterFilteredItems.map((note) => {
+                    const date = new Date(note.reminderAt);
+                    const paused = Boolean(note.reminderPaused);
+
+                    return (
+                      <div
+                        key={note.id}
+                        style={{
+                          ...styles.reminderCenterRow,
+                          ...(paused ? styles.reminderCenterRowPaused : {}),
+                        }}
+                      >
+                        <button
+                          type="button"
+                          style={styles.reminderCenterMain}
+                          onClick={() => openReminderFromCenter(note)}
+                        >
+                          <span style={styles.reminderCenterIcon}>
+                            <CalendarDays size={15} />
+                          </span>
+
+                          <span style={styles.reminderCenterContent}>
+                            <span style={styles.reminderCenterTitle}>
+                              {note.title}
+                            </span>
+
+                            <span style={styles.reminderCenterDate}>
+                              {Number.isNaN(date.getTime())
+                                ? "Invalid reminder date"
+                                : date.toLocaleString(undefined, {
+                                    dateStyle: "medium",
+                                    timeStyle: "short",
+                                  })}
+                            </span>
+
+                            <span style={styles.reminderCenterMeta}>
+                              <span style={styles.reminderCenterBadge}>
+                                {note.notifyTelegram ? "Telegram" : "Browser"}
+                              </span>
+
+                              <span style={styles.reminderCenterBadge}>
+                                {reminderRecurrenceLabel(note)}
+                              </span>
+
+                              {paused && (
+                                <span style={styles.reminderPausedBadge}>
+                                  Paused
+                                </span>
+                              )}
+                            </span>
+                          </span>
+                        </button>
+
+                        <div style={styles.reminderCenterActions}>
+                          <button
+                            type="button"
+                            style={styles.reminderActionButton}
+                            onClick={() => openEdit(note)}
+                            title="Edit reminder"
+                          >
+                            <Pencil size={14} />
+                          </button>
+
+                          {!paused && note.notifyTelegram && (
+                            <select
+                              defaultValue=""
+                              style={styles.snoozeSelect}
+                              onChange={async (e) => {
+                                const value = e.target.value;
+
+                                if (!value) {
+                                  return;
+                                }
+
+                                if (value === "custom") {
+                                  const input = window.prompt(
+                                    "Snooze for how many minutes?",
+                                    "30",
+                                  );
+
+                                  if (input === null) {
+                                    e.target.value = "";
+                                    return;
+                                  }
+
+                                  const minutes = Number(input);
+
+                                  if (
+                                    !Number.isFinite(minutes) ||
+                                    minutes < 1 ||
+                                    minutes > 10080
+                                  ) {
+                                    setError(
+                                      "Enter a snooze time between 1 and 10080 minutes.",
+                                    );
+                                    e.target.value = "";
+                                    return;
+                                  }
+
+                                  await snoozeReminder(
+                                    note,
+                                    Math.round(minutes),
+                                  );
+                                } else {
+                                  await snoozeReminder(note, Number(value));
+                                }
+
+                                e.target.value = "";
+                              }}
+                              title="Snooze reminder"
+                              aria-label="Snooze reminder"
+                            >
+                              <option value="">Snooze</option>
+                              <option value="5">5 min</option>
+                              <option value="15">15 min</option>
+                              <option value="30">30 min</option>
+                              <option value="60">1 hour</option>
+                              <option value="1440">Tomorrow</option>
+                              <option value="custom">Custom…</option>
+                            </select>
+                          )}
+
+                          <button
+                            type="button"
+                            style={styles.reminderActionButton}
+                            onClick={() =>
+                              paused
+                                ? resumeReminder(note)
+                                : pauseReminder(note)
+                            }
+                            title={
+                              paused ? "Resume reminder" : "Pause reminder"
+                            }
+                          >
+                            {paused ? <Play size={14} /> : <Pause size={14} />}
+                          </button>
+
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.reminderActionButton,
+                              ...styles.reminderDeleteButton,
+                            }}
+                            onClick={() => cancelReminder(note)}
+                            title="Cancel reminder"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              <button
+                type="button"
+                style={styles.secondaryFullButton}
+                onClick={() => {
+                  setShowReminderCenter(false);
+                  setEditing(null);
+                  setForm({
+                    title: "",
+                    content: "",
+                  });
+                  setFormTags([]);
+                  setFormReminder("");
+                  setFormNotifyTelegram(false);
+                  setShowForm(true);
+                  setError("");
+                }}
+              >
+                <Plus size={15} />
+                New note
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showTelegramConnect && (
+          <div style={styles.overlay}>
+            <div style={styles.smallFormModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowTelegramConnect(false);
+                  setTelegramConnectUrl("");
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <Bell size={22} />
               </div>
-            )}
 
-            <button
-              type="button"
-              style={styles.secondaryFullButton}
-              onClick={() => {
-                setShowReminderCenter(false);
-                setEditing(null);
-                setForm({
-                  title: "",
-                  content: "",
-                });
-                setFormTags([]);
-                setFormReminder("");
-                setFormNotifyTelegram(false);
-                setShowForm(true);
-                setError("");
-              }}
-            >
-              <Plus size={15} />
-              New note
-            </button>
-          </div>
-        </div>
-      )}
+              <div style={styles.detailEyebrow}>TELEGRAM CONNECTION</div>
+
+              <h2 style={styles.formTitle}>
+                {telegramConnected ? "Telegram connected" : "Connect Telegram"}
+              </h2>
+
+              {telegramConnected ? (
+                <>
+                  <p style={styles.copy}>
+                    Pocket can send Notes reminders to your Telegram chat.
+                  </p>
+
+                  {telegramUsername && (
+                    <div style={styles.telegramConnectedCard}>
+                      <Bell size={15} />
+                      <span>
+                        Connected as <strong>{telegramUsername}</strong>
+                      </span>
+                    </div>
+                  )}
 
-      {showTelegramConnect && (
-        <div style={styles.overlay}>
-          <div style={styles.smallFormModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowTelegramConnect(false);
-                setTelegramConnectUrl("");
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <Bell size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>TELEGRAM CONNECTION</div>
-
-            <h2 style={styles.formTitle}>
-              {telegramConnected ? "Telegram connected" : "Connect Telegram"}
-            </h2>
-
-            {telegramConnected ? (
-              <>
-                <p style={styles.copy}>
-                  Pocket can send Notes reminders to your Telegram chat.
-                </p>
-
-                {telegramUsername && (
-                  <div style={styles.telegramConnectedCard}>
-                    <Bell size={15} />
-                    <span>
-                      Connected as <strong>{telegramUsername}</strong>
-                    </span>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  onClick={disconnectTelegram}
-                >
-                  Disconnect Telegram
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={styles.telegramSteps}>
-                  <div style={styles.telegramStep}>
-                    <span style={styles.telegramStepNumber}>1</span>
-                    <span>Open the Pocket Telegram bot.</span>
-                  </div>
-
-                  <div style={styles.telegramStep}>
-                    <span style={styles.telegramStepNumber}>2</span>
-                    <span>
-                      Press <strong>Start</strong> in Telegram.
-                    </span>
-                  </div>
-
-                  <div style={styles.telegramStep}>
-                    <span style={styles.telegramStepNumber}>3</span>
-                    <span>Return to Pocket and press Check connection.</span>
-                  </div>
-                </div>
-
-                {error && <div style={styles.error}>{error}</div>}
-
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  disabled={!telegramConnectUrl}
-                  onClick={() => {
-                    if (telegramConnectUrl) {
-                      window.open(
-                        telegramConnectUrl,
-                        "_blank",
-                        "noopener,noreferrer",
-                      );
-                    }
-                  }}
-                >
-                  Open Telegram
-                </button>
-
-                <button
-                  type="button"
-                  style={styles.secondaryFullButton}
-                  onClick={async () => {
-                    const connected = await checkTelegramConnection();
-
-                    if (!connected) {
-                      setError(
-                        "Telegram is not connected yet. Press Start in the bot, then check again.",
-                      );
-                    } else {
-                      setError("");
-                    }
-                  }}
-                >
-                  Check connection
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {showRecoverySetup && (
-        <div style={styles.overlay}>
-          <div style={styles.formModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowRecoverySetup(false);
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <Fingerprint size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
-
-            <h2 style={styles.formTitle}>Enable passkey recovery</h2>
-
-            <p style={styles.copy}>
-              Your existing Pocket passkey will protect a recovery copy of the
-              notes vault encryption key.
-            </p>
-
-            <div style={styles.notice}>
-              <ShieldCheck size={16} />
-              <span>
-                Your notes never leave the encrypted vault. Passkey recovery
-                only protects the vault encryption key.
-              </span>
-            </div>
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <button
-              type="button"
-              style={styles.primaryButton}
-              disabled={recoveryBusy}
-              onClick={enablePasskeyRecovery}
-            >
-              {recoveryBusy ? "Waiting for passkey…" : "Continue with passkey"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {recoveryMode === "reset" && (
-        <div style={styles.overlay}>
-          <div style={styles.formModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setRecoveryMode(null);
-                setRecoveryNewPassword("");
-                setRecoveryConfirmPassword("");
-                recoveredDataKeyRef.current = null;
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <Fingerprint size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
-
-            <h2 style={styles.formTitle}>Reset notes password</h2>
-
-            <p style={styles.copy}>
-              Your passkey verified your identity. Choose a new password for
-              your existing notes vault.
-            </p>
-
-            <label style={styles.label}>New vault password</label>
-
-            <input
-              type="password"
-              value={recoveryNewPassword}
-              onChange={(e) => setRecoveryNewPassword(e.target.value)}
-              placeholder="At least 12 characters"
-              style={styles.input}
-              autoFocus
-            />
-
-            <label style={styles.label}>Confirm new password</label>
-
-            <input
-              type="password"
-              value={recoveryConfirmPassword}
-              onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
-              placeholder="Enter the new password again"
-              style={styles.input}
-            />
-
-            <div style={styles.notice}>
-              <ShieldCheck size={16} />
-              <span>
-                Your old notes password is not required after passkey
-                verification.
-              </span>
-            </div>
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <button
-              type="button"
-              style={styles.primaryButton}
-              disabled={recoveryBusy}
-              onClick={finishForgotPasswordRecovery}
-            >
-              {recoveryBusy ? "Resetting password…" : "Set new vault password"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showChangePassword && (
-        <div style={styles.overlay}>
-          <div style={styles.formModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowChangePassword(false);
-                setCurrentVaultPassword("");
-                setNewVaultPassword("");
-                setConfirmNewVaultPassword("");
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <ShieldCheck size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>PRIVATE NOTES</div>
-
-            <h2 style={styles.formTitle}>Change vault password</h2>
-
-            <p style={styles.copy}>
-              Your notes will remain encrypted while the vault protection is
-              changed.
-            </p>
-
-            <label style={styles.label}>Current vault password</label>
-
-            <input
-              type="password"
-              value={currentVaultPassword}
-              onChange={(e) => setCurrentVaultPassword(e.target.value)}
-              placeholder="Current password"
-              style={styles.input}
-              autoFocus
-            />
-
-            <label style={styles.label}>New vault password</label>
-
-            <input
-              type="password"
-              value={newVaultPassword}
-              onChange={(e) => setNewVaultPassword(e.target.value)}
-              placeholder="At least 12 characters"
-              style={styles.input}
-            />
-
-            <label style={styles.label}>Confirm new password</label>
-
-            <input
-              type="password"
-              value={confirmNewVaultPassword}
-              onChange={(e) => setConfirmNewVaultPassword(e.target.value)}
-              placeholder="Enter the new password again"
-              style={styles.input}
-            />
-
-            <div style={styles.notice}>
-              <ShieldCheck size={16} />
-              <span>
-                Your notes stay encrypted. Only the vault key protection is
-                changed.
-              </span>
-            </div>
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <button
-              type="button"
-              style={styles.primaryButton}
-              disabled={changePasswordBusy}
-              onClick={changeVaultPassword}
-            >
-              {changePasswordBusy
-                ? "Changing password…"
-                : "Change vault password"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showFolderForm && (
-        <div style={styles.overlay}>
-          <div style={styles.smallFormModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowFolderForm(false);
-                setNewFolderName("");
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <FolderPlus size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>NOTE ORGANIZATION</div>
-
-            <h2 style={styles.formTitle}>New folder</h2>
-
-            <p style={styles.copy}>
-              Create a folder to keep related private notes together.
-            </p>
-
-            <label style={styles.label}>Folder name</label>
-
-            <input
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  createFolder();
-                }
-              }}
-              placeholder="Travel"
-              style={styles.input}
-              autoFocus
-            />
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            <button
-              type="button"
-              style={styles.primaryButton}
-              onClick={createFolder}
-            >
-              Create folder
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showForm && (
-        <div style={styles.overlay}>
-          <div style={styles.formModal}>
-            <button
-              type="button"
-              style={styles.modalClose}
-              onClick={() => {
-                setShowForm(false);
-                setEditing(null);
-                setForm({
-                  title: "",
-                  content: "",
-                });
-                setFormTags([]);
-                setFormReminder("");
-                setFormNotifyTelegram(false);
-                setTagInput("");
-                setError("");
-              }}
-            >
-              <X size={17} />
-            </button>
-
-            <div style={styles.iconLargeSmall}>
-              <FileText size={22} />
-            </div>
-
-            <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
-
-            <h2 style={styles.formTitle}>
-              {editing ? "Edit note" : "New note"}
-            </h2>
-
-            <label style={styles.label}>Title</label>
-
-            {!editing && showNewNoteDraftPrompt && (
-              <div style={styles.newNoteDraftBanner}>
-                <div>
-                  <strong>Unsaved draft available</strong>
-                  <span style={styles.newNoteDraftSubtext}>
-                    {newNoteDraftSavedAt
-                      ? `Last saved ${formatNoteDateTime(newNoteDraftSavedAt)}`
-                      : "Saved automatically · available after reopening"}
-                  </span>
-                </div>
-
-                <div style={styles.newNoteDraftActions}>
                   <button
                     type="button"
-                    style={styles.newNoteDraftRestore}
-                    onClick={restoreNewNoteDraft}
+                    style={styles.primaryButton}
+                    onClick={disconnectTelegram}
                   >
-                    Restore
+                    Disconnect Telegram
                   </button>
+                </>
+              ) : (
+                <>
+                  <div style={styles.telegramSteps}>
+                    <div style={styles.telegramStep}>
+                      <span style={styles.telegramStepNumber}>1</span>
+                      <span>Open the Pocket Telegram bot.</span>
+                    </div>
+
+                    <div style={styles.telegramStep}>
+                      <span style={styles.telegramStepNumber}>2</span>
+                      <span>
+                        Press <strong>Start</strong> in Telegram.
+                      </span>
+                    </div>
+
+                    <div style={styles.telegramStep}>
+                      <span style={styles.telegramStepNumber}>3</span>
+                      <span>Return to Pocket and press Check connection.</span>
+                    </div>
+                  </div>
+
+                  {error && <div style={styles.error}>{error}</div>}
+
                   <button
                     type="button"
-                    style={styles.newNoteDraftDismiss}
-                    onClick={clearNewNoteDraft}
-                  >
-                    Discard
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <input
-              value={form.title}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  title: e.target.value,
-                })
-              }
-              placeholder="Shopping list"
-              style={styles.input}
-              autoFocus
-            />
-
-            {!editing && (
-              <>
-                <label style={styles.label}>Template</label>
-
-                <div style={styles.newNoteTemplateControl}>
-                  <Repeat size={14} color="#68707A" />
-
-                  <select
-                    value={newNoteTemplateId}
-                    onChange={(e) => {
-                      const value = e.target.value;
-
-                      setNewNoteTemplateId(value);
-
-                      if (value === "blank") {
-                        setForm({
-                          title: "",
-                          content: "",
-                        });
-                        editorLoadKeyRef.current = "";
-                        setEditorHtml("");
-                        setFormTags([]);
-                        setFormAttachments([]);
-                        setEditorStatus("New note");
-                        return;
+                    style={styles.primaryButton}
+                    disabled={!telegramConnectUrl}
+                    onClick={() => {
+                      if (telegramConnectUrl) {
+                        window.open(
+                          telegramConnectUrl,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
                       }
-
-                      applyNoteTemplate(value);
-                      setEditorStatus("Template applied");
                     }}
-                    style={styles.newNoteTemplateSelect}
                   >
-                    <option value="blank">Blank note</option>
+                    Open Telegram
+                  </button>
 
-                    {NOTE_TEMPLATES.length > 0 && (
-                      <optgroup label="Built-in templates">
-                        {NOTE_TEMPLATES.map((template) => (
-                          <option
-                            key={`builtin-${template.id}`}
-                            value={template.id}
-                          >
-                            {template.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
+                  <button
+                    type="button"
+                    style={styles.secondaryFullButton}
+                    onClick={async () => {
+                      const connected = await checkTelegramConnection();
 
-                    {customTemplates.length > 0 && (
-                      <optgroup label="Your templates">
-                        {customTemplates.map((template) => (
-                          <option
-                            key={`custom-${template.id}`}
-                            value={template.id}
-                          >
-                            {template.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                </div>
+                      if (!connected) {
+                        setError(
+                          "Telegram is not connected yet. Press Start in the bot, then check again.",
+                        );
+                      } else {
+                        setError("");
+                      }
+                    }}
+                  >
+                    Check connection
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
-                {newNoteTemplateId !== "blank" && (
-                  <div style={styles.newNoteTemplateHint}>
-                    {(
-                      NOTE_TEMPLATES.find(
-                        (item) => item.id === newNoteTemplateId,
-                      ) ||
-                      customTemplates.find(
-                        (item) => item.id === newNoteTemplateId,
-                      )
-                    )?.description ||
-                      "Template applied. Everything remains editable."}
+        {showRecoverySetup && (
+          <div style={styles.overlay}>
+            <div style={styles.formModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowRecoverySetup(false);
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <Fingerprint size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
+
+              <h2 style={styles.formTitle}>Enable passkey recovery</h2>
+
+              <p style={styles.copy}>
+                Your existing Pocket passkey will protect a recovery copy of the
+                notes vault encryption key.
+              </p>
+
+              <div style={styles.notice}>
+                <ShieldCheck size={16} />
+                <span>
+                  Your notes never leave the encrypted vault. Passkey recovery
+                  only protects the vault encryption key.
+                </span>
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={recoveryBusy}
+                onClick={enablePasskeyRecovery}
+              >
+                {recoveryBusy
+                  ? "Waiting for passkey…"
+                  : "Continue with passkey"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {recoveryMode === "reset" && (
+          <div style={styles.overlay}>
+            <div style={styles.formModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setRecoveryMode(null);
+                  setRecoveryNewPassword("");
+                  setRecoveryConfirmPassword("");
+                  recoveredDataKeyRef.current = null;
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <Fingerprint size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
+
+              <h2 style={styles.formTitle}>Reset notes password</h2>
+
+              <p style={styles.copy}>
+                Your passkey verified your identity. Choose a new password for
+                your existing notes vault.
+              </p>
+
+              <label style={styles.label}>New vault password</label>
+
+              <input
+                type="password"
+                value={recoveryNewPassword}
+                onChange={(e) => setRecoveryNewPassword(e.target.value)}
+                placeholder="At least 12 characters"
+                style={styles.input}
+                autoFocus
+              />
+
+              <label style={styles.label}>Confirm new password</label>
+
+              <input
+                type="password"
+                value={recoveryConfirmPassword}
+                onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+                placeholder="Enter the new password again"
+                style={styles.input}
+              />
+
+              <div style={styles.notice}>
+                <ShieldCheck size={16} />
+                <span>
+                  Your old notes password is not required after passkey
+                  verification.
+                </span>
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={recoveryBusy}
+                onClick={finishForgotPasswordRecovery}
+              >
+                {recoveryBusy
+                  ? "Resetting password…"
+                  : "Set new vault password"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showChangePassword && (
+          <div style={styles.overlay}>
+            <div style={styles.formModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowChangePassword(false);
+                  setCurrentVaultPassword("");
+                  setNewVaultPassword("");
+                  setConfirmNewVaultPassword("");
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <ShieldCheck size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>PRIVATE NOTES</div>
+
+              <h2 style={styles.formTitle}>Change vault password</h2>
+
+              <p style={styles.copy}>
+                Your notes will remain encrypted while the vault protection is
+                changed.
+              </p>
+
+              <label style={styles.label}>Current vault password</label>
+
+              <input
+                type="password"
+                value={currentVaultPassword}
+                onChange={(e) => setCurrentVaultPassword(e.target.value)}
+                placeholder="Current password"
+                style={styles.input}
+                autoFocus
+              />
+
+              <label style={styles.label}>New vault password</label>
+
+              <input
+                type="password"
+                value={newVaultPassword}
+                onChange={(e) => setNewVaultPassword(e.target.value)}
+                placeholder="At least 12 characters"
+                style={styles.input}
+              />
+
+              <label style={styles.label}>Confirm new password</label>
+
+              <input
+                type="password"
+                value={confirmNewVaultPassword}
+                onChange={(e) => setConfirmNewVaultPassword(e.target.value)}
+                placeholder="Enter the new password again"
+                style={styles.input}
+              />
+
+              <div style={styles.notice}>
+                <ShieldCheck size={16} />
+                <span>
+                  Your notes stay encrypted. Only the vault key protection is
+                  changed.
+                </span>
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={changePasswordBusy}
+                onClick={changeVaultPassword}
+              >
+                {changePasswordBusy
+                  ? "Changing password…"
+                  : "Change vault password"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showFolderForm && (
+          <div style={styles.overlay}>
+            <div style={styles.smallFormModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowFolderForm(false);
+                  setNewFolderName("");
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <FolderPlus size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>NOTE ORGANIZATION</div>
+
+              <h2 style={styles.formTitle}>New folder</h2>
+
+              <p style={styles.copy}>
+                Create a folder to keep related private notes together.
+              </p>
+
+              <label style={styles.label}>Folder name</label>
+
+              <input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    createFolder();
+                  }
+                }}
+                placeholder="Travel"
+                style={styles.input}
+                autoFocus
+              />
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={createFolder}
+              >
+                Create folder
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showForm && (
+          <div style={styles.overlay}>
+            <div style={styles.formModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setShowForm(false);
+                  setEditing(null);
+                  setForm({
+                    title: "",
+                    content: "",
+                  });
+                  setFormTags([]);
+                  setFormReminder("");
+                  setFormNotifyTelegram(false);
+                  setTagInput("");
+                  setError("");
+                }}
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <FileText size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>PRIVATE NOTE</div>
+
+              <h2 style={styles.formTitle}>
+                {editing ? "Edit note" : "New note"}
+              </h2>
+
+              <label style={styles.label}>Title</label>
+
+              {!editing && showNewNoteDraftPrompt && (
+                <div style={styles.newNoteDraftBanner}>
+                  <div>
+                    <strong>Unsaved draft available</strong>
+                    <span style={styles.newNoteDraftSubtext}>
+                      {newNoteDraftSavedAt
+                        ? `Last saved ${formatNoteDateTime(
+                            newNoteDraftSavedAt,
+                          )}`
+                        : "Saved automatically · available after reopening"}
+                    </span>
                   </div>
-                )}
 
-                <div style={styles.quickTemplateSection}>
-                  <div style={styles.quickTemplateLabel}>QUICK START</div>
-
-                  <div style={styles.quickTemplateRow}>
+                  <div style={styles.newNoteDraftActions}>
                     <button
                       type="button"
-                      style={styles.quickTemplateChip}
-                      onClick={() => {
-                        setNewNoteTemplateId("blank");
-                        setForm({
-                          title: "",
-                          content: "",
-                        });
-                        setFormTags([]);
-                        setFormAttachments([]);
-                        setEditorHtml("");
-                        editorLoadKeyRef.current = "";
-                        setEditorStatus("New note");
-                      }}
+                      style={styles.newNoteDraftRestore}
+                      onClick={restoreNewNoteDraft}
                     >
-                      Blank
+                      Restore
                     </button>
+                    <button
+                      type="button"
+                      style={styles.newNoteDraftDismiss}
+                      onClick={clearNewNoteDraft}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                    {NOTE_TEMPLATES.slice(0, 3).map((template) => (
+              <input
+                value={form.title}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    title: e.target.value,
+                  })
+                }
+                placeholder="Shopping list"
+                style={styles.input}
+                autoFocus
+              />
+
+              {!editing && (
+                <>
+                  <label style={styles.label}>Template</label>
+
+                  <div style={styles.newNoteTemplateControl}>
+                    <Repeat size={14} color="#68707A" />
+
+                    <select
+                      value={newNoteTemplateId}
+                      onChange={(e) => {
+                        const value = e.target.value;
+
+                        setNewNoteTemplateId(value);
+
+                        if (value === "blank") {
+                          setForm({
+                            title: "",
+                            content: "",
+                          });
+                          editorLoadKeyRef.current = "";
+                          setEditorHtml("");
+                          setFormTags([]);
+                          setFormAttachments([]);
+                          setEditorStatus("New note");
+                          return;
+                        }
+
+                        applyNoteTemplate(value);
+                        setEditorStatus("Template applied");
+                      }}
+                      style={styles.newNoteTemplateSelect}
+                    >
+                      <option value="blank">Blank note</option>
+
+                      {NOTE_TEMPLATES.length > 0 && (
+                        <optgroup label="Built-in templates">
+                          {NOTE_TEMPLATES.map((template) => (
+                            <option
+                              key={`builtin-${template.id}`}
+                              value={template.id}
+                            >
+                              {template.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+
+                      {customTemplates.length > 0 && (
+                        <optgroup label="Your templates">
+                          {customTemplates.map((template) => (
+                            <option
+                              key={`custom-${template.id}`}
+                              value={template.id}
+                            >
+                              {template.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  </div>
+
+                  {newNoteTemplateId !== "blank" && (
+                    <div style={styles.newNoteTemplateHint}>
+                      {(
+                        NOTE_TEMPLATES.find(
+                          (item) => item.id === newNoteTemplateId,
+                        ) ||
+                        customTemplates.find(
+                          (item) => item.id === newNoteTemplateId,
+                        )
+                      )?.description ||
+                        "Template applied. Everything remains editable."}
+                    </div>
+                  )}
+
+                  <div style={styles.quickTemplateSection}>
+                    <div style={styles.quickTemplateLabel}>QUICK START</div>
+
+                    <div style={styles.quickTemplateRow}>
                       <button
-                        key={`quick-${template.id}`}
                         type="button"
                         style={styles.quickTemplateChip}
                         onClick={() => {
-                          setNewNoteTemplateId(template.id);
-                          applyNoteTemplate(template.id);
-                          setEditorStatus("Template applied");
+                          setNewNoteTemplateId("blank");
+                          setForm({
+                            title: "",
+                            content: "",
+                          });
+                          setFormTags([]);
+                          setFormAttachments([]);
+                          setEditorHtml("");
+                          editorLoadKeyRef.current = "";
+                          setEditorStatus("New note");
                         }}
-                        title={template.description}
                       >
-                        {template.name}
+                        Blank
                       </button>
-                    ))}
+
+                      {NOTE_TEMPLATES.slice(0, 3).map((template) => (
+                        <button
+                          key={`quick-${template.id}`}
+                          type="button"
+                          style={styles.quickTemplateChip}
+                          onClick={() => {
+                            setNewNoteTemplateId(template.id);
+                            applyNoteTemplate(template.id);
+                            setEditorStatus("Template applied");
+                          }}
+                          title={template.description}
+                        >
+                          {template.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
-
-            <label style={styles.label}>Tags</label>
-
-            <div style={styles.tagsEditor}>
-              {formTags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  style={styles.editTagChip}
-                  onClick={() => removeTag(tag)}
-                  title="Remove tag"
-                >
-                  #{tag}
-                  <X size={11} />
-                </button>
-              ))}
-
-              <input
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    addTag();
-                  }
-                }}
-                onBlur={addTag}
-                placeholder="Add tag…"
-                style={styles.tagInput}
-              />
-            </div>
-
-            <label style={styles.label}>Reminder</label>
-
-            <div style={styles.reminderInputRow}>
-              <CalendarDays size={14} color="#68707A" />
-
-              <input
-                type="datetime-local"
-                value={formReminder}
-                onChange={(e) => setFormReminder(e.target.value)}
-                style={styles.reminderInput}
-              />
-
-              {formReminder && (
-                <button
-                  type="button"
-                  style={styles.clearReminderButton}
-                  onClick={() => {
-                    setFormReminder("");
-                    setFormRecurrence("none");
-                    setFormRecurrenceDay("");
-                    setFormRecurrenceDays([]);
-                    setFormRecurrenceInterval(1);
-                    setFormRecurrenceUnit("days");
-                  }}
-                >
-                  Clear
-                </button>
+                </>
               )}
-            </div>
 
-            <label style={styles.label}>Repeat</label>
+              <label style={styles.label}>Tags</label>
 
-            <div style={styles.recurrenceControl}>
-              <Repeat size={14} color="#68707A" />
+              <div style={styles.tagsEditor}>
+                {formTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    style={styles.editTagChip}
+                    onClick={() => removeTag(tag)}
+                    title="Remove tag"
+                  >
+                    #{tag}
+                    <X size={11} />
+                  </button>
+                ))}
 
-              <select
-                value={formRecurrence}
-                disabled={!formReminder}
-                onChange={(e) => {
-                  const value = e.target.value;
-
-                  setFormRecurrence(value);
-
-                  if (value === "weekly" || value === "monthly") {
-                    setFormRecurrenceDay(
-                      defaultRecurrenceDay(formReminder, value),
-                    );
-                  } else {
-                    setFormRecurrenceDay("");
-                  }
-                }}
-                style={styles.recurrenceSelect}
-              >
-                <option value="none">Does not repeat</option>
-                <option value="daily">Every day</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Every month</option>
-                <option value="custom">Custom interval</option>
-              </select>
-            </div>
-
-            {!formReminder && (
-              <div style={styles.recurrenceHint}>
-                Set a reminder time first.
+                <input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addTag();
+                    }
+                  }}
+                  onBlur={addTag}
+                  placeholder="Add tag…"
+                  style={styles.tagInput}
+                />
               </div>
-            )}
 
-            {formReminder && formRecurrence === "weekly" && (
-              <div style={styles.recurrenceExtraBlock}>
-                <div style={styles.recurrenceExtraLabel}>Remind me on</div>
+              <label style={styles.label}>Reminder</label>
 
-                <div style={styles.weekdayPicker}>
-                  {RECURRENCE_WEEKDAYS.map((day, index) => {
-                    const selectedDays = normalizeRecurrenceDays(
+              <div style={styles.reminderInputRow}>
+                <CalendarDays size={14} color="#68707A" />
+
+                <input
+                  type="datetime-local"
+                  value={formReminder}
+                  onChange={(e) => setFormReminder(e.target.value)}
+                  style={styles.reminderInput}
+                />
+
+                {formReminder && (
+                  <button
+                    type="button"
+                    style={styles.clearReminderButton}
+                    onClick={() => {
+                      setFormReminder("");
+                      setFormRecurrence("none");
+                      setFormRecurrenceDay("");
+                      setFormRecurrenceDays([]);
+                      setFormRecurrenceInterval(1);
+                      setFormRecurrenceUnit("days");
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              <label style={styles.label}>Repeat</label>
+
+              <div style={styles.recurrenceControl}>
+                <Repeat size={14} color="#68707A" />
+
+                <select
+                  value={formRecurrence}
+                  disabled={!formReminder}
+                  onChange={(e) => {
+                    const value = e.target.value;
+
+                    setFormRecurrence(value);
+
+                    if (value === "weekly" || value === "monthly") {
+                      setFormRecurrenceDay(
+                        defaultRecurrenceDay(formReminder, value),
+                      );
+                    } else {
+                      setFormRecurrenceDay("");
+                    }
+                  }}
+                  style={styles.recurrenceSelect}
+                >
+                  <option value="none">Does not repeat</option>
+                  <option value="daily">Every day</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Every month</option>
+                  <option value="custom">Custom interval</option>
+                </select>
+              </div>
+
+              {!formReminder && (
+                <div style={styles.recurrenceHint}>
+                  Set a reminder time first.
+                </div>
+              )}
+
+              {formReminder && formRecurrence === "weekly" && (
+                <div style={styles.recurrenceExtraBlock}>
+                  <div style={styles.recurrenceExtraLabel}>Remind me on</div>
+
+                  <div style={styles.weekdayPicker}>
+                    {RECURRENCE_WEEKDAYS.map((day, index) => {
+                      const selectedDays = normalizeRecurrenceDays(
+                        formRecurrenceDays.length
+                          ? formRecurrenceDays
+                          : [
+                              Number(
+                                defaultRecurrenceDay(formReminder, "weekly"),
+                              ),
+                            ],
+                      );
+
+                      const selected = selectedDays.includes(index);
+
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          title={day}
+                          style={{
+                            ...styles.weekdayChip,
+                            ...(selected ? styles.weekdayChipActive : {}),
+                          }}
+                          onClick={() =>
+                            setFormRecurrenceDays((current) => {
+                              const base = normalizeRecurrenceDays(
+                                current.length
+                                  ? current
+                                  : [
+                                      Number(
+                                        defaultRecurrenceDay(
+                                          formReminder,
+                                          "weekly",
+                                        ),
+                                      ),
+                                    ],
+                              );
+
+                              const next = new Set(base);
+
+                              if (next.has(index)) {
+                                next.delete(index);
+                              } else {
+                                next.add(index);
+                              }
+
+                              return Array.from(next).sort((a, b) => a - b);
+                            })
+                          }
+                        >
+                          {day.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div style={styles.recurrenceHint}>
+                    {weekdayList(
                       formRecurrenceDays.length
                         ? formRecurrenceDays
                         : [
@@ -9958,497 +11144,452 @@ export default function NotesView({ vault, onVaultChange }) {
                               defaultRecurrenceDay(formReminder, "weekly"),
                             ),
                           ],
-                    );
-
-                    const selected = selectedDays.includes(index);
-
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        title={day}
-                        style={{
-                          ...styles.weekdayChip,
-                          ...(selected ? styles.weekdayChipActive : {}),
-                        }}
-                        onClick={() =>
-                          setFormRecurrenceDays((current) => {
-                            const base = normalizeRecurrenceDays(
-                              current.length
-                                ? current
-                                : [
-                                    Number(
-                                      defaultRecurrenceDay(
-                                        formReminder,
-                                        "weekly",
-                                      ),
-                                    ),
-                                  ],
-                            );
-
-                            const next = new Set(base);
-
-                            if (next.has(index)) {
-                              next.delete(index);
-                            } else {
-                              next.add(index);
-                            }
-
-                            return Array.from(next).sort((a, b) => a - b);
-                          })
-                        }
-                      >
-                        {day.slice(0, 3)}
-                      </button>
-                    );
-                  })}
+                    ) || "Choose at least one day"}
+                  </div>
                 </div>
+              )}
 
+              {formReminder && formRecurrence === "monthly" && (
+                <div style={styles.recurrenceExtra}>
+                  <span style={styles.recurrenceExtraLabel}>Repeat on day</span>
+
+                  <select
+                    value={
+                      formRecurrenceDay ||
+                      defaultRecurrenceDay(formReminder, "monthly")
+                    }
+                    onChange={(e) => setFormRecurrenceDay(e.target.value)}
+                    style={styles.recurrenceSmallSelect}
+                  >
+                    {Array.from({ length: 31 }, (_, index) => (
+                      <option key={index + 1} value={index + 1}>
+                        {index + 1}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {formReminder && formRecurrence === "custom" && (
+                <div style={styles.customRecurrenceRow}>
+                  <span style={styles.recurrenceExtraLabel}>Every</span>
+
+                  <input
+                    type="number"
+                    min="1"
+                    max="3650"
+                    step="1"
+                    value={formRecurrenceInterval}
+                    onChange={(e) =>
+                      setFormRecurrenceInterval(
+                        Math.max(
+                          1,
+                          Math.min(3650, Number(e.target.value) || 1),
+                        ),
+                      )
+                    }
+                    style={styles.customIntervalInput}
+                  />
+
+                  <select
+                    value={formRecurrenceUnit}
+                    onChange={(e) => setFormRecurrenceUnit(e.target.value)}
+                    style={styles.recurrenceSmallSelect}
+                  >
+                    <option value="days">days</option>
+                    <option value="weeks">weeks</option>
+                    <option value="months">months</option>
+                  </select>
+                </div>
+              )}
+
+              {formReminder && (
                 <div style={styles.recurrenceHint}>
-                  {weekdayList(
-                    formRecurrenceDays.length
-                      ? formRecurrenceDays
-                      : [Number(defaultRecurrenceDay(formReminder, "weekly"))],
-                  ) || "Choose at least one day"}
+                  {formRecurrence === "custom"
+                    ? recurrenceIntervalLabel(
+                        formRecurrence,
+                        formRecurrenceInterval,
+                        formRecurrenceUnit,
+                      )
+                    : recurrenceLabel(
+                        formRecurrence,
+                        formRecurrenceDay ||
+                          defaultRecurrenceDay(formReminder, formRecurrence),
+                      )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {formReminder && formRecurrence === "monthly" && (
-              <div style={styles.recurrenceExtra}>
-                <span style={styles.recurrenceExtraLabel}>Repeat on day</span>
-
-                <select
-                  value={
-                    formRecurrenceDay ||
-                    defaultRecurrenceDay(formReminder, "monthly")
-                  }
-                  onChange={(e) => setFormRecurrenceDay(e.target.value)}
-                  style={styles.recurrenceSmallSelect}
-                >
-                  {Array.from({ length: 31 }, (_, index) => (
-                    <option key={index + 1} value={index + 1}>
-                      {index + 1}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {formReminder && formRecurrence === "custom" && (
-              <div style={styles.customRecurrenceRow}>
-                <span style={styles.recurrenceExtraLabel}>Every</span>
-
+              <label style={styles.telegramOption}>
                 <input
-                  type="number"
-                  min="1"
-                  max="3650"
-                  step="1"
-                  value={formRecurrenceInterval}
-                  onChange={(e) =>
-                    setFormRecurrenceInterval(
-                      Math.max(1, Math.min(3650, Number(e.target.value) || 1)),
-                    )
-                  }
-                  style={styles.customIntervalInput}
+                  type="checkbox"
+                  checked={formNotifyTelegram}
+                  onChange={(e) => setFormNotifyTelegram(e.target.checked)}
                 />
 
-                <select
-                  value={formRecurrenceUnit}
-                  onChange={(e) => setFormRecurrenceUnit(e.target.value)}
-                  style={styles.recurrenceSmallSelect}
-                >
-                  <option value="days">days</option>
-                  <option value="weeks">weeks</option>
-                  <option value="months">months</option>
-                </select>
-              </div>
-            )}
+                <span style={styles.telegramOptionText}>
+                  <span style={styles.telegramOptionTitle}>
+                    Notify me on Telegram
+                  </span>
 
-            {formReminder && (
-              <div style={styles.recurrenceHint}>
-                {formRecurrence === "custom"
-                  ? recurrenceIntervalLabel(
-                      formRecurrence,
-                      formRecurrenceInterval,
-                      formRecurrenceUnit,
-                    )
-                  : recurrenceLabel(
-                      formRecurrence,
-                      formRecurrenceDay ||
-                        defaultRecurrenceDay(formReminder, formRecurrence),
-                    )}
-              </div>
-            )}
-
-            <label style={styles.telegramOption}>
-              <input
-                type="checkbox"
-                checked={formNotifyTelegram}
-                onChange={(e) => setFormNotifyTelegram(e.target.checked)}
-              />
-
-              <span style={styles.telegramOptionText}>
-                <span style={styles.telegramOptionTitle}>
-                  Notify me on Telegram
+                  <span style={styles.telegramOptionSub}>
+                    {formNotifyTelegram
+                      ? telegramConnected
+                        ? "This reminder will be sent only to Telegram."
+                        : "Telegram is not connected yet. Connect it before saving this reminder."
+                      : "Leave unchecked to use browser notifications."}
+                  </span>
                 </span>
-
-                <span style={styles.telegramOptionSub}>
-                  {formNotifyTelegram
-                    ? telegramConnected
-                      ? "This reminder will be sent only to Telegram."
-                      : "Telegram is not connected yet. Connect it before saving this reminder."
-                    : "Leave unchecked to use browser notifications."}
-                </span>
-              </span>
-            </label>
-
-            <div style={styles.reminderHint}>
-              {formNotifyTelegram
-                ? "Telegram reminders are delivered by the server, even when Pocket is closed."
-                : notificationsEnabled
-                  ? "Browser notifications are enabled on this device."
-                  : "Enable notifications to receive reminders while Pocket is open."}
-            </div>
-
-            <div style={styles.editorHeader}>
-              <label
-                style={{
-                  ...styles.label,
-                  marginBottom: 0,
-                }}
-              >
-                Note
               </label>
 
-              <span style={styles.editorStatus}>{editorStatus}</span>
-            </div>
+              <div style={styles.reminderHint}>
+                {formNotifyTelegram
+                  ? "Telegram reminders are delivered by the server, even when Pocket is closed."
+                  : notificationsEnabled
+                    ? "Browser notifications are enabled on this device."
+                    : "Enable notifications to receive reminders while Pocket is open."}
+              </div>
 
-            <div style={styles.editorShell}>
-              <div style={styles.editorToolbar}>
-                <button
-                  type="button"
-                  title="Bold"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => toggleInlineFormat("bold")}
+              <div style={styles.editorHeader}>
+                <label
+                  style={{
+                    ...styles.label,
+                    marginBottom: 0,
+                  }}
                 >
-                  <Bold size={14} />
-                </button>
+                  Note
+                </label>
 
-                <button
-                  type="button"
-                  title="Italic"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => toggleInlineFormat("italic")}
-                >
-                  <Italic size={14} />
-                </button>
+                <span style={styles.editorStatus}>{editorStatus}</span>
+              </div>
 
-                <button
-                  type="button"
-                  title="Heading"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => insertLinePrefix("## ")}
-                >
-                  <Heading2 size={14} />
-                </button>
+              <div style={styles.editorShell}>
+                <div style={styles.editorToolbar}>
+                  <button
+                    type="button"
+                    title="Bold"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggleInlineFormat("bold")}
+                  >
+                    <Bold size={14} />
+                  </button>
 
-                <span style={styles.editorToolbarDivider} />
+                  <button
+                    type="button"
+                    title="Italic"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => toggleInlineFormat("italic")}
+                  >
+                    <Italic size={14} />
+                  </button>
 
-                <button
-                  type="button"
-                  title="Bullet list"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => insertLinePrefix("• ")}
-                >
-                  <List size={14} />
-                </button>
+                  <button
+                    type="button"
+                    title="Heading"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertLinePrefix("## ")}
+                  >
+                    <Heading2 size={14} />
+                  </button>
 
-                <button
-                  type="button"
-                  title="Checklist"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => insertLinePrefix("☐ ")}
-                >
-                  <ListChecks size={14} />
-                </button>
+                  <span style={styles.editorToolbarDivider} />
 
-                <button
-                  type="button"
-                  title="Quote"
-                  style={styles.editorTool}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => insertLinePrefix("> ")}
-                >
-                  <Quote size={14} />
-                </button>
+                  <button
+                    type="button"
+                    title="Bullet list"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertLinePrefix("• ")}
+                  >
+                    <List size={14} />
+                  </button>
 
-                <button
-                  type="button"
-                  title="Code"
-                  style={styles.editorTool}
-                  onClick={() => insertAtCursor("`", "`", "code")}
-                >
-                  <Code2 size={14} />
-                </button>
+                  <button
+                    type="button"
+                    title="Checklist"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertLinePrefix("☐ ")}
+                  >
+                    <ListChecks size={14} />
+                  </button>
 
-                <span style={styles.editorToolbarDivider} />
+                  <button
+                    type="button"
+                    title="Quote"
+                    style={styles.editorTool}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => insertLinePrefix("> ")}
+                  >
+                    <Quote size={14} />
+                  </button>
 
-                <button
-                  type="button"
-                  title="Undo"
-                  style={styles.editorTool}
-                  onClick={() => document.execCommand("undo")}
-                >
-                  <Undo2 size={14} />
-                </button>
+                  <button
+                    type="button"
+                    title="Code"
+                    style={styles.editorTool}
+                    onClick={() => insertAtCursor("`", "`", "code")}
+                  >
+                    <Code2 size={14} />
+                  </button>
 
-                <button
-                  type="button"
-                  title="Redo"
-                  style={styles.editorTool}
-                  onClick={() => document.execCommand("redo")}
-                >
-                  <Redo2 size={14} />
-                </button>
+                  <span style={styles.editorToolbarDivider} />
+
+                  <button
+                    type="button"
+                    title="Undo"
+                    style={styles.editorTool}
+                    onClick={() => document.execCommand("undo")}
+                  >
+                    <Undo2 size={14} />
+                  </button>
+
+                  <button
+                    type="button"
+                    title="Redo"
+                    style={styles.editorTool}
+                    onClick={() => document.execCommand("redo")}
+                  >
+                    <Redo2 size={14} />
+                  </button>
+                </div>
+
+                <div
+                  ref={contentInputRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline="true"
+                  data-placeholder="Write your note…"
+                  onInput={(e) => syncEditorFromHtml(e.currentTarget)}
+                  onKeyDown={handleEditorKeyDown}
+                  style={{
+                    ...styles.editorTextarea,
+                    minHeight: 330,
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap",
+                    outline: "none",
+                  }}
+                />
+
+                <div style={styles.editorFooter}>
+                  <span>{form.content.length} characters</span>
+
+                  <span>
+                    {form.content
+                      ? form.content.trim().split(/\s+/).filter(Boolean).length
+                      : 0}{" "}
+                    words
+                  </span>
+
+                  <span style={{ flex: 1 }} />
+
+                  <span>⌘/Ctrl+B bold · ⌘/Ctrl+I italic</span>
+                </div>
               </div>
 
               <div
-                ref={contentInputRef}
-                contentEditable
-                suppressContentEditableWarning
-                role="textbox"
-                aria-multiline="true"
-                data-placeholder="Write your note…"
-                onInput={(e) => syncEditorFromHtml(e.currentTarget)}
-                onKeyDown={handleEditorKeyDown}
                 style={{
-                  ...styles.editorTextarea,
-                  minHeight: 330,
-                  overflowY: "auto",
-                  whiteSpace: "pre-wrap",
-                  outline: "none",
+                  ...styles.attachmentSection,
+                  ...(isAttachmentDragging
+                    ? styles.attachmentSectionDragging
+                    : {}),
                 }}
-              />
-
-              <div style={styles.editorFooter}>
-                <span>{form.content.length} characters</span>
-
-                <span>
-                  {form.content
-                    ? form.content.trim().split(/\s+/).filter(Boolean).length
-                    : 0}{" "}
-                  words
-                </span>
-
-                <span style={{ flex: 1 }} />
-
-                <span>⌘/Ctrl+B bold · ⌘/Ctrl+I italic</span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                ...styles.attachmentSection,
-                ...(isAttachmentDragging
-                  ? styles.attachmentSectionDragging
-                  : {}),
-              }}
-              onDragEnter={handleAttachmentDragOver}
-              onDragOver={handleAttachmentDragOver}
-              onDragLeave={handleAttachmentDragLeave}
-              onDrop={handleAttachmentDrop}
-            >
-              <div style={styles.attachmentHeader}>
-                <div>
-                  <div style={styles.attachmentTitle}>Attachments</div>
-                  <div style={styles.attachmentHint}>
-                    Encrypted with this note · 5 MB each · 10 MB total
+                onDragEnter={handleAttachmentDragOver}
+                onDragOver={handleAttachmentDragOver}
+                onDragLeave={handleAttachmentDragLeave}
+                onDrop={handleAttachmentDrop}
+              >
+                <div style={styles.attachmentHeader}>
+                  <div>
+                    <div style={styles.attachmentTitle}>Attachments</div>
+                    <div style={styles.attachmentHint}>
+                      Encrypted with this note · 5 MB each · 10 MB total
+                    </div>
                   </div>
+
+                  <button
+                    type="button"
+                    style={styles.attachmentAddButton}
+                    title="Add attachments"
+                    disabled={attachmentBusy}
+                    onClick={() => {
+                      attachmentInputRef.current?.click();
+                    }}
+                  >
+                    <Paperclip size={13} />
+                    {attachmentBusy ? "Reading…" : "Add files"}
+                  </button>
+
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.zip"
+                    style={{
+                      position: "absolute",
+                      width: 1,
+                      height: 1,
+                      opacity: 0,
+                      pointerEvents: "none",
+                    }}
+                    tabIndex={-1}
+                    onChange={async (event) => {
+                      const files = event.target.files;
+
+                      await addAttachments(files);
+
+                      event.target.value = "";
+                    }}
+                  />
+                </div>
+
+                {isAttachmentDragging && (
+                  <div style={styles.attachmentDropHint}>
+                    <Paperclip size={16} />
+                    <strong>Drop files here</strong>
+                    <span style={styles.attachmentDropHintSubtext}>
+                      Release to attach · 5 MB each · 10 MB total
+                    </span>
+                  </div>
+                )}
+
+                {formAttachments.length > 0 && (
+                  <div style={styles.attachmentList}>
+                    {formAttachments.map((attachment) => (
+                      <div key={attachment.id} style={styles.attachmentRow}>
+                        <div style={styles.attachmentInfo}>
+                          <strong
+                            style={styles.attachmentInfoStrong}
+                            title={attachment.name}
+                          >
+                            {attachment.name}
+                          </strong>
+                          <span>{formatAttachmentSize(attachment.size)}</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          style={styles.attachmentAction}
+                          onClick={() => downloadAttachment(attachment)}
+                          title="Download attachment"
+                        >
+                          <Download size={13} />
+                        </button>
+
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.attachmentAction,
+                            ...styles.attachmentRemove,
+                          }}
+                          onClick={() => removeAttachment(attachment.id)}
+                          title="Remove attachment"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {!editing && (
+                <div style={styles.noteDraftStatus}>
+                  {editorStatus === "Draft saved"
+                    ? "Draft saved automatically"
+                    : newNoteDraftAvailable
+                      ? "Draft recovery available"
+                      : ""}
+                </div>
+              )}
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              {(() => {
+                const liveStats = getNoteStatistics({
+                  content: form.content,
+                });
+
+                return (
+                  <div style={styles.noteLiveStats}>
+                    <span>{liveStats.words} words</span>
+                    <span>·</span>
+                    <span>{liveStats.characters} chars</span>
+                    <span>·</span>
+                    <span>
+                      {liveStats.readingSeconds < 60
+                        ? `${liveStats.readingSeconds} sec read`
+                        : `${Math.ceil(
+                            liveStats.readingSeconds / 60,
+                          )} min read`}
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div style={styles.noteFormFooter}>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={() => {
+                    const hasDraftContent = Boolean(
+                      form.title.trim() ||
+                      form.content.trim() ||
+                      formTags.length ||
+                      formAttachments.length ||
+                      formReminder ||
+                      formNotifyTelegram,
+                    );
+
+                    setShowForm(false);
+                    setEditing(null);
+                    setShowNewNoteDraftPrompt(false);
+                    setError("");
+
+                    if (!editing && hasDraftContent) {
+                      setNewNoteDraftAvailable(true);
+                    }
+                  }}
+                >
+                  Close
+                </button>
+
+                <div style={styles.noteFooterCenter}>
+                  <span
+                    style={{
+                      ...styles.noteSaveStatus,
+                      ...(editorStatus === "Saving…"
+                        ? styles.noteSaveStatusSaving
+                        : editorStatus === "Unsaved changes"
+                          ? styles.noteSaveStatusUnsaved
+                          : {}),
+                    }}
+                  >
+                    {editorStatus}
+                  </span>
+
+                  <span style={styles.noteKeyboardHint}>
+                    ⌘/Ctrl+S · ⌘/Ctrl+Enter
+                  </span>
                 </div>
 
                 <button
                   type="button"
-                  style={styles.attachmentAddButton}
-                  title="Add attachments"
-                  disabled={attachmentBusy}
-                  onClick={() => {
-                    attachmentInputRef.current?.click();
-                  }}
+                  style={styles.primaryButton}
+                  disabled={busy}
+                  onClick={saveNote}
                 >
-                  <Paperclip size={13} />
-                  {attachmentBusy ? "Reading…" : "Add files"}
+                  {busy ? "Saving…" : editing ? "Save changes" : "Save note"}
                 </button>
-
-                <input
-                  ref={attachmentInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*,.pdf,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.zip"
-                  style={{
-                    position: "absolute",
-                    width: 1,
-                    height: 1,
-                    opacity: 0,
-                    pointerEvents: "none",
-                  }}
-                  tabIndex={-1}
-                  onChange={async (event) => {
-                    const files = event.target.files;
-
-                    await addAttachments(files);
-
-                    event.target.value = "";
-                  }}
-                />
               </div>
-
-              {isAttachmentDragging && (
-                <div style={styles.attachmentDropHint}>
-                  <Paperclip size={16} />
-                  <strong>Drop files here</strong>
-                  <span style={styles.attachmentDropHintSubtext}>
-                    Release to attach · 5 MB each · 10 MB total
-                  </span>
-                </div>
-              )}
-
-              {formAttachments.length > 0 && (
-                <div style={styles.attachmentList}>
-                  {formAttachments.map((attachment) => (
-                    <div key={attachment.id} style={styles.attachmentRow}>
-                      <div style={styles.attachmentInfo}>
-                        <strong
-                          style={styles.attachmentInfoStrong}
-                          title={attachment.name}
-                        >
-                          {attachment.name}
-                        </strong>
-                        <span>{formatAttachmentSize(attachment.size)}</span>
-                      </div>
-
-                      <button
-                        type="button"
-                        style={styles.attachmentAction}
-                        onClick={() => downloadAttachment(attachment)}
-                        title="Download attachment"
-                      >
-                        <Download size={13} />
-                      </button>
-
-                      <button
-                        type="button"
-                        style={{
-                          ...styles.attachmentAction,
-                          ...styles.attachmentRemove,
-                        }}
-                        onClick={() => removeAttachment(attachment.id)}
-                        title="Remove attachment"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {!editing && (
-              <div style={styles.noteDraftStatus}>
-                {editorStatus === "Draft saved"
-                  ? "Draft saved automatically"
-                  : newNoteDraftAvailable
-                    ? "Draft recovery available"
-                    : ""}
-              </div>
-            )}
-
-            {error && <div style={styles.error}>{error}</div>}
-
-            {(() => {
-              const liveStats = getNoteStatistics({
-                content: form.content,
-              });
-
-              return (
-                <div style={styles.noteLiveStats}>
-                  <span>{liveStats.words} words</span>
-                  <span>·</span>
-                  <span>{liveStats.characters} chars</span>
-                  <span>·</span>
-                  <span>
-                    {liveStats.readingSeconds < 60
-                      ? `${liveStats.readingSeconds} sec read`
-                      : `${Math.ceil(liveStats.readingSeconds / 60)} min read`}
-                  </span>
-                </div>
-              );
-            })()}
-
-            <div style={styles.noteFormFooter}>
-              <button
-                type="button"
-                style={styles.secondaryButton}
-                onClick={() => {
-                  const hasDraftContent = Boolean(
-                    form.title.trim() ||
-                    form.content.trim() ||
-                    formTags.length ||
-                    formAttachments.length ||
-                    formReminder ||
-                    formNotifyTelegram,
-                  );
-
-                  setShowForm(false);
-                  setEditing(null);
-                  setShowNewNoteDraftPrompt(false);
-                  setError("");
-
-                  if (!editing && hasDraftContent) {
-                    setNewNoteDraftAvailable(true);
-                  }
-                }}
-              >
-                Close
-              </button>
-
-              <div style={styles.noteFooterCenter}>
-                <span
-                  style={{
-                    ...styles.noteSaveStatus,
-                    ...(editorStatus === "Saving…"
-                      ? styles.noteSaveStatusSaving
-                      : editorStatus === "Unsaved changes"
-                        ? styles.noteSaveStatusUnsaved
-                        : {}),
-                  }}
-                >
-                  {editorStatus}
-                </span>
-
-                <span style={styles.noteKeyboardHint}>
-                  ⌘/Ctrl+S · ⌘/Ctrl+Enter
-                </span>
-              </div>
-
-              <button
-                type="button"
-                style={styles.primaryButton}
-                disabled={busy}
-                onClick={saveNote}
-              >
-                {busy ? "Saving…" : editing ? "Save changes" : "Save note"}
-              </button>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -12325,6 +13466,12 @@ const styles = {
     fontSize: 10,
   },
 
+  notesToolsButtonActive: {
+    border: "1px solid #3A5E43",
+    background: "#1A241D",
+    color: "#9BD3A2",
+  },
+
   secondaryFullButton: {
     width: "100%",
     border: "1px solid #2D323B",
@@ -13180,6 +14327,10 @@ const styles = {
     gap: 12,
   },
 
+  contentGridFocus: {
+    display: "block",
+  },
+
   listPanel: {
     border: "1px solid #292D35",
     borderRadius: 12,
@@ -13195,6 +14346,12 @@ const styles = {
     minHeight: 390,
     padding: 20,
     boxSizing: "border-box",
+  },
+
+  detailPanelFocus: {
+    minHeight: "calc(100vh - 180px)",
+    maxWidth: 1040,
+    margin: "0 auto",
   },
 
   noteRow: {
@@ -13355,6 +14512,20 @@ const styles = {
     fontSize: 8,
   },
 
+  rowAttachmentBadge: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    marginLeft: 5,
+    padding: "2px 4px",
+    border: "1px solid #30373E",
+    borderRadius: 4,
+    background: "#1A1E23",
+    color: "#7F8A94",
+    fontSize: 7,
+    verticalAlign: "middle",
+  },
+
   rowCompactMeta: {
     display: "flex",
     alignItems: "center",
@@ -13373,13 +14544,307 @@ const styles = {
     fontSize: 7,
   },
 
+  detailHeaderMain: {
+    minWidth: 0,
+    flex: 1,
+  },
+
+  detailSubline: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 5,
+    marginTop: 8,
+  },
+
+  detailFolderPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "4px 7px",
+    borderRadius: 6,
+    background: "#15191E",
+    border: "1px solid #292F37",
+    color: "#858D97",
+    fontSize: 8,
+  },
+
+  detailStatusPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "4px 7px",
+    borderRadius: 6,
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  detailMiniPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "4px 7px",
+    borderRadius: 6,
+    border: "1px solid #2C3139",
+    background: "#171A1F",
+    color: "#8E949C",
+    fontSize: 8,
+  },
+
+  detailMetaLine: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 7,
+    color: "#616A74",
+    fontSize: 8,
+  },
+
+  detailToolbarArea: {
+    position: "relative",
+    flexShrink: 0,
+  },
+
+  detailPrimaryActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    padding: 4,
+    border: "1px solid #2A3038",
+    borderRadius: 9,
+    background: "#14181D",
+  },
+
+  primaryToolbarButton: {
+    height: 30,
+    padding: "0 9px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    border: "1px solid #2C323A",
+    borderRadius: 6,
+    background: "#1B1F25",
+    color: "#B0B6BE",
+    cursor: "pointer",
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  iconButtonCompact: {
+    width: 30,
+    height: 30,
+    borderRadius: 6,
+    border: "1px solid #2C323A",
+    background: "#1B1F25",
+    color: "#858D97",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+
+  moreToolbarButton: {
+    height: 30,
+    padding: "0 8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    border: "1px solid #2C323A",
+    borderRadius: 6,
+    background: "#1B1F25",
+    color: "#858D97",
+    cursor: "pointer",
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  noteToolsMenu: {
+    position: "absolute",
+    top: "calc(100% + 7px)",
+    right: 0,
+    width: 260,
+    maxWidth: "min(260px, calc(100vw - 34px))",
+    maxHeight: "min(540px, calc(100vh - 190px))",
+    overflowY: "auto",
+    padding: 8,
+    zIndex: 25,
+    border: "1px solid #30363E",
+    borderRadius: 10,
+    background: "#161A1F",
+    boxShadow: "0 18px 45px rgba(0,0,0,.45)",
+  },
+
+  noteToolsMenuHeader: {
+    padding: "4px 6px 7px",
+    color: "#616A74",
+    fontSize: 8,
+    fontWeight: 800,
+    letterSpacing: 1,
+  },
+
+  noteToolsMenuSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+  },
+
+  noteToolsMenuItem: {
+    width: "100%",
+    minHeight: 30,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 8px",
+    border: "none",
+    borderRadius: 6,
+    background: "transparent",
+    color: "#B2B7BE",
+    cursor: "pointer",
+    fontSize: 9,
+    textAlign: "left",
+  },
+
+  noteToolsMenuDanger: {
+    color: "#C58C85",
+  },
+
+  noteToolsMenuLabel: {
+    marginBottom: 4,
+    padding: "2px 6px",
+    color: "#59626C",
+    fontSize: 7,
+    fontWeight: 800,
+    letterSpacing: 0.8,
+  },
+
+  noteToolsMenuDivider: {
+    height: 1,
+    margin: "7px 0",
+    background: "#292F37",
+  },
+
+  folderSelectCompact: {
+    width: "100%",
+    minHeight: 30,
+    padding: "0 8px",
+    border: "1px solid #2D333C",
+    borderRadius: 6,
+    background: "#1A1E24",
+    color: "#B2B7BE",
+    outline: "none",
+    fontSize: 9,
+  },
+
+  noteExportMiniGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: 4,
+  },
+
+  noteExportMiniButton: {
+    minHeight: 28,
+    border: "1px solid #2D333B",
+    borderRadius: 6,
+    background: "#191D22",
+    color: "#9CA3AC",
+    cursor: "pointer",
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  noteInfoBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 14,
+    padding: "8px 10px",
+    border: "1px solid #282E36",
+    borderRadius: 8,
+    background: "#14181D",
+  },
+
+  noteInfoLeft: {
+    minWidth: 0,
+    flex: 1,
+  },
+
+  noteInfoTitle: {
+    marginBottom: 4,
+    color: "#606973",
+    fontSize: 7,
+    fontWeight: 800,
+    letterSpacing: 0.9,
+  },
+
+  noteInfoStats: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 7,
+    color: "#7C858F",
+    fontSize: 8,
+  },
+
+  noteInfoStatsSpan: {},
+
+  noteInfoRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+
+  noteColorControlCompact: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    height: 28,
+    padding: "0 6px",
+    border: "1px solid #2B3139",
+    borderRadius: 6,
+    background: "#171B20",
+  },
+
+  noteInfoToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    height: 28,
+    padding: "0 7px",
+    border: "1px solid #2B3139",
+    borderRadius: 6,
+    background: "#171B20",
+    color: "#858E98",
+    cursor: "pointer",
+    fontSize: 8,
+    fontWeight: 700,
+  },
+
+  noteActivityPanel: {
+    marginBottom: 14,
+    padding: "9px 10px",
+    border: "1px solid #282E36",
+    borderRadius: 8,
+    background: "#14181D",
+  },
+
+  noteActivityListWide: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 8,
+  },
+
   detailHeader: {
     display: "flex",
+    alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 14,
     borderBottom: "1px solid #292D35",
-    paddingBottom: 16,
-    marginBottom: 17,
+    paddingBottom: 12,
+    marginBottom: 10,
   },
 
   detailEyebrow: {
@@ -13417,6 +14882,108 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
+  },
+
+  focusModeActiveButton: {
+    color: "#4FE36B",
+    borderColor: "#315A38",
+    background: "#162019",
+  },
+
+  noteColorControl: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "0 5px",
+    height: 32,
+    border: "1px solid #2C313A",
+    borderRadius: 7,
+    background: "#181B20",
+  },
+
+  noteColorLabel: {
+    color: "#626A73",
+    fontSize: 7,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+
+  noteColorSwatches: {
+    display: "flex",
+    alignItems: "center",
+    gap: 3,
+  },
+
+  noteColorSwatch: {
+    width: 13,
+    height: 13,
+    padding: 0,
+    border: "2px solid transparent",
+    borderRadius: "50%",
+    background: "#252A31",
+    cursor: "pointer",
+  },
+
+  noteColorSwatchActive: {
+    borderColor: "#ECEAE3",
+    boxShadow: "0 0 0 1px #555D66",
+  },
+
+  noteColorDefaultDot: {
+    display: "block",
+    width: 5,
+    height: 5,
+    margin: "2px auto 0",
+    borderRadius: "50%",
+    background: "#68717B",
+  },
+
+  noteFindBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    marginBottom: 12,
+    padding: "7px 9px",
+    border: "1px solid #2C333B",
+    borderRadius: 7,
+    background: "#14181C",
+    color: "#68717B",
+  },
+
+  noteFindInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: "#ECEAE3",
+    fontSize: 10,
+  },
+
+  noteFindCount: {
+    color: "#6F7D75",
+    fontSize: 8,
+    whiteSpace: "nowrap",
+  },
+
+  noteFindClose: {
+    width: 22,
+    height: 22,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid #2C313A",
+    borderRadius: 5,
+    background: "#1A1E23",
+    color: "#8D929B",
+    cursor: "pointer",
+  },
+
+  noteFindHighlight: {
+    padding: "1px 2px",
+    borderRadius: 3,
+    background: "#5D5021",
+    color: "#FFF3B8",
   },
 
   noteContent: {
@@ -13511,6 +15078,14 @@ const styles = {
     justifyContent: "center",
     textAlign: "center",
     padding: 20,
+  },
+
+  emptyStateActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 7,
+    flexWrap: "wrap",
+    justifyContent: "center",
   },
 
   emptyState: {
