@@ -865,6 +865,42 @@ export default function NotesView({ vault, onVaultChange }) {
     };
   }, [phase, autoLockMinutes]);
 
+  // Close any transient menu/popover when the user starts interacting elsewhere.
+  // Clicking a menu trigger is intentionally allowed: this runs on pointerdown,
+  // then that trigger's click handler opens the newly requested menu.
+  useEffect(() => {
+    const closeTransientMenus = () => {
+      setShowSavedViewsMenu(false);
+      setShowSearchFilters(false);
+      setShowSortMenu(false);
+      setShowBulkMoveMenu(false);
+      setShowBulkExportMenu(false);
+      setShowNoteToolsMenu(false);
+      setShowNotesToolsMenu(false);
+      setShowExportMenu(false);
+      setShowAutoLockMenu(false);
+      setShowTrashRetentionMenu(false);
+      setShowTemplateMenu(false);
+      setShowNoteInfo(false);
+      setShowNoteFind(false);
+      setNoteFindQuery("");
+    };
+
+    const onPointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      // Keep the currently open surface interactive. Any click outside it
+      // (including another toolbar button) closes the old surface first.
+      if (target.closest('[data-floating-menu="true"]')) return;
+      closeTransientMenus();
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () =>
+      document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
   // NotesView keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -6733,6 +6769,21 @@ export default function NotesView({ vault, onVaultChange }) {
           }
         }
 
+        /* Unified floating-menu behavior */
+        [data-floating-menu="true"] {
+          isolation: isolate;
+        }
+
+        @media (max-width: 920px) {
+          .notesResponsivePage {
+            overflow-x: clip;
+          }
+
+          .notesResponsiveHeaderActions {
+            gap: 8px !important;
+          }
+        }
+
         @media (max-width: 640px) {
           .notesResponsivePage {
             padding: 0 10px 18px !important;
@@ -6782,46 +6833,98 @@ export default function NotesView({ vault, onVaultChange }) {
 
           .notesToolsMenuModern {
             position: fixed;
-            top: auto;
-            bottom: 10px;
+            top: 14px;
+            bottom: auto;
             left: 10px;
             right: 10px;
             width: auto;
+            max-width: none;
             max-height: none;
             overflow: visible;
-            max-width: calc(100vw - 20px);
+            padding: 10px;
+            border-radius: 14px;
+            z-index: 300;
+            box-shadow: 0 24px 70px rgba(0,0,0,.62);
           }
 
           .notesToolsMenuGrid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px;
           }
 
-          .notesToolsInlinePanel {
-            position: absolute;
-            top: calc(100% + 5px);
-            left: 0;
-            right: auto;
-            width: min(300px, calc(100vw - 40px));
-            max-height: none;
-            margin-top: 0;
+          .notesToolsMenuHeading,
+          .notesToolsSectionLabel {
+            padding-left: 2px;
+            padding-right: 2px;
           }
 
-          .notesToolsSubmenu {
-            position: absolute;
-            top: 0;
-            right: calc(100% + 7px);
-            width: min(270px, calc(100vw - 40px));
-            margin-top: 0;
-          }
-
-          .notesToolsMenuModern {
-            padding: 10px;
+          .notesToolsSectionLabel {
+            padding-top: 9px;
+            margin-top: 9px;
           }
 
           .notesToolsMenuButton {
-            min-height: 36px;
-            font-size: 9px;
-            padding: 7px 8px;
+            min-height: 42px;
+            padding: 8px 9px;
+            font-size: 10px;
+          }
+
+          .notesToolsMenuButton span {
+            white-space: normal;
+            line-height: 1.15;
+          }
+
+          .notesToolsInlinePanel,
+          .notesToolsSubmenu {
+            position: fixed;
+            left: 12px;
+            right: 12px;
+            top: 50%;
+            bottom: auto;
+            width: auto;
+            max-width: none;
+            max-height: none;
+            margin: 0;
+            transform: translateY(-50%);
+            z-index: 360;
+            padding: 8px;
+            border-radius: 12px;
+            box-shadow: 0 28px 80px rgba(0,0,0,.66);
+          }
+
+          .notesToolsSubmenu {
+            left: 12px;
+            right: 12px;
+            top: 50%;
+          }
+
+          .notesToolsChoice,
+          .notesToolsSubmenuItem {
+            min-height: 42px;
+            padding: 9px 10px;
+            font-size: 10px;
+          }
+
+          .notesToolsTemplateChoice {
+            gap: 3px;
+          }
+
+          .notesResponsiveContentGrid {
+            gap: 10px !important;
+          }
+
+          .notesResponsiveListPanel,
+          .notesResponsiveDetailPanel {
+            width: 100%;
+          }
+
+          .notesResponsiveDetailPanel {
+            overflow: visible !important;
+          }
+
+          .detailToolbarArea,
+          .detailPrimaryActions {
+            min-width: 0;
           }
 
           .notesResponsiveSearchRow {
@@ -6840,6 +6943,61 @@ export default function NotesView({ vault, onVaultChange }) {
 
           .notesResponsiveSearchRow > input {
             padding-left: 24px !important;
+          }
+          .detailPrimaryActions {
+            overflow-x: auto;
+            flex-wrap: nowrap !important;
+            scrollbar-width: none;
+            padding-bottom: 2px;
+          }
+
+          .detailPrimaryActions::-webkit-scrollbar {
+            display: none;
+          }
+
+          .moreToolbarButton,
+          .primaryToolbarButton,
+          .iconButtonCompact {
+            flex: 0 0 auto;
+          }
+
+          .noteToolsMenu {
+            position: fixed !important;
+            top: auto !important;
+            left: 10px !important;
+            right: 10px !important;
+            bottom: calc(env(safe-area-inset-bottom) + 10px) !important;
+            width: auto !important;
+            max-width: none !important;
+            max-height: none !important;
+            overflow: visible !important;
+            z-index: 340 !important;
+            border-radius: 14px !important;
+          }
+
+          .noteFindBar {
+            flex-wrap: wrap;
+          }
+
+          .noteFindInput {
+            min-width: 0 !important;
+            flex: 1 1 140px !important;
+          }
+
+          .savedViewsMenu,
+          .searchFilterMenu,
+          .notesSortMenu,
+          .bulkMoveMenu,
+          .bulkExportMenu {
+            position: fixed !important;
+            left: 12px !important;
+            right: 12px !important;
+            top: 50% !important;
+            bottom: auto !important;
+            width: auto !important;
+            max-width: none !important;
+            transform: translateY(-50%);
+            z-index: 320 !important;
           }
 
           .notesResponsiveSearchRow > button,
@@ -7079,7 +7237,11 @@ export default function NotesView({ vault, onVaultChange }) {
                 </button>
 
                 {showNotesToolsMenu && (
-                  <div className="notesToolsMenuModern" role="menu">
+                  <div
+                    className="notesToolsMenuModern"
+                    role="menu"
+                    data-floating-menu="true"
+                  >
                     <div className="notesToolsMenuHeading">NOTES TOOLS</div>
 
                     <div className="notesToolsMenuGrid">
@@ -7140,7 +7302,10 @@ export default function NotesView({ vault, onVaultChange }) {
                         </button>
 
                         {showExportMenu && (
-                          <div className="notesToolsSubmenu">
+                          <div
+                            className="notesToolsSubmenu"
+                            data-floating-menu="true"
+                          >
                             <div className="notesToolsSubmenuTitle">
                               EXPORT NOTES
                             </div>
@@ -7265,7 +7430,10 @@ export default function NotesView({ vault, onVaultChange }) {
                           </span>
                         </button>
                         {showAutoLockMenu && (
-                          <div className="notesToolsInlinePanel">
+                          <div
+                            className="notesToolsInlinePanel"
+                            data-floating-menu="true"
+                          >
                             {[
                               [0, "Off"],
                               [5, "5 minutes"],
@@ -7511,7 +7679,7 @@ export default function NotesView({ vault, onVaultChange }) {
             </button>
 
             {showSavedViewsMenu && (
-              <div style={styles.savedViewsMenu}>
+              <div style={styles.savedViewsMenu} data-floating-menu="true">
                 <div style={styles.savedViewsTitle}>SAVED VIEWS</div>
 
                 <div style={styles.savedViewsHint}>
@@ -7616,7 +7784,7 @@ export default function NotesView({ vault, onVaultChange }) {
             </button>
 
             {showSearchFilters && (
-              <div style={styles.searchFilterMenu}>
+              <div style={styles.searchFilterMenu} data-floating-menu="true">
                 <div style={styles.searchFilterTitle}>SEARCH FILTERS</div>
 
                 <button
@@ -7756,7 +7924,7 @@ export default function NotesView({ vault, onVaultChange }) {
               </button>
 
               {showSortMenu && (
-                <div style={styles.notesSortMenu}>
+                <div style={styles.notesSortMenu} data-floating-menu="true">
                   {[
                     ["updated", "Recently updated"],
                     ["created", "Recently created"],
@@ -7934,7 +8102,10 @@ export default function NotesView({ vault, onVaultChange }) {
                     </button>
 
                     {showBulkMoveMenu && (
-                      <div style={styles.bulkMoveMenu}>
+                      <div
+                        style={styles.bulkMoveMenu}
+                        data-floating-menu="true"
+                      >
                         <div style={styles.bulkMoveMenuTitle}>
                           MOVE TO FOLDER
                         </div>
@@ -7986,7 +8157,10 @@ export default function NotesView({ vault, onVaultChange }) {
                     </button>
 
                     {showBulkExportMenu && (
-                      <div style={styles.bulkExportMenu}>
+                      <div
+                        style={styles.bulkExportMenu}
+                        data-floating-menu="true"
+                      >
                         <div style={styles.bulkExportMenuTitle}>
                           EXPORT SELECTED
                         </div>
@@ -8515,7 +8689,10 @@ export default function NotesView({ vault, onVaultChange }) {
                     </div>
 
                     {showNoteToolsMenu && (
-                      <div style={styles.noteToolsMenu}>
+                      <div
+                        style={styles.noteToolsMenu}
+                        data-floating-menu="true"
+                      >
                         <div style={styles.noteToolsMenuHeader}>
                           NOTE ACTIONS
                         </div>
@@ -8736,7 +8913,7 @@ export default function NotesView({ vault, onVaultChange }) {
                   </div>
                 </div>
 
-                <div style={styles.noteInfoBar}>
+                <div style={styles.noteInfoBar} data-floating-menu="true">
                   <div style={styles.noteInfoLeft}>
                     <div style={styles.noteInfoTitle}>NOTE INFO</div>
                     <div style={styles.noteInfoStats}>
@@ -8835,7 +9012,7 @@ export default function NotesView({ vault, onVaultChange }) {
                 )}
 
                 {showNoteFind && (
-                  <div style={styles.noteFindBar}>
+                  <div style={styles.noteFindBar} data-floating-menu="true">
                     <Search size={13} />
                     <input
                       value={noteFindQuery}

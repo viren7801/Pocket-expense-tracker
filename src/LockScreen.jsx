@@ -94,6 +94,43 @@ export default function LockScreen({ children }) {
 
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
+  // Explicit refs let the global outside-click handler distinguish the
+  // account button/menu from every other part of the application.
+  const accountMenuRef = useRef(null);
+  const accountButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (!showAccountMenu) return undefined;
+
+    const closeOnOutsideInteraction = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      const insideMenu = accountMenuRef.current?.contains(target);
+      const insideButton = accountButtonRef.current?.contains(target);
+
+      if (!insideMenu && !insideButton) {
+        setShowAccountMenu(false);
+      }
+    };
+
+    // Capture phase makes this reliable even when another modal/dropdown
+    // stops propagation in its own React handlers.
+    window.addEventListener("pointerdown", closeOnOutsideInteraction, true);
+    window.addEventListener("mousedown", closeOnOutsideInteraction, true);
+    window.addEventListener("touchstart", closeOnOutsideInteraction, true);
+
+    return () => {
+      window.removeEventListener(
+        "pointerdown",
+        closeOnOutsideInteraction,
+        true,
+      );
+      window.removeEventListener("mousedown", closeOnOutsideInteraction, true);
+      window.removeEventListener("touchstart", closeOnOutsideInteraction, true);
+    };
+  }, [showAccountMenu]);
+
   /*
    * ==========================================================
    * DEVICE MANAGEMENT
@@ -125,6 +162,12 @@ export default function LockScreen({ children }) {
    */
 
   const [pairMode, setPairMode] = useState(null);
+  useEffect(() => {
+    if (showDevices || showAddDevice || showLogoutConfirm || pairMode) {
+      setShowAccountMenu(false);
+    }
+  }, [showDevices, showAddDevice, showLogoutConfirm, pairMode]);
+
   /*
    * null
    * trusted
@@ -1008,7 +1051,7 @@ export default function LockScreen({ children }) {
   const accountMenu = (
     <>
       {showAccountMenu && (
-        <div style={styles.accountMenu}>
+        <div ref={accountMenuRef} style={styles.accountMenu}>
           <div style={styles.accountHeader}>
             <div style={styles.avatar}>V</div>
 
@@ -1118,6 +1161,7 @@ export default function LockScreen({ children }) {
       )}
 
       <button
+        ref={accountButtonRef}
         type="button"
         style={styles.accountButton}
         onClick={() => setShowAccountMenu((value) => !value)}
