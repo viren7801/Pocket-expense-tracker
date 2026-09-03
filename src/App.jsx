@@ -49,6 +49,7 @@ import {
   ChevronRight,
   ShieldCheck,
   SearchCheck,
+  MoreHorizontal,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
@@ -567,6 +568,8 @@ export default function LedgerApp() {
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
           saveError={saveError}
+          tab={tab}
+          setTab={setTab}
         />
         <input
           ref={fileInputRef}
@@ -660,6 +663,16 @@ export default function LedgerApp() {
           />
         )}
       </main>
+
+      <MobileBottomNav
+        tab={tab}
+        setTab={setTab}
+        onAddTxn={() => {
+          setEditingTxn(null);
+          setTxnPrefill(null);
+          setShowTxnForm(true);
+        }}
+      />
 
       {commandOpen && (
         <CommandPalette
@@ -844,6 +857,8 @@ function TopBar({
   onImportClick,
   onScanClick,
   saveError,
+  tab,
+  setTab,
 }) {
   return (
     <header style={styles.topBar} className="ledger-topbar">
@@ -857,7 +872,7 @@ function TopBar({
         <kbd style={styles.searchKey}>⌘ K</kbd>
       </button>
 
-      <div style={styles.topActions}>
+      <div style={styles.topActions} className="ledger-top-actions">
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -886,6 +901,38 @@ function TopBar({
         </button>
       </div>
 
+      <div className="mobile-quick-actions" aria-label="Quick actions">
+        <button
+          className="mobile-quick-action"
+          onClick={() => setTab("dashboard")}
+        >
+          <CalendarDays size={19} />
+          <span>Today</span>
+        </button>
+        <button
+          className="mobile-quick-action"
+          onClick={() => setTab("dashboard")}
+        >
+          <LayoutDashboard size={19} />
+          <span>Dashboard</span>
+        </button>
+        <button className="mobile-add-entry" onClick={onAddTxn}>
+          <Plus size={24} />
+          <span>Add entry</span>
+        </button>
+        <button className="mobile-quick-action" onClick={onScanClick}>
+          <Camera size={19} />
+          <span>Scan</span>
+        </button>
+        <button
+          className="mobile-quick-action"
+          onClick={() => setTab("accounts")}
+        >
+          <MoreHorizontal size={20} />
+          <span>More</span>
+        </button>
+      </div>
+
       <div style={styles.utilityRow} className="ledger-utility-row">
         {saveError && (
           <span style={{ fontSize: 11, color: "#D9735C" }}>
@@ -903,6 +950,47 @@ function TopBar({
         </button>
       </div>
     </header>
+  );
+}
+
+function MobileBottomNav({ tab, setTab, onAddTxn }) {
+  const items = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "transactions", label: "Pocket", icon: Wallet },
+    { id: "passwords", label: "Passwords", icon: KeyRound },
+    { id: "notes", label: "Notes", icon: NotebookPen },
+  ];
+
+  return (
+    <nav className="mobile-bottom-nav" aria-label="Primary navigation">
+      {items.slice(0, 2).map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className={tab === id ? "active" : ""}
+          onClick={() => setTab(id)}
+        >
+          <Icon size={20} strokeWidth={1.9} />
+          <span>{label}</span>
+        </button>
+      ))}
+      <button
+        className="mobile-nav-add"
+        onClick={onAddTxn}
+        aria-label="Add entry"
+      >
+        <Plus size={22} />
+      </button>
+      {items.slice(2).map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className={tab === id ? "active" : ""}
+          onClick={() => setTab(id)}
+        >
+          <Icon size={20} strokeWidth={1.9} />
+          <span>{label}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -2640,109 +2728,224 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-@media (max-width: 980px) {
-  .ledger-sidebar { width: 205px !important; }
+/* Responsive shell */
+.mobile-bottom-nav,
+.mobile-quick-actions { display: none; }
+
+@media (max-width: 1180px) and (min-width: 769px) {
+  .ledger-sidebar { width: 220px !important; }
+  .welcome-block { padding-top: 34px !important; }
   .hero-grid { grid-template-columns: 1fr !important; }
   .widget-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
-  .widget-span-2 { grid-column: span 2 !important; }
+  .ledger-topbar { padding: 18px 22px 10px !important; }
+  .ledger-page { padding: 14px 22px 32px !important; }
 }
 
 @media (max-width: 768px) {
+  html, body, #root { width: 100%; max-width: 100%; overflow-x: hidden; }
+  * { box-sizing: border-box; }
+
   .ledger-app {
-    flex-direction: column !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    overflow-x: hidden !important;
+    display: block !important;
+    min-height: 100dvh !important;
+    padding-bottom: calc(82px + env(safe-area-inset-bottom)) !important;
+    overflow-x: clip !important;
   }
 
-  .ledger-sidebar {
-    width: 100% !important;
-    border-right: none !important;
-    border-bottom: 1px solid #22262E !important;
-    padding: 12px !important;
-    flex-shrink: 1 !important;
-  }
-  .ledger-sidebar .brand { display: none !important; }
-  .ledger-nav {
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    gap: 2px !important;
-    margin-top: 0 !important;
-    -webkit-overflow-scrolling: touch;
-  }
-  .ledger-nav button {
-    flex: 0 0 auto !important;
-    white-space: nowrap !important;
-    border-left: none !important;
-    border-bottom: 2px solid transparent !important;
-    padding: 8px 10px !important;
-  }
+  .ledger-sidebar { display: none !important; }
 
   .ledger-topbar {
-    padding: 16px !important;
-    flex-direction: column !important;
-    align-items: stretch !important;
+    position: static !important;
+    display: block !important;
+    padding: max(18px, env(safe-area-inset-top)) 16px 8px !important;
+    background: #0E1013 !important;
+    backdrop-filter: none !important;
+  }
+
+  .ledger-topbar .global-search {
+    width: 100% !important;
+    height: 52px !important;
+    border-radius: 16px !important;
+    font-size: 14px !important;
+    margin-bottom: 14px !important;
+  }
+
+  .ledger-top-actions { display: none !important; }
+  .ledger-utility-row { display: none !important; }
+
+  .mobile-quick-actions {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: start;
+    gap: 8px;
+    width: 100%;
+    padding: 2px 0 10px;
+  }
+
+  .mobile-quick-action,
+  .mobile-add-entry {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #A9AFBA;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    font-family: Inter, sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+
+  .mobile-quick-action::first-line { color: inherit; }
+
+  .mobile-quick-action svg {
+    width: 44px;
+    height: 44px;
+    padding: 12px;
+    border-radius: 15px;
+    border: 1px solid #2A2F38;
+    background: #161A20;
+    color: #C5CBD5;
+  }
+
+  .mobile-add-entry { color: #69E883; }
+  .mobile-add-entry svg {
+    width: 52px;
+    height: 52px;
+    padding: 14px;
+    border-radius: 18px;
+    background: #4FE36B;
+    color: #08120B;
+    box-shadow: 0 10px 28px rgba(79,227,107,.18);
+  }
+
+  .ledger-page,
+  .modulePage {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 8px 16px 28px !important;
+    margin: 0 !important;
+  }
+
+  .hero-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .netWorthCard {
+    min-height: 220px !important;
+    padding: 20px !important;
+    border-radius: 20px !important;
+  }
+
+  .netWorthValue { font-size: clamp(38px, 11vw, 52px) !important; }
+  .monthCard { min-height: auto !important; padding: 18px !important; }
+  .metricRows { margin-top: 20px !important; }
+
+  .widget-grid {
+    grid-template-columns: 1fr !important;
     gap: 12px !important;
   }
-  .ledger-stats {
-    gap: 16px !important;
-    justify-content: space-between !important;
-  }
-  .ledger-actions {
-    justify-content: stretch !important;
-  }
-  .ledger-actions button {
-    flex: 1 1 auto !important;
-    justify-content: center !important;
-    font-size: 12px !important;
-    padding: 9px 10px !important;
+
+  .widget-grid > * {
+    grid-column: span 1 !important;
+    min-width: 0 !important;
   }
 
-  .ledger-page {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box !important;
-  padding: 0 14px 20px !important;
-}
+  .widget {
+    padding: 16px !important;
+    border-radius: 17px !important;
+  }
 
-  .ledger-grid-3, .ledger-grid-main {
-  grid-template-columns: 1fr !important;
-  width: 100% !important;
-  min-width: 0 !important;
-}
+  .quickRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
 
-.ledger-grid-3 > *, .ledger-grid-main > * {
-  min-width: 0 !important;
-  max-width: 100% !important;
-  overflow: hidden !important;
-}
+  .quickCard {
+    min-height: 76px;
+    padding: 12px !important;
+    gap: 9px !important;
+  }
 
-.recharts-responsive-container {
-  min-width: 0 !important;
-  max-width: 100% !important;
-}
-}
+  .quickCardStrong { font-size: 10px !important; }
 
-@media (max-width: 420px) {
-  .ledger-stats { gap: 10px 16px !important; }
-}
-@media (max-width: 600px) {
-  .ledger-sidebar { width: 100% !important; padding: 14px !important; }
-  .welcome-block { padding: 20px 10px !important; }
-  .ledger-nav { display: grid !important; grid-template-columns: repeat(2,1fr) !important; }
-  .ledger-sidebar .brand { display: flex !important; }
-  .ledger-topbar { display: flex !important; flex-direction: column !important; align-items: stretch !important; padding: 14px !important; }
-  .ledger-topbar .global-search { width: 100% !important; }
-  .topActions { flex-wrap: wrap !important; }
-  .ledger-utility-row { justify-content: stretch !important; flex-wrap: wrap !important; }
-  .ledger-utility-row button { flex: 1 1 30% !important; justify-content: center !important; }
-  .ledger-page, .modulePage { padding: 12px 14px 28px !important; }
-  .widget-grid { grid-template-columns: 1fr !important; }
-  .widget-span-2 { grid-column: span 1 !important; }
-  .quickRow { grid-template-columns: 1fr !important; }
   .placeholderGrid { grid-template-columns: 1fr !important; }
+  .moduleHero { padding: 18px !important; align-items: flex-start !important; }
+  .moduleTitle { font-size: 28px !important; }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: center;
+    gap: 2px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 80;
+    min-height: 72px;
+    padding: 9px 8px calc(9px + env(safe-area-inset-bottom));
+    background: rgba(19,22,27,.97);
+    border-top: 1px solid #2A2F38;
+    backdrop-filter: blur(18px);
+  }
+
+  .mobile-bottom-nav button {
+    border: 0;
+    background: transparent;
+    color: #7D8490;
+    min-width: 0;
+    min-height: 52px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-family: Inter, sans-serif;
+    font-size: 9px;
+    cursor: pointer;
+  }
+
+  .mobile-bottom-nav button.active { color: #69E883; }
+
+  .mobile-bottom-nav .mobile-nav-add {
+    width: 48px;
+    height: 48px;
+    min-height: 48px;
+    margin: 0 auto;
+    border-radius: 16px;
+    background: #4FE36B;
+    color: #08120B;
+    box-shadow: 0 8px 24px rgba(79,227,107,.2);
+  }
+
+  .commandOverlay { padding-top: 8vh !important; }
+  .commandPanel { width: calc(100vw - 24px) !important; }
+
+  .recharts-responsive-container { min-width: 0 !important; max-width: 100% !important; }
 }
+
+@media (max-width: 390px) {
+  .mobile-quick-actions { gap: 4px; }
+  .mobile-quick-action,
+  .mobile-add-entry { font-size: 9px; }
+  .mobile-quick-action svg { width: 40px; height: 40px; padding: 11px; }
+  .mobile-add-entry svg { width: 48px; height: 48px; padding: 13px; }
+  .ledger-page { padding-left: 12px !important; padding-right: 12px !important; }
+}
+
+@media (min-width: 769px) {
+  .mobile-bottom-nav,
+  .mobile-quick-actions { display: none !important; }
+}
+
 
 `;
 
