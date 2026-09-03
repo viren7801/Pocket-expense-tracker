@@ -5833,7 +5833,7 @@ export default function NotesView({ vault, onVaultChange }) {
     setShowChangePassword(true);
   }
 
-  function openRecoveryFromLocked() {
+  function startPasskeyRecovery() {
     setError("");
 
     if (vault?.version !== 2 || !vault?.passkeyWraps?.length) {
@@ -5841,10 +5841,26 @@ export default function NotesView({ vault, onVaultChange }) {
       return;
     }
 
+    // A recovery attempt must not leave the normal change-password form open.
+    // This also makes the same recovery flow available from both the locked
+    // vault screen and the Change vault password screen.
+    setShowChangePassword(false);
+    setCurrentVaultPassword("");
+    setNewVaultPassword("");
+    setConfirmNewVaultPassword("");
+
     setRecoveryMode("authenticate");
     setRecoveryNewPassword("");
     setRecoveryConfirmPassword("");
     recoveredDataKeyRef.current = null;
+  }
+
+  function openRecoveryFromLocked() {
+    startPasskeyRecovery();
+  }
+
+  function openRecoveryFromChangePassword() {
+    startPasskeyRecovery();
   }
 
   async function submitRecoveryAuthentication() {
@@ -10963,6 +10979,82 @@ export default function NotesView({ vault, onVaultChange }) {
           </div>
         )}
 
+        {recoveryMode === "authenticate" && (
+          <div style={styles.overlay}>
+            <div style={styles.formModal}>
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => {
+                  setRecoveryMode(null);
+                  setRecoveryNewPassword("");
+                  setRecoveryConfirmPassword("");
+                  recoveredDataKeyRef.current = null;
+                  setError("");
+                }}
+                title="Close passkey recovery"
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.iconLargeSmall}>
+                <Fingerprint size={22} />
+              </div>
+
+              <div style={styles.detailEyebrow}>PASSKEY RECOVERY</div>
+
+              <h2 style={styles.formTitle}>Verify your passkey</h2>
+
+              <p style={styles.copy}>
+                Use Touch ID, Face ID, or your Pocket passkey to verify your
+                identity before setting a new notes vault password.
+              </p>
+
+              <div style={styles.recoveryWaitingCard}>
+                <div style={styles.recoveryWaitingIcon}>
+                  <Fingerprint size={20} />
+                </div>
+
+                <div>
+                  <div style={styles.recoveryWaitingTitle}>
+                    Passkey required
+                  </div>
+
+                  <div style={styles.recoveryWaitingCopy}>
+                    Your current vault password is not required after passkey
+                    verification.
+                  </div>
+                </div>
+              </div>
+
+              {error && <div style={styles.error}>{error}</div>}
+
+              <button
+                type="button"
+                style={styles.primaryButton}
+                disabled={recoveryBusy}
+                onClick={submitRecoveryAuthentication}
+              >
+                {recoveryBusy
+                  ? "Waiting for passkey…"
+                  : "Use Face ID / passkey"}
+              </button>
+
+              <button
+                type="button"
+                style={styles.linkButton}
+                disabled={recoveryBusy}
+                onClick={() => {
+                  setRecoveryMode(null);
+                  setError("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {recoveryMode === "reset" && (
           <div style={styles.overlay}>
             <div style={styles.formModal}>
@@ -11078,6 +11170,21 @@ export default function NotesView({ vault, onVaultChange }) {
                 style={styles.input}
                 autoFocus
               />
+
+              {recoveryEnabled && (
+                <button
+                  type="button"
+                  style={styles.recoveryInlineButton}
+                  disabled={changePasswordBusy || recoveryBusy}
+                  onClick={openRecoveryFromChangePassword}
+                >
+                  <Fingerprint size={15} />
+                  <span>
+                    Forgot password? Use Face ID, Touch ID, or passkey
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              )}
 
               <label style={styles.label}>New vault password</label>
 
@@ -12438,6 +12545,24 @@ const styles = {
     flex: 1,
     height: 1,
     background: "#292D35",
+  },
+
+  recoveryInlineButton: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: -2,
+    marginBottom: 2,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid rgba(86, 207, 116, 0.28)",
+    background: "rgba(86, 207, 116, 0.06)",
+    color: "#9DE7AE",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    textAlign: "left",
   },
 
   recoveryButton: {
