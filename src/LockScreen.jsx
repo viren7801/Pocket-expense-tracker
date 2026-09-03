@@ -1077,6 +1077,32 @@ export default function LockScreen({ children }) {
             style={styles.menuItem}
             onClick={() => {
               setShowAccountMenu(false);
+              window.dispatchEvent(
+                new CustomEvent("pocket:open-notes-settings"),
+              );
+            }}
+          >
+            <div style={styles.menuIcon}>
+              <Settings size={16} />
+            </div>
+
+            <div style={styles.menuText}>
+              <div style={styles.menuTitle}>Settings</div>
+              <div style={styles.menuDescription}>
+                Vault, notifications, retention & preferences
+              </div>
+            </div>
+
+            <ChevronRight size={15} color="#5F646D" />
+          </button>
+
+          <div style={styles.divider} />
+
+          <button
+            type="button"
+            style={styles.menuItem}
+            onClick={() => {
+              setShowAccountMenu(false);
 
               setShowAddDevice(true);
 
@@ -1163,6 +1189,7 @@ export default function LockScreen({ children }) {
       <button
         ref={accountButtonRef}
         type="button"
+        className="pocketAccountButton"
         style={styles.accountButton}
         onClick={() => setShowAccountMenu((value) => !value)}
       >
@@ -1917,6 +1944,18 @@ export default function LockScreen({ children }) {
               transform: rotate(360deg);
             }
           }
+
+          @media (max-width: 760px) {
+            .pocketAccountButton {
+              left: 12px !important;
+              right: 12px !important;
+              bottom: max(10px, env(safe-area-inset-bottom)) !important;
+              width: auto !important;
+              min-width: 0 !important;
+              max-width: 360px !important;
+              padding: 8px 10px !important;
+            }
+          }
         `}</style>
 
         {children}
@@ -1975,6 +2014,18 @@ export default function LockScreen({ children }) {
 
             to {
               transform: rotate(360deg);
+            }
+          }
+
+          @media (max-width: 760px) {
+            .pocketAccountButton {
+              left: 12px !important;
+              right: 12px !important;
+              bottom: max(10px, env(safe-area-inset-bottom)) !important;
+              width: auto !important;
+              min-width: 0 !important;
+              max-width: 360px !important;
+              padding: 8px 10px !important;
             }
           }
         `}</style>

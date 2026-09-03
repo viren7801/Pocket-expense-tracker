@@ -615,6 +615,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showNotesSettings, setShowNotesSettings] = useState(false);
   const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(0);
   const [trashRetentionDays, setTrashRetentionDays] = useState(0);
@@ -5850,6 +5851,21 @@ export default function NotesView({ vault, onVaultChange }) {
     await beginForgotPasswordRecovery();
   }
 
+  useEffect(() => {
+    const openSettings = () => {
+      setShowNotesSettings(true);
+      setShowNoteToolsMenu(false);
+      setShowNotesToolsMenu(false);
+      setShowExportMenu(false);
+      setShowAutoLockMenu(false);
+      setShowTrashRetentionMenu(false);
+      setShowTemplateMenu(false);
+    };
+
+    window.addEventListener("pocket:open-notes-settings", openSettings);
+    return () =>
+      window.removeEventListener("pocket:open-notes-settings", openSettings);
+  }, []);
   if (phase === "setup") {
     return (
       <div className="notesResponsivePage" style={styles.page}>
@@ -6390,6 +6406,13 @@ export default function NotesView({ vault, onVaultChange }) {
   return (
     <>
       <style>{`
+        .settingsItem span, .settingsItemControl span { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+        .settingsItem strong, .settingsItemControl strong { font-size: 12px; color: #ECEAE3; }
+        .settingsItem small, .settingsItemControl small { font-size: 10px; color: #727883; line-height: 1.35; }
+        @media (max-width: 640px) {
+          .settingsGrid { grid-template-columns: 1fr !important; }
+        }
+
         .notesResponsivePage {
           width: 100%;
           max-width: 100%;
@@ -10685,6 +10708,206 @@ export default function NotesView({ vault, onVaultChange }) {
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {showNotesSettings && (
+          <div style={styles.overlay}>
+            <div
+              style={{
+                ...styles.formModal,
+                width: "min(620px, calc(100vw - 28px))",
+                maxHeight: "calc(100vh - 28px)",
+                overflowY: "auto",
+              }}
+            >
+              <button
+                type="button"
+                style={styles.modalClose}
+                onClick={() => setShowNotesSettings(false)}
+                title="Close settings"
+              >
+                <X size={17} />
+              </button>
+
+              <div style={styles.detailEyebrow}>SETTINGS</div>
+              <h2 style={styles.formTitle}>Notes settings</h2>
+              <p style={styles.copy}>
+                Security, retention, notifications, and preferences live here so
+                the main Notes workspace stays focused.
+              </p>
+
+              <div style={styles.settingsSection}>
+                <div style={styles.settingsSectionLabel}>SECURITY</div>
+                <div style={styles.settingsGrid}>
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => {
+                      setShowNotesSettings(false);
+                      openChangePassword();
+                    }}
+                  >
+                    <ShieldCheck size={16} />
+                    <span>
+                      <strong>Change vault password</strong>
+                      <small>Protect your encrypted notes</small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => {
+                      setShowNotesSettings(false);
+                      setShowRecoverySetup(true);
+                    }}
+                  >
+                    <Fingerprint size={16} />
+                    <span>
+                      <strong>Passkey recovery</strong>
+                      <small>
+                        {recoveryEnabled ? "Enabled" : "Set up recovery"}
+                      </small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+
+                  <div style={styles.settingsItemControl}>
+                    <Lock size={16} />
+                    <span>
+                      <strong>Auto-lock</strong>
+                      <small>Lock automatically after inactivity</small>
+                    </span>
+                    <select
+                      value={autoLockMinutes}
+                      onChange={(event) =>
+                        setAutoLockDuration(Number(event.target.value))
+                      }
+                      style={styles.settingsSelect}
+                    >
+                      <option value={0}>Off</option>
+                      <option value={5}>5 min</option>
+                      <option value={15}>15 min</option>
+                      <option value={30}>30 min</option>
+                      <option value={60}>1 hour</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => {
+                      setShowNotesSettings(false);
+                      lockVault();
+                    }}
+                  >
+                    <Lock size={16} />
+                    <span>
+                      <strong>Lock vault now</strong>
+                      <small>End the current unlocked session</small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={styles.settingsSection}>
+                <div style={styles.settingsSectionLabel}>WORKSPACE</div>
+                <div style={styles.settingsGrid}>
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => {
+                      setShowNotesSettings(false);
+                      setShowShortcuts(true);
+                    }}
+                  >
+                    <Keyboard size={16} />
+                    <span>
+                      <strong>Keyboard shortcuts</strong>
+                      <small>View available editor shortcuts</small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+
+                  <div style={styles.settingsItemControl}>
+                    <Trash2 size={16} />
+                    <span>
+                      <strong>Trash retention</strong>
+                      <small>How long deleted notes are kept</small>
+                    </span>
+                    <select
+                      value={trashRetentionDays}
+                      onChange={(event) =>
+                        setTrashRetention(Number(event.target.value))
+                      }
+                      style={styles.settingsSelect}
+                    >
+                      <option value={0}>Never</option>
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div style={styles.settingsSection}>
+                <div style={styles.settingsSectionLabel}>INTEGRATIONS</div>
+                <div style={styles.settingsGrid}>
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => {
+                      setShowNotesSettings(false);
+                      telegramConnected
+                        ? setShowTelegramConnect(true)
+                        : connectTelegram();
+                    }}
+                  >
+                    <Bell size={16} />
+                    <span>
+                      <strong>Telegram reminders</strong>
+                      <small>
+                        {telegramConnected
+                          ? `Connected${telegramUsername ? ` · ${telegramUsername}` : ""}`
+                          : "Connect Telegram"}
+                      </small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+
+                  <button
+                    type="button"
+                    style={styles.settingsItem}
+                    onClick={() => enableNotifications()}
+                  >
+                    <Bell size={16} />
+                    <span>
+                      <strong>Browser notifications</strong>
+                      <small>
+                        {notificationsEnabled
+                          ? "Enabled"
+                          : "Enable notifications"}
+                      </small>
+                    </span>
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={styles.importFooter}>
+                <button
+                  type="button"
+                  style={styles.secondaryButton}
+                  onClick={() => setShowNotesSettings(false)}
+                >
+                  Done
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -15439,6 +15662,54 @@ const styles = {
     background: "linear-gradient(to bottom, rgba(26,29,36,0.95), #1A1D24 28px)",
   },
 
+  settingsSection: {
+    marginTop: 18,
+  },
+  settingsSectionLabel: {
+    fontSize: 10,
+    letterSpacing: "0.14em",
+    color: "#727883",
+    fontWeight: 700,
+    marginBottom: 9,
+  },
+  settingsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 8,
+  },
+  settingsItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
+    padding: "11px 12px",
+    background: "#181B21",
+    border: "1px solid #2C3038",
+    borderRadius: 10,
+    color: "#D6D8DD",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  settingsItemControl: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    minWidth: 0,
+    padding: "10px 12px",
+    background: "#181B21",
+    border: "1px solid #2C3038",
+    borderRadius: 10,
+    color: "#D6D8DD",
+  },
+  settingsSelect: {
+    marginLeft: "auto",
+    background: "#14161B",
+    color: "#D6D8DD",
+    border: "1px solid #30343D",
+    borderRadius: 7,
+    padding: "6px 7px",
+    maxWidth: 92,
+  },
   formModal: {
     width: "min(560px, calc(100vw - 40px))",
     maxHeight: "calc(100vh - 40px)",
