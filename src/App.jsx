@@ -49,7 +49,6 @@ import {
   ChevronRight,
   ShieldCheck,
   SearchCheck,
-  MoreHorizontal,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
@@ -567,9 +566,8 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
+          onProfileClick={() => setTab("accounts")}
           saveError={saveError}
-          tab={tab}
-          setTab={setTab}
         />
         <input
           ref={fileInputRef}
@@ -850,19 +848,75 @@ function Sidebar({ tab, setTab }) {
   );
 }
 
+function MobileBottomNav({ tab, setTab, onAddTxn }) {
+  const items = [
+    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "transactions", label: "Pocket", icon: Wallet },
+    { id: "passwords", label: "Passwords", icon: KeyRound },
+    { id: "notes", label: "Notes", icon: NotebookPen },
+  ];
+  return (
+    <nav className="mobile-bottom-nav" aria-label="Primary navigation">
+      {items.slice(0, 2).map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className={tab === id ? "active" : ""}
+          onClick={() => setTab(id)}
+        >
+          <Icon size={22} />
+          <span>{label}</span>
+        </button>
+      ))}
+      <button
+        className="mobile-bottom-add"
+        onClick={onAddTxn}
+        aria-label="Add entry"
+      >
+        <Plus size={28} />
+      </button>
+      {items.slice(2).map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className={tab === id ? "active" : ""}
+          onClick={() => setTab(id)}
+        >
+          <Icon size={22} />
+          <span>{label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function TopBar({
   onSearch,
   onAddTxn,
   onExport,
   onImportClick,
   onScanClick,
+  onProfileClick,
   saveError,
-  tab,
-  setTab,
 }) {
   return (
     <header style={styles.topBar} className="ledger-topbar">
+      <div className="mobile-dashboard-header">
+        <div>
+          <div className="mobile-greeting">
+            Hello, Viren <span>👋</span>
+          </div>
+          <div className="mobile-subtitle">Here's your overview</div>
+        </div>
+        <button
+          className="mobile-avatar-button"
+          onClick={onProfileClick}
+          aria-label="Open profile"
+        >
+          V
+        </button>
+      </div>
+
       <button
+        className="global-search"
         style={styles.globalSearch}
         onClick={onSearch}
         aria-label="Search everything"
@@ -872,7 +926,7 @@ function TopBar({
         <kbd style={styles.searchKey}>⌘ K</kbd>
       </button>
 
-      <div style={styles.topActions} className="ledger-top-actions">
+      <div style={styles.topActions}>
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -901,34 +955,28 @@ function TopBar({
         </button>
       </div>
 
-      <div className="mobile-quick-actions" aria-label="Quick actions">
-        <button
-          className="mobile-quick-action"
-          onClick={() => setTab("dashboard")}
-        >
-          <CalendarDays size={19} />
+      <div className="mobile-quick-actions">
+        <button className="mobile-quick-action">
+          <CalendarDays size={23} />
           <span>Today</span>
         </button>
-        <button
-          className="mobile-quick-action"
-          onClick={() => setTab("dashboard")}
-        >
-          <LayoutDashboard size={19} />
+        <button className="mobile-quick-action">
+          <LayoutDashboard size={23} />
           <span>Dashboard</span>
         </button>
-        <button className="mobile-add-entry" onClick={onAddTxn}>
-          <Plus size={24} />
+        <button
+          className="mobile-quick-action mobile-add-action"
+          onClick={onAddTxn}
+        >
+          <Plus size={32} />
           <span>Add entry</span>
         </button>
         <button className="mobile-quick-action" onClick={onScanClick}>
-          <Camera size={19} />
+          <Camera size={23} />
           <span>Scan</span>
         </button>
-        <button
-          className="mobile-quick-action"
-          onClick={() => setTab("accounts")}
-        >
-          <MoreHorizontal size={20} />
+        <button className="mobile-quick-action">
+          <span style={{ fontSize: 30, lineHeight: 1 }}>•••</span>
           <span>More</span>
         </button>
       </div>
@@ -950,47 +998,6 @@ function TopBar({
         </button>
       </div>
     </header>
-  );
-}
-
-function MobileBottomNav({ tab, setTab, onAddTxn }) {
-  const items = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "transactions", label: "Pocket", icon: Wallet },
-    { id: "passwords", label: "Passwords", icon: KeyRound },
-    { id: "notes", label: "Notes", icon: NotebookPen },
-  ];
-
-  return (
-    <nav className="mobile-bottom-nav" aria-label="Primary navigation">
-      {items.slice(0, 2).map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          className={tab === id ? "active" : ""}
-          onClick={() => setTab(id)}
-        >
-          <Icon size={20} strokeWidth={1.9} />
-          <span>{label}</span>
-        </button>
-      ))}
-      <button
-        className="mobile-nav-add"
-        onClick={onAddTxn}
-        aria-label="Add entry"
-      >
-        <Plus size={22} />
-      </button>
-      {items.slice(2).map(({ id, label, icon: Icon }) => (
-        <button
-          key={id}
-          className={tab === id ? "active" : ""}
-          onClick={() => setTab(id)}
-        >
-          <Icon size={20} strokeWidth={1.9} />
-          <span>{label}</span>
-        </button>
-      ))}
-    </nav>
   );
 }
 
@@ -2728,224 +2735,64 @@ const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* Responsive shell */
-.mobile-bottom-nav,
-.mobile-quick-actions { display: none; }
-
-@media (max-width: 1180px) and (min-width: 769px) {
-  .ledger-sidebar { width: 220px !important; }
-  .welcome-block { padding-top: 34px !important; }
+@media (max-width: 1023px) and (min-width: 769px) {
+  .ledger-sidebar { width: 210px !important; }
   .hero-grid { grid-template-columns: 1fr !important; }
   .widget-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
-  .ledger-topbar { padding: 18px 22px 10px !important; }
-  .ledger-page { padding: 14px 22px 32px !important; }
+  .widget-span-2 { grid-column: span 2 !important; }
 }
+
+.mobile-dashboard-header, .mobile-quick-actions, .mobile-bottom-nav { display: none; }
 
 @media (max-width: 768px) {
-  html, body, #root { width: 100%; max-width: 100%; overflow-x: hidden; }
-  * { box-sizing: border-box; }
+  html, body, #root { width:100%; max-width:100%; overflow-x:hidden; background:#0E1013; }
+  .ledger-app { display:block !important; min-height:100dvh !important; width:100% !important; overflow-x:hidden !important; }
+  .ledger-sidebar { display:none !important; }
+  .ledger-app > main { width:100% !important; min-width:0 !important; padding-bottom: calc(92px + env(safe-area-inset-bottom)) !important; }
 
-  .ledger-app {
-    display: block !important;
-    min-height: 100dvh !important;
-    padding-bottom: calc(82px + env(safe-area-inset-bottom)) !important;
-    overflow-x: clip !important;
-  }
+  .ledger-topbar { display:block !important; position:relative !important; top:auto !important; padding:26px 22px 8px !important; background:#0E1013 !important; backdrop-filter:none !important; }
+  .mobile-dashboard-header { display:flex !important; align-items:center; justify-content:space-between; margin-bottom:22px; }
+  .mobile-greeting { font-family:'Space Grotesk',sans-serif; font-size:32px; line-height:1.1; font-weight:600; letter-spacing:-1.2px; color:#F4F2EC; }
+  .mobile-subtitle { margin-top:7px; font-size:16px; color:#8B919B; }
+  .mobile-avatar-button { width:56px; height:56px; flex:0 0 56px; border-radius:50%; border:1px solid rgba(201,164,85,.4); background:linear-gradient(145deg,#E3BE63,#A97E30); color:#18140C; font-size:21px; font-weight:700; cursor:pointer; }
 
-  .ledger-sidebar { display: none !important; }
+  .ledger-topbar .globalSearch, .ledger-topbar .global-search { width:100% !important; height:64px !important; border-radius:20px !important; font-size:17px !important; padding:0 16px !important; box-sizing:border-box !important; }
+  .ledger-topbar .topActions { display:none !important; }
+  .mobile-quick-actions { display:grid !important; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:20px 0 18px; }
+  .mobile-quick-action { border:0; background:transparent; color:#C8CBD2; min-width:0; padding:0; display:flex; flex-direction:column; align-items:center; gap:8px; font-size:13px; font-family:Inter,sans-serif; cursor:pointer; }
+  .mobile-quick-action::first-line { color:inherit; }
+  .mobile-quick-action svg, .mobile-quick-action > span:first-child { width:58px; height:58px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:18px; border:1px solid #2B313B; background:#171B21; box-sizing:border-box; }
+  .mobile-quick-action span:last-child { white-space:nowrap; font-size:13px; }
+  .mobile-add-action { color:#75DD8A; font-weight:600; }
+  .mobile-add-action svg { width:66px !important; height:66px !important; padding:17px !important; border:0 !important; border-radius:21px !important; background:#51D96B !important; color:#0D1810; box-shadow:0 12px 28px rgba(79,227,107,.16); }
+  .mobile-add-action span:last-child { color:#75DD8A; }
+  .ledger-utility-row { display:none !important; }
 
-  .ledger-topbar {
-    position: static !important;
-    display: block !important;
-    padding: max(18px, env(safe-area-inset-top)) 16px 8px !important;
-    background: #0E1013 !important;
-    backdrop-filter: none !important;
-  }
+  .ledger-page, .modulePage { width:100% !important; min-width:0 !important; max-width:100% !important; box-sizing:border-box !important; padding:10px 22px 26px !important; }
+  .ledger-grid-3, .ledger-grid-main, .hero-grid { grid-template-columns:1fr !important; width:100% !important; min-width:0 !important; }
+  .ledger-grid-3 > *, .ledger-grid-main > *, .hero-grid > * { min-width:0 !important; max-width:100% !important; }
+  .widget-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:12px !important; }
+  .widget-span-2 { grid-column:span 2 !important; }
+  .quickRow { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+  .placeholderGrid { grid-template-columns:1fr !important; }
+  .recharts-responsive-container { min-width:0 !important; max-width:100% !important; }
 
-  .ledger-topbar .global-search {
-    width: 100% !important;
-    height: 52px !important;
-    border-radius: 16px !important;
-    font-size: 14px !important;
-    margin-bottom: 14px !important;
-  }
-
-  .ledger-top-actions { display: none !important; }
-  .ledger-utility-row { display: none !important; }
-
-  .mobile-quick-actions {
-    display: grid !important;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    align-items: start;
-    gap: 8px;
-    width: 100%;
-    padding: 2px 0 10px;
-  }
-
-  .mobile-quick-action,
-  .mobile-add-entry {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: #A9AFBA;
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    align-items: center;
-    gap: 7px;
-    font-family: Inter, sans-serif;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 4px 0;
-    cursor: pointer;
-  }
-
-  .mobile-quick-action::first-line { color: inherit; }
-
-  .mobile-quick-action svg {
-    width: 44px;
-    height: 44px;
-    padding: 12px;
-    border-radius: 15px;
-    border: 1px solid #2A2F38;
-    background: #161A20;
-    color: #C5CBD5;
-  }
-
-  .mobile-add-entry { color: #69E883; }
-  .mobile-add-entry svg {
-    width: 52px;
-    height: 52px;
-    padding: 14px;
-    border-radius: 18px;
-    background: #4FE36B;
-    color: #08120B;
-    box-shadow: 0 10px 28px rgba(79,227,107,.18);
-  }
-
-  .ledger-page,
-  .modulePage {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;
-    padding: 8px 16px 28px !important;
-    margin: 0 !important;
-  }
-
-  .hero-grid {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
-    margin-bottom: 12px !important;
-  }
-
-  .netWorthCard {
-    min-height: 220px !important;
-    padding: 20px !important;
-    border-radius: 20px !important;
-  }
-
-  .netWorthValue { font-size: clamp(38px, 11vw, 52px) !important; }
-  .monthCard { min-height: auto !important; padding: 18px !important; }
-  .metricRows { margin-top: 20px !important; }
-
-  .widget-grid {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
-  }
-
-  .widget-grid > * {
-    grid-column: span 1 !important;
-    min-width: 0 !important;
-  }
-
-  .widget {
-    padding: 16px !important;
-    border-radius: 17px !important;
-  }
-
-  .quickRow {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 10px !important;
-  }
-
-  .quickCard {
-    min-height: 76px;
-    padding: 12px !important;
-    gap: 9px !important;
-  }
-
-  .quickCardStrong { font-size: 10px !important; }
-
-  .placeholderGrid { grid-template-columns: 1fr !important; }
-  .moduleHero { padding: 18px !important; align-items: flex-start !important; }
-  .moduleTitle { font-size: 28px !important; }
-
-  .mobile-bottom-nav {
-    position: fixed;
-    display: grid !important;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    align-items: center;
-    gap: 2px;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 80;
-    min-height: 72px;
-    padding: 9px 8px calc(9px + env(safe-area-inset-bottom));
-    background: rgba(19,22,27,.97);
-    border-top: 1px solid #2A2F38;
-    backdrop-filter: blur(18px);
-  }
-
-  .mobile-bottom-nav button {
-    border: 0;
-    background: transparent;
-    color: #7D8490;
-    min-width: 0;
-    min-height: 52px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    font-family: Inter, sans-serif;
-    font-size: 9px;
-    cursor: pointer;
-  }
-
-  .mobile-bottom-nav button.active { color: #69E883; }
-
-  .mobile-bottom-nav .mobile-nav-add {
-    width: 48px;
-    height: 48px;
-    min-height: 48px;
-    margin: 0 auto;
-    border-radius: 16px;
-    background: #4FE36B;
-    color: #08120B;
-    box-shadow: 0 8px 24px rgba(79,227,107,.2);
-  }
-
-  .commandOverlay { padding-top: 8vh !important; }
-  .commandPanel { width: calc(100vw - 24px) !important; }
-
-  .recharts-responsive-container { min-width: 0 !important; max-width: 100% !important; }
+  .mobile-bottom-nav { position:fixed; z-index:100; left:12px; right:12px; bottom:calc(10px + env(safe-area-inset-bottom)); height:70px; display:flex !important; align-items:center; justify-content:space-around; padding:0 7px; border:1px solid #29303A; border-radius:24px; background:rgba(20,23,29,.96); backdrop-filter:blur(20px); box-shadow:0 18px 48px rgba(0,0,0,.42); }
+  .mobile-bottom-nav button { appearance:none; border:0; background:transparent; color:#89909B; min-width:52px; height:56px; padding:4px 3px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-family:Inter,sans-serif; font-size:9px; cursor:pointer; }
+  .mobile-bottom-nav button.active { color:#69DE7F; }
+  .mobile-bottom-nav .mobile-bottom-add { width:52px; height:52px; min-width:52px; border-radius:18px; background:#51D96B; color:#0E1810; transform:translateY(-13px); box-shadow:0 10px 28px rgba(79,227,107,.22); }
 }
 
-@media (max-width: 390px) {
-  .mobile-quick-actions { gap: 4px; }
-  .mobile-quick-action,
-  .mobile-add-entry { font-size: 9px; }
-  .mobile-quick-action svg { width: 40px; height: 40px; padding: 11px; }
-  .mobile-add-entry svg { width: 48px; height: 48px; padding: 13px; }
-  .ledger-page { padding-left: 12px !important; padding-right: 12px !important; }
+@media (max-width: 430px) {
+  .ledger-topbar { padding-left:18px !important; padding-right:18px !important; }
+  .ledger-page, .modulePage { padding-left:18px !important; padding-right:18px !important; }
+  .mobile-greeting { font-size:28px; }
+  .mobile-avatar-button { width:50px; height:50px; flex-basis:50px; font-size:19px; }
+  .mobile-quick-actions { gap:7px; }
+  .mobile-quick-action svg, .mobile-quick-action > span:first-child { width:52px; height:52px; border-radius:16px; }
+  .mobile-add-action svg { width:60px !important; height:60px !important; border-radius:19px !important; padding:14px !important; }
+  .mobile-quick-action span:last-child { font-size:12px; }
 }
-
-@media (min-width: 769px) {
-  .mobile-bottom-nav,
-  .mobile-quick-actions { display: none !important; }
-}
-
 
 `;
 
