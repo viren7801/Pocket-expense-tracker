@@ -8619,7 +8619,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
                       <div style={styles.rowText}>
                         <div style={styles.rowTitle}>
-                          <span>
+                          <span style={styles.rowTitleText}>
                             {renderSearchHighlight(note.title, query)}
                           </span>
 
@@ -8631,8 +8631,8 @@ export default function NotesView({ vault, onVaultChange }) {
                                   note.attachments.length === 1 ? "" : "s"
                                 }`}
                               >
-                                <Paperclip size={9} />
-                                {note.attachments.length}
+                                <Paperclip size={11} />
+                                <span>{note.attachments.length}</span>
                               </span>
                             )}
                         </div>
@@ -14934,8 +14934,18 @@ const styles = {
   },
 
   rowTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    minWidth: 0,
+    width: "100%",
     fontSize: 12,
     fontWeight: 600,
+  },
+
+  rowTitleText: {
+    minWidth: 0,
+    flex: 1,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -15062,17 +15072,20 @@ const styles = {
   },
 
   rowAttachmentBadge: {
+    flexShrink: 0,
     display: "inline-flex",
     alignItems: "center",
-    gap: 3,
-    marginLeft: 5,
-    padding: "2px 4px",
-    border: "1px solid #30373E",
-    borderRadius: 4,
-    background: "#1A1E23",
-    color: "#7F8A94",
-    fontSize: 7,
-    verticalAlign: "middle",
+    justifyContent: "center",
+    gap: 4,
+    minWidth: 26,
+    padding: "3px 6px",
+    border: "1px solid #35404A",
+    borderRadius: 6,
+    background: "#1B2128",
+    color: "#A8B2BC",
+    fontSize: 9,
+    fontWeight: 700,
+    lineHeight: 1,
   },
 
   rowCompactMeta: {
