@@ -572,7 +572,11 @@ const NOTE_TEMPLATES = [
   },
 ];
 
-export default function NotesView({ vault, onVaultChange }) {
+export default function NotesView({
+  vault,
+  onVaultChange,
+  openSettingsRequest = 0,
+}) {
   const isDevelopment = import.meta.env.DEV;
 
   const [phase, setPhase] = useState(vault ? "locked" : "setup");
@@ -616,6 +620,14 @@ export default function NotesView({ vault, onVaultChange }) {
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showNotesSettings, setShowNotesSettings] = useState(false);
+
+  // Allows the global Pocket profile/settings button to open Notes settings
+  // from any screen, not only from inside the Notes workspace.
+  useEffect(() => {
+    if (openSettingsRequest > 0) {
+      setShowNotesSettings(true);
+    }
+  }, [openSettingsRequest]);
   const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(0);
   const [trashRetentionDays, setTrashRetentionDays] = useState(0);
@@ -8619,7 +8631,7 @@ export default function NotesView({ vault, onVaultChange }) {
 
                       <div style={styles.rowText}>
                         <div style={styles.rowTitle}>
-                          <span style={styles.rowTitleText}>
+                          <span>
                             {renderSearchHighlight(note.title, query)}
                           </span>
 
@@ -8631,8 +8643,8 @@ export default function NotesView({ vault, onVaultChange }) {
                                   note.attachments.length === 1 ? "" : "s"
                                 }`}
                               >
-                                <Paperclip size={11} />
-                                <span>{note.attachments.length}</span>
+                                <Paperclip size={9} />
+                                {note.attachments.length}
                               </span>
                             )}
                         </div>
@@ -14934,18 +14946,8 @@ const styles = {
   },
 
   rowTitle: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    minWidth: 0,
-    width: "100%",
     fontSize: 12,
     fontWeight: 600,
-  },
-
-  rowTitleText: {
-    minWidth: 0,
-    flex: 1,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -15072,20 +15074,17 @@ const styles = {
   },
 
   rowAttachmentBadge: {
-    flexShrink: 0,
     display: "inline-flex",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    minWidth: 26,
-    padding: "3px 6px",
-    border: "1px solid #35404A",
-    borderRadius: 6,
-    background: "#1B2128",
-    color: "#A8B2BC",
-    fontSize: 9,
-    fontWeight: 700,
-    lineHeight: 1,
+    gap: 3,
+    marginLeft: 5,
+    padding: "2px 4px",
+    border: "1px solid #30373E",
+    borderRadius: 4,
+    background: "#1A1E23",
+    color: "#7F8A94",
+    fontSize: 7,
+    verticalAlign: "middle",
   },
 
   rowCompactMeta: {

@@ -49,6 +49,9 @@ import {
   ChevronRight,
   ShieldCheck,
   SearchCheck,
+  Link2,
+  MonitorSmartphone,
+  LogOut,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
@@ -121,6 +124,8 @@ export default function LedgerApp() {
   const [passwordVault, setPasswordVault] = useState(null);
   const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [notesSettingsRequest, setNotesSettingsRequest] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -566,8 +571,21 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
-          onProfileClick={() => setTab("accounts")}
+          onProfileClick={() => setProfileMenuOpen((open) => !open)}
           saveError={saveError}
+        />
+        <ProfileMenu
+          open={profileMenuOpen}
+          onClose={() => setProfileMenuOpen(false)}
+          onNavigate={(nextTab) => {
+            setTab(nextTab);
+            setProfileMenuOpen(false);
+          }}
+          onOpenSettings={() => {
+            setProfileMenuOpen(false);
+            setTab("notes");
+            setNotesSettingsRequest((value) => value + 1);
+          }}
         />
         <input
           ref={fileInputRef}
@@ -650,7 +668,11 @@ export default function LedgerApp() {
           />
         )}
         {tab === "notes" && (
-          <NotesView vault={notesVault} onVaultChange={setNotesVault} />
+          <NotesView
+            vault={notesVault}
+            onVaultChange={setNotesVault}
+            openSettingsRequest={notesSettingsRequest}
+          />
         )}
         {tab === "recurring" && (
           <RecurringView
@@ -836,7 +858,11 @@ function Sidebar({ tab, setTab }) {
       </nav>
 
       <div style={styles.sidebarSpacer} />
-      <button style={styles.profileCard} onClick={() => setTab("accounts")}>
+      <button
+        style={styles.profileCard}
+        className="desktop-profile-card"
+        onClick={() => setTab("accounts")}
+      >
         <div style={styles.avatar}>V</div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={styles.profileName}>Viren Patel</div>
@@ -998,6 +1024,122 @@ function TopBar({
         </button>
       </div>
     </header>
+  );
+}
+
+function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
+  if (!open) return null;
+
+  return (
+    <>
+      <div
+        className="profile-menu-backdrop"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        className="profile-menu-popover"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Profile and settings menu"
+      >
+        <div className="profile-menu-header">
+          <div className="profile-menu-avatar">V</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="profile-menu-name">Viren Patel</div>
+            <div className="profile-menu-space">Personal space</div>
+          </div>
+          <button
+            type="button"
+            className="profile-menu-icon-close"
+            onClick={onClose}
+            aria-label="Close profile menu"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="profile-menu-divider" />
+
+        <button
+          type="button"
+          className="profile-menu-item profile-menu-item-rich"
+          onClick={onOpenSettings}
+        >
+          <span className="profile-menu-item-icon">
+            <Settings size={18} />
+          </span>
+          <span className="profile-menu-item-copy">
+            <strong>Settings</strong>
+            <small>Vault, notifications, retention & preferences</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+
+        <div className="profile-menu-divider" />
+
+        <button
+          type="button"
+          className="profile-menu-item profile-menu-item-rich"
+          onClick={() => {}}
+        >
+          <span className="profile-menu-item-icon">
+            <Plus size={18} />
+          </span>
+          <span className="profile-menu-item-copy">
+            <strong>Add new device</strong>
+            <small>Register on this device</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+
+        <button
+          type="button"
+          className="profile-menu-item profile-menu-item-rich"
+          onClick={() => {}}
+        >
+          <span className="profile-menu-item-icon">
+            <Link2 size={18} />
+          </span>
+          <span className="profile-menu-item-copy">
+            <strong>Pair a new device</strong>
+            <small>Add another phone or computer</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+
+        <button
+          type="button"
+          className="profile-menu-item profile-menu-item-rich"
+          onClick={() => {}}
+        >
+          <span className="profile-menu-item-icon">
+            <MonitorSmartphone size={18} />
+          </span>
+          <span className="profile-menu-item-copy">
+            <strong>Manage devices</strong>
+            <small>View and revoke passkeys</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+
+        <div className="profile-menu-divider" />
+
+        <button
+          type="button"
+          className="profile-menu-item profile-menu-item-rich profile-menu-logout"
+          onClick={() => onClose()}
+        >
+          <span className="profile-menu-item-icon">
+            <LogOut size={18} />
+          </span>
+          <span className="profile-menu-item-copy">
+            <strong>Log out</strong>
+            <small>End this session</small>
+          </span>
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -2732,68 +2874,452 @@ function Field({ label, children }) {
 /* ---------- Styles ---------- */
 
 const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; width: 100%; min-height: 100%; }
+body { overflow-x: hidden; background: #0E1013; }
+
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.mobile-dashboard-header,
+.mobile-quick-actions,
+.mobile-bottom-nav {
+  display: none;
+}
+
+.profile-menu-backdrop,
+.profile-menu-popover {
+  display: none;
+}
 
 @media (max-width: 1023px) and (min-width: 769px) {
   .ledger-sidebar { width: 210px !important; }
   .hero-grid { grid-template-columns: 1fr !important; }
-  .widget-grid { grid-template-columns: repeat(2,minmax(0,1fr)) !important; }
+  .widget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .widget-span-2 { grid-column: span 2 !important; }
 }
 
-.mobile-dashboard-header, .mobile-quick-actions, .mobile-bottom-nav { display: none; }
-
 @media (max-width: 768px) {
-  html, body, #root { width:100%; max-width:100%; overflow-x:hidden; background:#0E1013; }
-  .ledger-app { display:block !important; min-height:100dvh !important; width:100% !important; overflow-x:hidden !important; }
-  .ledger-sidebar { display:none !important; }
-  .ledger-app > main { width:100% !important; min-width:0 !important; padding-bottom: calc(92px + env(safe-area-inset-bottom)) !important; }
+  html, body, #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    background: #0E1013;
+  }
 
-  .ledger-topbar { display:block !important; position:relative !important; top:auto !important; padding:26px 22px 8px !important; background:#0E1013 !important; backdrop-filter:none !important; }
-  .mobile-dashboard-header { display:flex !important; align-items:center; justify-content:space-between; margin-bottom:22px; }
-  .mobile-greeting { font-family:'Space Grotesk',sans-serif; font-size:32px; line-height:1.1; font-weight:600; letter-spacing:-1.2px; color:#F4F2EC; }
-  .mobile-subtitle { margin-top:7px; font-size:16px; color:#8B919B; }
-  .mobile-avatar-button { width:56px; height:56px; flex:0 0 56px; border-radius:50%; border:1px solid rgba(201,164,85,.4); background:linear-gradient(145deg,#E3BE63,#A97E30); color:#18140C; font-size:21px; font-weight:700; cursor:pointer; }
+  .ledger-app {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
 
-  .ledger-topbar .globalSearch, .ledger-topbar .global-search { width:100% !important; height:64px !important; border-radius:20px !important; font-size:17px !important; padding:0 16px !important; box-sizing:border-box !important; }
-  .ledger-topbar .topActions { display:none !important; }
-  .mobile-quick-actions { display:grid !important; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:20px 0 18px; }
-  .mobile-quick-action { border:0; background:transparent; color:#C8CBD2; min-width:0; padding:0; display:flex; flex-direction:column; align-items:center; gap:8px; font-size:13px; font-family:Inter,sans-serif; cursor:pointer; }
-  .mobile-quick-action::first-line { color:inherit; }
-  .mobile-quick-action svg, .mobile-quick-action > span:first-child { width:58px; height:58px; padding:0; display:flex; align-items:center; justify-content:center; border-radius:18px; border:1px solid #2B313B; background:#171B21; box-sizing:border-box; }
-  .mobile-quick-action span:last-child { white-space:nowrap; font-size:13px; }
-  .mobile-add-action { color:#75DD8A; font-weight:600; }
-  .mobile-add-action svg { width:66px !important; height:66px !important; padding:17px !important; border:0 !important; border-radius:21px !important; background:#51D96B !important; color:#0D1810; box-shadow:0 12px 28px rgba(79,227,107,.16); }
-  .mobile-add-action span:last-child { color:#75DD8A; }
-  .ledger-utility-row { display:none !important; }
+  /* The desktop sidebar, including Viren Patel / Personal card,
+     is completely removed from mobile layout. */
+  .ledger-sidebar {
+    display: none !important;
+  }
 
-  .ledger-page, .modulePage { width:100% !important; min-width:0 !important; max-width:100% !important; box-sizing:border-box !important; padding:10px 22px 26px !important; }
-  .ledger-grid-3, .ledger-grid-main, .hero-grid { grid-template-columns:1fr !important; width:100% !important; min-width:0 !important; }
-  .ledger-grid-3 > *, .ledger-grid-main > *, .hero-grid > * { min-width:0 !important; max-width:100% !important; }
-  .widget-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:12px !important; }
-  .widget-span-2 { grid-column:span 2 !important; }
-  .quickRow { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
-  .placeholderGrid { grid-template-columns:1fr !important; }
-  .recharts-responsive-container { min-width:0 !important; max-width:100% !important; }
+  .ledger-app > main {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding-bottom: calc(122px + env(safe-area-inset-bottom)) !important;
+  }
 
-  .mobile-bottom-nav { position:fixed; z-index:100; left:12px; right:12px; bottom:calc(10px + env(safe-area-inset-bottom)); height:70px; display:flex !important; align-items:center; justify-content:space-around; padding:0 7px; border:1px solid #29303A; border-radius:24px; background:rgba(20,23,29,.96); backdrop-filter:blur(20px); box-shadow:0 18px 48px rgba(0,0,0,.42); }
-  .mobile-bottom-nav button { appearance:none; border:0; background:transparent; color:#89909B; min-width:52px; height:56px; padding:4px 3px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-family:Inter,sans-serif; font-size:9px; cursor:pointer; }
-  .mobile-bottom-nav button.active { color:#69DE7F; }
-  .mobile-bottom-nav .mobile-bottom-add { width:52px; height:52px; min-width:52px; border-radius:18px; background:#51D96B; color:#0E1810; transform:translateY(-13px); box-shadow:0 10px 28px rgba(79,227,107,.22); }
+  .ledger-topbar {
+    display: block !important;
+    position: relative !important;
+    top: auto !important;
+    width: 100% !important;
+    padding: 24px 18px 8px !important;
+    background: #0E1013 !important;
+    backdrop-filter: none !important;
+  }
+
+  .mobile-dashboard-header {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    margin-bottom: 20px;
+  }
+
+  .mobile-greeting {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(26px, 7vw, 32px);
+    line-height: 1.1;
+    font-weight: 600;
+    letter-spacing: -1px;
+    color: #F4F2EC;
+  }
+
+  .mobile-subtitle {
+    margin-top: 7px;
+    font-size: 15px;
+    color: #8B919B;
+  }
+
+  /* Circular V replaces the large Viren Patel / Personal card. */
+  .mobile-avatar-button {
+    width: 54px !important;
+    height: 54px !important;
+    min-width: 54px !important;
+    flex: 0 0 54px !important;
+    border-radius: 50% !important;
+    border: 1px solid rgba(201,164,85,.45) !important;
+    background: linear-gradient(145deg, #E3BE63, #A97E30) !important;
+    color: #18140C !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(201,164,85,.16);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-avatar-button:active {
+    transform: scale(.96);
+  }
+
+  .ledger-topbar .globalSearch,
+  .ledger-topbar .global-search {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 60px !important;
+    border-radius: 18px !important;
+    font-size: 16px !important;
+    padding: 0 15px !important;
+    box-sizing: border-box !important;
+  }
+
+  .ledger-topbar .topActions,
+  .ledger-utility-row {
+    display: none !important;
+  }
+
+  .mobile-quick-actions {
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+    margin: 18px 0 20px;
+  }
+
+  .mobile-quick-action {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #C8CBD2;
+    min-width: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    font-size: 10px;
+    font-family: Inter, sans-serif;
+    cursor: pointer;
+  }
+
+  .mobile-quick-action svg,
+  .mobile-quick-action > span:first-child {
+    width: 50px;
+    height: 50px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+    border: 1px solid #2B313B;
+    background: #171B21;
+    box-sizing: border-box;
+  }
+
+  .mobile-quick-action span:last-child {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+  }
+
+  .mobile-add-action {
+    color: #75DD8A;
+    font-weight: 600;
+  }
+
+  .mobile-add-action svg {
+    width: 58px !important;
+    height: 58px !important;
+    padding: 15px !important;
+    border: 0 !important;
+    border-radius: 18px !important;
+    background: #51D96B !important;
+    color: #0D1810 !important;
+    box-shadow: 0 10px 24px rgba(79,227,107,.16);
+  }
+
+  .mobile-add-action span:last-child { color: #75DD8A; }
+
+  .ledger-page,
+  .modulePage {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+    padding-bottom: 32px !important;
+  }
+
+  .hero-grid,
+  .ledger-grid-3,
+  .ledger-grid-main,
+  .quickRow,
+  .placeholderGrid {
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .widget-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
+
+  .widget-span-2 { grid-column: span 2 !important; }
+
+  .hero-grid > *,
+  .ledger-grid-3 > *,
+  .ledger-grid-main > *,
+  .widget-grid > *,
+  .quickRow > * {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Bottom navigation is independent and never covered by profile UI. */
+  .mobile-bottom-nav {
+    position: fixed !important;
+    z-index: 900 !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: calc(10px + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    height: 72px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-around !important;
+    padding: 0 4px !important;
+    border: 1px solid #29303A !important;
+    border-radius: 23px !important;
+    background: rgba(20,23,29,.98) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    box-shadow: 0 18px 48px rgba(0,0,0,.45) !important;
+  }
+
+  .mobile-bottom-nav button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: #89909B;
+    min-width: 0 !important;
+    flex: 1;
+    height: 60px;
+    padding: 4px 1px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-family: Inter, sans-serif;
+    font-size: 8px;
+    cursor: pointer;
+  }
+
+  .mobile-bottom-nav button.active { color: #69DE7F; }
+  .mobile-bottom-nav button span { white-space: nowrap; font-size: 8px; }
+
+  .mobile-bottom-nav .mobile-bottom-add {
+    flex: 0 0 56px !important;
+    width: 56px !important;
+    height: 56px !important;
+    min-width: 56px !important;
+    border-radius: 19px !important;
+    background: #51D96B !important;
+    color: #0E1810 !important;
+    transform: translateY(-14px) !important;
+    box-shadow: 0 10px 28px rgba(79,227,107,.24) !important;
+  }
+
+  .mobile-bottom-nav .mobile-bottom-add svg {
+    width: 27px !important;
+    height: 27px !important;
+  }
+
+  /* Mobile profile dropdown opened by circular V. */
+  .profile-menu-backdrop {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background: rgba(0,0,0,.25);
+  }
+
+  .profile-menu-popover {
+    display: block !important;
+    position: fixed;
+    top: calc(20px + env(safe-area-inset-top));
+    right: 16px;
+    width: min(320px, calc(100vw - 32px));
+    z-index: 1101;
+    background: #171C24;
+    border: 1px solid #2B323D;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0,0,0,.55);
+    animation: profileMenuIn .18s ease-out;
+  }
+
+  @keyframes profileMenuIn {
+    from { opacity: 0; transform: translateY(-8px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .profile-menu-header {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 18px;
+  }
+
+  .profile-menu-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    flex: 0 0 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(145deg, #E3BE63, #A97E30);
+    color: #18140C;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+  }
+
+  .profile-menu-name {
+    color: #F4F2EC;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .profile-menu-space {
+    margin-top: 4px;
+    color: #89909B;
+    font-size: 12px;
+  }
+
+  .profile-menu-divider {
+    height: 1px;
+    margin: 0 12px;
+    background: #2A313C;
+  }
+
+  .profile-menu-icon-close {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    border: 1px solid #303846;
+    background: #1A2029;
+    color: #8D96A3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .profile-menu-item {
+    width: 100%;
+    min-height: 54px;
+    padding: 0 18px;
+    border: 0;
+    background: transparent;
+    color: #D9DDE5;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+    font-family: Inter, sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .profile-menu-item-rich {
+    min-height: 72px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .profile-menu-item-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 34px;
+    border-radius: 10px;
+    background: #202631;
+    color: #C9A455;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .profile-menu-item-copy {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .profile-menu-item-copy strong {
+    color: #E6E8EC;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .profile-menu-item-copy small {
+    color: #7F8794;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .profile-menu-item > svg:last-child {
+    flex: 0 0 auto;
+    color: #7D8591;
+  }
+
+  .profile-menu-item:hover { background: rgba(255,255,255,.025); }
+  .profile-menu-logout { color: #E78A78; }
+  .profile-menu-logout .profile-menu-item-icon { color: #D9735C; }
+  .profile-menu-close { color: #9CA4AF; }
 }
 
-@media (max-width: 430px) {
-  .ledger-topbar { padding-left:18px !important; padding-right:18px !important; }
-  .ledger-page, .modulePage { padding-left:18px !important; padding-right:18px !important; }
-  .mobile-greeting { font-size:28px; }
-  .mobile-avatar-button { width:50px; height:50px; flex-basis:50px; font-size:19px; }
-  .mobile-quick-actions { gap:7px; }
-  .mobile-quick-action svg, .mobile-quick-action > span:first-child { width:52px; height:52px; border-radius:16px; }
-  .mobile-add-action svg { width:60px !important; height:60px !important; border-radius:19px !important; padding:14px !important; }
-  .mobile-quick-action span:last-child { font-size:12px; }
+@media (max-width: 380px) {
+  .ledger-topbar { padding-left: 14px !important; padding-right: 14px !important; }
+  .ledger-page, .modulePage { padding-left: 14px !important; padding-right: 14px !important; }
+  .mobile-avatar-button { width: 50px !important; height: 50px !important; min-width: 50px !important; flex-basis: 50px !important; }
+  .mobile-quick-action svg, .mobile-quick-action > span:first-child { width: 46px; height: 46px; }
+  .mobile-add-action svg { width: 54px !important; height: 54px !important; }
 }
-
 `;
 
 const styles = {
