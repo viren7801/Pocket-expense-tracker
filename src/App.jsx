@@ -115,7 +115,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 function useIsMobileLayout() {
   const getValue = () =>
-    typeof window !== "undefined" ? window.innerWidth <= 768 : false;
+    typeof window !== "undefined" ? window.innerWidth <= 1023 : false;
   const [isMobile, setIsMobile] = useState(getValue);
 
   useEffect(() => {
@@ -989,7 +989,7 @@ function TopBar({
         <kbd style={styles.searchKey}>⌘ K</kbd>
       </button>
 
-      <div style={styles.topActions}>
+      <div style={styles.topActions} className="topActions">
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -3153,7 +3153,7 @@ body { overflow-x: hidden; background: #0E1013; }
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;
-    padding-bottom: calc(122px + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(148px + env(safe-area-inset-bottom)) !important;
   }
 
   .ledger-topbar {
@@ -3161,7 +3161,7 @@ body { overflow-x: hidden; background: #0E1013; }
     position: relative !important;
     top: auto !important;
     width: 100% !important;
-    padding: 24px 18px 8px !important;
+    padding: calc(18px + env(safe-area-inset-top)) 18px 4px !important;
     background: #0E1013 !important;
     backdrop-filter: none !important;
   }
@@ -3172,7 +3172,7 @@ body { overflow-x: hidden; background: #0E1013; }
     justify-content: space-between;
     gap: 16px;
     width: 100%;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
 
   .mobile-greeting {
@@ -3220,7 +3220,7 @@ body { overflow-x: hidden; background: #0E1013; }
   .ledger-topbar .global-search {
     width: 100% !important;
     min-width: 0 !important;
-    height: 60px !important;
+    height: 56px !important;
     border-radius: 18px !important;
     font-size: 16px !important;
     padding: 0 15px !important;
@@ -3228,6 +3228,8 @@ body { overflow-x: hidden; background: #0E1013; }
   }
 
   .ledger-topbar .topActions,
+  .ledger-topbar > .topActions,
+  .ledger-topbar .utilityRow,
   .ledger-utility-row {
     display: none !important;
   }
@@ -3237,7 +3239,7 @@ body { overflow-x: hidden; background: #0E1013; }
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
     width: 100%;
-    margin: 18px 0 20px;
+    margin: 14px 0 22px;
   }
 
   .mobile-quick-action {
@@ -3304,6 +3306,7 @@ body { overflow-x: hidden; background: #0E1013; }
     box-sizing: border-box !important;
     padding-left: 18px !important;
     padding-right: 18px !important;
+    padding-top: 4px !important;
     padding-bottom: 32px !important;
   }
 
@@ -3539,6 +3542,33 @@ body { overflow-x: hidden; background: #0E1013; }
   .settings-row { align-items:flex-start; gap:14px; }
   .settings-key-row { width:100%; flex-wrap:wrap; margin-top:12px; }
   .settings-key-row input { width:100%; max-width:none; }
+}
+
+@media (max-width: 1023px) {
+  .ledger-topbar {
+    width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .ledger-topbar .global-search {
+    margin: 0 !important;
+  }
+
+  .mobile-quick-actions {
+    align-items: start !important;
+  }
+
+  .mobile-quick-action {
+    min-height: 80px !important;
+  }
+
+  .mobile-add-action {
+    transform: translateY(-2px);
+  }
+
+  .mobile-bottom-nav {
+    bottom: calc(10px + env(safe-area-inset-bottom)) !important;
+  }
 }
 
 @media (max-width: 380px) {

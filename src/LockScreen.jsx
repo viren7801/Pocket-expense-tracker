@@ -1959,6 +1959,17 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
+            body {
+              overflow-x: hidden;
+            }
+
+            .pocketAccountMenu {
+              box-sizing: border-box;
+              max-width: calc(100vw - 28px);
+            }
+          }
+
+          @media (max-width: 1023px) {
             .pocketAccountButton {
               display: none !important;
             }
@@ -1970,7 +1981,7 @@ export default function LockScreen({ children }) {
 
           @media (max-width: 1023px) {
             .pocketAccountMenu {
-              top: 88px !important;
+              top: calc(84px + env(safe-area-inset-top)) !important;
               right: 14px !important;
               left: auto !important;
               bottom: auto !important;
@@ -2042,6 +2053,17 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
+            body {
+              overflow-x: hidden;
+            }
+
+            .pocketAccountMenu {
+              box-sizing: border-box;
+              max-width: calc(100vw - 28px);
+            }
+          }
+
+          @media (max-width: 1023px) {
             .pocketAccountButton {
               display: none !important;
             }
@@ -2053,7 +2075,7 @@ export default function LockScreen({ children }) {
 
           @media (max-width: 1023px) {
             .pocketAccountMenu {
-              top: 88px !important;
+              top: calc(84px + env(safe-area-inset-top)) !important;
               right: 14px !important;
               left: auto !important;
               bottom: auto !important;
@@ -2094,7 +2116,7 @@ export default function LockScreen({ children }) {
 
   return (
     <div style={styles.lockWrap}>
-      <div style={styles.lockCard}>
+      <div style={styles.lockCard} className="pocket-lock-card-mobile">
         <Fingerprint size={42} color="#C9A455" />
 
         <div style={styles.lockTitle}>Pocket</div>
@@ -2204,9 +2226,9 @@ const styles = {
 
     borderRadius: 16,
 
-    padding: "38px 34px",
+    padding: "32px 24px",
 
-    width: 320,
+    width: "min(420px, calc(100vw - 32px))",
 
     boxSizing: "border-box",
   },
