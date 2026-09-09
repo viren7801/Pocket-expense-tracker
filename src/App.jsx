@@ -113,6 +113,21 @@ function addInterval(dateStr, freq) {
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+function useIsMobileLayout() {
+  const getValue = () =>
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false;
+  const [isMobile, setIsMobile] = useState(getValue);
+
+  useEffect(() => {
+    const update = () => setIsMobile(getValue());
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  return isMobile;
+}
+
 export default function LedgerApp() {
   const [loaded, setLoaded] = useState(false);
   const [accounts, setAccounts] = useState([]);
@@ -125,7 +140,9 @@ export default function LedgerApp() {
   const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [notesSettingsRequest, setNotesSettingsRequest] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("general");
+  const isMobileLayout = useIsMobileLayout();
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -521,6 +538,25 @@ export default function LedgerApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const openSettingsFromAccountMenu = (event) => {
+      const section = event.detail?.section || "general";
+      setSettingsSection(section);
+      setSettingsOpen(true);
+    };
+
+    window.addEventListener(
+      "pocket:open-global-settings",
+      openSettingsFromAccountMenu,
+    );
+
+    return () =>
+      window.removeEventListener(
+        "pocket:open-global-settings",
+        openSettingsFromAccountMenu,
+      );
+  }, []);
+
   const isShareRoute =
     typeof window !== "undefined" &&
     window.location.pathname.startsWith("/share/");
@@ -556,7 +592,15 @@ export default function LedgerApp() {
   return (
     <div style={styles.app} className="ledger-app">
       <style>{fontImports}</style>
-      <Sidebar tab={tab} setTab={setTab} />
+      {!isMobileLayout && (
+        <Sidebar
+          tab={tab}
+          setTab={setTab}
+          onProfileClick={() =>
+            window.dispatchEvent(new CustomEvent("pocket:open-account-menu"))
+          }
+        />
+      )}
       <main style={styles.main}>
         <TopBar
           netWorth={netWorth}
@@ -571,22 +615,17 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
-          onProfileClick={() => setProfileMenuOpen((open) => !open)}
+          onProfileClick={() =>
+            window.dispatchEvent(new CustomEvent("pocket:open-account-menu"))
+          }
           saveError={saveError}
         />
-        <ProfileMenu
-          open={profileMenuOpen}
-          onClose={() => setProfileMenuOpen(false)}
-          onNavigate={(nextTab) => {
-            setTab(nextTab);
-            setProfileMenuOpen(false);
-          }}
-          onOpenSettings={() => {
-            setProfileMenuOpen(false);
-            setTab("notes");
-            setNotesSettingsRequest((value) => value + 1);
-          }}
-        />
+        {settingsOpen && (
+          <GlobalSettingsModal
+            initialSection={settingsSection}
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -668,11 +707,7 @@ export default function LedgerApp() {
           />
         )}
         {tab === "notes" && (
-          <NotesView
-            vault={notesVault}
-            onVaultChange={setNotesVault}
-            openSettingsRequest={notesSettingsRequest}
-          />
+          <NotesView vault={notesVault} onVaultChange={setNotesVault} />
         )}
         {tab === "recurring" && (
           <RecurringView
@@ -684,15 +719,17 @@ export default function LedgerApp() {
         )}
       </main>
 
-      <MobileBottomNav
-        tab={tab}
-        setTab={setTab}
-        onAddTxn={() => {
-          setEditingTxn(null);
-          setTxnPrefill(null);
-          setShowTxnForm(true);
-        }}
-      />
+      {isMobileLayout && (
+        <MobileBottomNav
+          tab={tab}
+          setTab={setTab}
+          onAddTxn={() => {
+            setEditingTxn(null);
+            setTxnPrefill(null);
+            setShowTxnForm(true);
+          }}
+        />
+      )}
 
       {commandOpen && (
         <CommandPalette
@@ -796,7 +833,7 @@ export default function LedgerApp() {
 
 /* ---------- Layout ---------- */
 
-function Sidebar({ tab, setTab }) {
+function Sidebar({ tab, setTab, onProfileClick }) {
   const primary = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, key: "D" },
     { id: "transactions", label: "Pocket", icon: Wallet, key: "P" },
@@ -861,7 +898,7 @@ function Sidebar({ tab, setTab }) {
       <button
         style={styles.profileCard}
         className="desktop-profile-card"
-        onClick={() => setTab("accounts")}
+        onClick={onProfileClick}
       >
         <div style={styles.avatar}>V</div>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -1081,7 +1118,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => {}}
+          onClick={() => onOpenSettings("devices")}
         >
           <span className="profile-menu-item-icon">
             <Plus size={18} />
@@ -1096,7 +1133,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => {}}
+          onClick={() => onOpenSettings("devices")}
         >
           <span className="profile-menu-item-icon">
             <Link2 size={18} />
@@ -1111,7 +1148,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => {}}
+          onClick={() => onOpenSettings("devices")}
         >
           <span className="profile-menu-item-icon">
             <MonitorSmartphone size={18} />
@@ -2803,52 +2840,185 @@ function ScanReceiptModal({ onClose, onExtracted, onOpenSettings }) {
   );
 }
 
-function SettingsModal({ onClose }) {
-  const [key, setKey] = useState(getApiKey());
+function GlobalSettingsModal({ initialSection = "general", onClose }) {
+  const [section, setSection] = useState(initialSection);
+  const [scanKey, setScanKey] = useState(
+    () => localStorage.getItem("pocket_scan_api_key") || "",
+  );
   const [saved, setSaved] = useState(false);
 
+  useEffect(() => setSection(initialSection), [initialSection]);
+
+  const sections = [
+    ["general", "General", Settings],
+    ["security", "Security", ShieldCheck],
+    ["notifications", "Notifications", Bell],
+    ["devices", "Devices", MonitorSmartphone],
+  ];
+
   return (
-    <ModalShell title="Claude API key" onClose={onClose}>
-      <div
-        style={{
-          fontSize: 12,
-          color: "#8B8F98",
-          fontFamily: "Inter, sans-serif",
-          marginBottom: 14,
-          lineHeight: 1.5,
-        }}
-      >
-        Used only in your browser to call Claude's API for receipt scanning.
-        Stored locally on this device — it's never sent anywhere except
-        api.anthropic.com. Get a key from your Claude Console account.
+    <div
+      className="global-settings-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Pocket settings"
+    >
+      <div className="global-settings-shell">
+        <aside className="global-settings-sidebar">
+          <div className="global-settings-brand">Pocket settings</div>
+          {sections.map(([id, label, Icon]) => (
+            <button
+              key={id}
+              className={`global-settings-nav ${section === id ? "active" : ""}`}
+              onClick={() => setSection(id)}
+            >
+              <Icon size={17} /> <span>{label}</span>
+            </button>
+          ))}
+        </aside>
+        <section className="global-settings-content">
+          <div className="global-settings-header">
+            <div>
+              <div className="global-settings-eyebrow">PERSONAL SPACE</div>
+              <h2>
+                {sections.find(([id]) => id === section)?.[1] || "Settings"}
+              </h2>
+            </div>
+            <button
+              className="global-settings-close"
+              onClick={onClose}
+              aria-label="Close settings"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {section === "general" && (
+            <>
+              <SettingsRow
+                title="Appearance"
+                description="Pocket uses the current dark interface designed for comfortable daily use."
+                value="Dark"
+              />
+              <SettingsRow
+                title="Currency"
+                description="Primary currency used across your Pocket."
+                value="INR (₹)"
+              />
+              <SettingsRow
+                title="Date format"
+                description="How dates are displayed in transactions and reports."
+                value="DD MMM YYYY"
+              />
+            </>
+          )}
+
+          {section === "security" && (
+            <>
+              <SettingsRow
+                title="Vault protection"
+                description="Passwords and private notes remain protected inside their own vaults."
+                value="Enabled"
+              />
+              <SettingsRow
+                title="Receipt scanning API key"
+                description="Optional key used only when you enable AI receipt scanning on this device."
+              >
+                <div className="settings-key-row">
+                  <input
+                    type="password"
+                    value={scanKey}
+                    onChange={(e) => {
+                      setScanKey(e.target.value);
+                      setSaved(false);
+                    }}
+                    placeholder="Optional API key"
+                  />
+                  <button
+                    onClick={() => {
+                      localStorage.setItem("pocket_scan_api_key", scanKey);
+                      setSaved(true);
+                    }}
+                  >
+                    {saved ? "Saved" : "Save"}
+                  </button>
+                </div>
+              </SettingsRow>
+            </>
+          )}
+
+          {section === "notifications" && (
+            <>
+              <SettingsToggle
+                title="Transaction reminders"
+                description="Get reminded about recurring and scheduled entries."
+                defaultChecked
+              />
+              <SettingsToggle
+                title="Budget alerts"
+                description="Show an alert when a category approaches its monthly limit."
+                defaultChecked
+              />
+              <SettingsToggle
+                title="Weekly summary"
+                description="Prepare a weekly overview of spending and savings."
+              />
+            </>
+          )}
+
+          {section === "devices" && (
+            <>
+              <SettingsRow
+                title="This device"
+                description="Current Pocket session on this browser."
+                value="Active"
+              />
+              <SettingsRow
+                title="Add new device"
+                description="Sign in to Pocket on another phone or computer to use your account there."
+                value="Use same account"
+              />
+              <SettingsRow
+                title="Pair a new device"
+                description="Pairing and passkey management will appear here when multi-device sync is enabled."
+                value="Coming soon"
+              />
+            </>
+          )}
+        </section>
       </div>
-      <Field label="API key">
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => {
-            setKey(e.target.value);
-            setSaved(false);
-          }}
-          style={styles.input}
-          placeholder="sk-ant-…"
-        />
-      </Field>
+    </div>
+  );
+}
+
+function SettingsRow({ title, description, value, children }) {
+  return (
+    <div className="settings-row">
+      <div>
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
+      {children || <span className="settings-row-value">{value}</span>}
+    </div>
+  );
+}
+
+function SettingsToggle({ title, description, defaultChecked = false }) {
+  const [checked, setChecked] = useState(defaultChecked);
+  return (
+    <div className="settings-row">
+      <div>
+        <strong>{title}</strong>
+        <p>{description}</p>
+      </div>
       <button
-        style={{
-          ...styles.primaryBtn,
-          width: "100%",
-          justifyContent: "center",
-          marginTop: 10,
-        }}
-        onClick={() => {
-          setApiKey(key);
-          setSaved(true);
-        }}
+        className={`settings-toggle ${checked ? "on" : ""}`}
+        onClick={() => setChecked(!checked)}
+        aria-pressed={checked}
       >
-        {saved ? "Saved" : "Save key"}
+        <span />
       </button>
-    </ModalShell>
+    </div>
   );
 }
 
@@ -2888,10 +3058,68 @@ body { overflow-x: hidden; background: #0E1013; }
   display: none;
 }
 
-.profile-menu-backdrop,
-.profile-menu-popover {
-  display: none;
+.profile-menu-backdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0,0,0,.22);
 }
+
+.profile-menu-popover {
+  display: block;
+  position: fixed;
+  left: 18px;
+  bottom: 88px;
+  width: 320px;
+  z-index: 1101;
+  background: #171C24;
+  border: 1px solid #2B323D;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0,0,0,.55);
+}
+
+.profile-menu-header { display:flex; align-items:center; gap:13px; padding:18px; }
+.profile-menu-avatar { width:48px; height:48px; border-radius:50%; flex:0 0 48px; display:flex; align-items:center; justify-content:center; background:linear-gradient(145deg,#E3BE63,#A97E30); color:#18140C; font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:18px; }
+.profile-menu-name { color:#F4F2EC; font-size:16px; font-weight:600; }
+.profile-menu-space { margin-top:4px; color:#89909B; font-size:12px; }
+.profile-menu-divider { height:1px; margin:0 12px; background:#2A313C; }
+.profile-menu-icon-close { width:30px; height:30px; border-radius:9px; border:1px solid #303846; background:#1A2029; color:#8D96A3; display:flex; align-items:center; justify-content:center; padding:0; cursor:pointer; }
+.profile-menu-item { width:100%; min-height:54px; padding:0 18px; border:0; background:transparent; color:#D9DDE5; display:flex; align-items:center; gap:12px; text-align:left; font-family:Inter,sans-serif; font-size:14px; cursor:pointer; }
+.profile-menu-item-rich { min-height:72px; padding-top:10px; padding-bottom:10px; }
+.profile-menu-item-icon { width:34px; height:34px; flex:0 0 34px; border-radius:10px; background:#202631; color:#C9A455; display:flex; align-items:center; justify-content:center; }
+.profile-menu-item-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:4px; }
+.profile-menu-item-copy strong { color:#E6E8EC; font-size:14px; font-weight:600; }
+.profile-menu-item-copy small { color:#7F8794; font-size:11px; line-height:1.35; }
+.profile-menu-item > svg:last-child { flex:0 0 auto; color:#7D8591; }
+.profile-menu-item:hover { background:rgba(255,255,255,.025); }
+.profile-menu-logout { color:#E78A78; }
+.profile-menu-logout .profile-menu-item-icon { color:#D9735C; }
+
+.global-settings-overlay { position:fixed; inset:0; z-index:2000; background:rgba(4,6,8,.72); backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; padding:18px; }
+.global-settings-shell { width:min(920px,100%); min-height:560px; max-height:calc(100dvh - 36px); overflow:hidden; display:grid; grid-template-columns:220px minmax(0,1fr); background:#15191F; border:1px solid #303742; border-radius:22px; box-shadow:0 30px 90px rgba(0,0,0,.58); }
+.global-settings-sidebar { padding:22px 12px; background:#12161B; border-right:1px solid #292F38; }
+.global-settings-brand { padding:4px 12px 22px; color:#F1F0EB; font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:600; }
+.global-settings-nav { width:100%; display:flex; align-items:center; gap:10px; border:0; border-radius:10px; padding:11px 12px; background:transparent; color:#89909B; text-align:left; font:500 13px Inter,sans-serif; cursor:pointer; }
+.global-settings-nav.active { background:#20262E; color:#74DF88; }
+.global-settings-content { min-width:0; overflow:auto; padding:28px 32px 38px; }
+.global-settings-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:24px; border-bottom:1px solid #2A3039; }
+.global-settings-eyebrow { color:#6D7480; font-size:9px; letter-spacing:.16em; font-weight:700; }
+.global-settings-header h2 { margin:7px 0 0; color:#F3F1EC; font-family:'Space Grotesk',sans-serif; font-size:28px; letter-spacing:-.7px; }
+.global-settings-close { width:38px; height:38px; border-radius:11px; border:1px solid #303742; background:#1A2028; color:#AAB1BB; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.settings-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 0; border-bottom:1px solid #252B33; }
+.settings-row strong { display:block; color:#E9E8E3; font-size:14px; font-weight:600; }
+.settings-row p { margin:6px 0 0; color:#818895; font-size:12px; line-height:1.45; max-width:460px; }
+.settings-row-value { color:#70D984; font-size:12px; white-space:nowrap; }
+.settings-toggle { width:46px; height:27px; padding:3px; border:1px solid #343B46; border-radius:999px; background:#252B33; cursor:pointer; flex:0 0 auto; transition:.2s; }
+.settings-toggle span { display:block; width:19px; height:19px; border-radius:50%; background:#AAB1BB; transition:.2s; }
+.settings-toggle.on { background:#45C963; border-color:#45C963; }
+.settings-toggle.on span { transform:translateX(19px); background:#0E1810; }
+.settings-key-row { display:flex; gap:8px; align-items:center; }
+.settings-key-row input { width:220px; max-width:36vw; background:#101419; border:1px solid #303742; border-radius:9px; padding:9px 10px; color:#E9E8E3; outline:none; font:12px Inter,sans-serif; }
+.settings-key-row button { border:1px solid #3B854A; border-radius:9px; background:#51D96B; color:#102014; padding:9px 13px; font:600 12px Inter,sans-serif; cursor:pointer; }
+
 
 @media (max-width: 1023px) and (min-width: 769px) {
   .ledger-sidebar { width: 210px !important; }
@@ -3165,27 +3393,14 @@ body { overflow-x: hidden; background: #0E1013; }
     height: 27px !important;
   }
 
-  /* Mobile profile dropdown opened by circular V. */
-  .profile-menu-backdrop {
-    display: block !important;
-    position: fixed;
-    inset: 0;
-    z-index: 1100;
-    background: rgba(0,0,0,.25);
-  }
-
+  /* Mobile profile dropdown opened only by the circular V avatar. */
+  .profile-menu-backdrop { background: rgba(0,0,0,.25); }
   .profile-menu-popover {
-    display: block !important;
-    position: fixed;
     top: calc(20px + env(safe-area-inset-top));
     right: 16px;
+    left: auto;
+    bottom: auto;
     width: min(320px, calc(100vw - 32px));
-    z-index: 1101;
-    background: #171C24;
-    border: 1px solid #2B323D;
-    border-radius: 20px;
-    overflow: hidden;
-    box-shadow: 0 24px 70px rgba(0,0,0,.55);
     animation: profileMenuIn .18s ease-out;
   }
 
@@ -3311,6 +3526,19 @@ body { overflow-x: hidden; background: #0E1013; }
   .profile-menu-logout { color: #E78A78; }
   .profile-menu-logout .profile-menu-item-icon { color: #D9735C; }
   .profile-menu-close { color: #9CA4AF; }
+}
+
+
+@media (max-width: 768px) {
+  .global-settings-overlay { padding:0; align-items:stretch; }
+  .global-settings-shell { width:100%; min-height:100dvh; max-height:100dvh; border:0; border-radius:0; display:block; overflow:auto; }
+  .global-settings-sidebar { position:sticky; top:0; z-index:2; display:flex; gap:6px; overflow-x:auto; padding:14px 14px 10px; border-right:0; border-bottom:1px solid #292F38; }
+  .global-settings-brand { display:none; }
+  .global-settings-nav { width:auto; flex:0 0 auto; padding:9px 12px; }
+  .global-settings-content { padding:22px 18px calc(110px + env(safe-area-inset-bottom)); overflow:visible; }
+  .settings-row { align-items:flex-start; gap:14px; }
+  .settings-key-row { width:100%; flex-wrap:wrap; margin-top:12px; }
+  .settings-key-row input { width:100%; max-width:none; }
 }
 
 @media (max-width: 380px) {

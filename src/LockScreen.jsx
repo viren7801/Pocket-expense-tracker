@@ -1012,6 +1012,13 @@ export default function LockScreen({ children }) {
     setCopiedPairingCode(false);
   };
 
+  useEffect(() => {
+    const openAccountMenu = () => setShowAccountMenu(true);
+    window.addEventListener("pocket:open-account-menu", openAccountMenu);
+    return () =>
+      window.removeEventListener("pocket:open-account-menu", openAccountMenu);
+  }, []);
+
   /*
    * ==========================================================
    * OPEN NEW DEVICE PAIRING
@@ -1051,7 +1058,11 @@ export default function LockScreen({ children }) {
   const accountMenu = (
     <>
       {showAccountMenu && (
-        <div ref={accountMenuRef} style={styles.accountMenu}>
+        <div
+          ref={accountMenuRef}
+          style={styles.accountMenu}
+          className="pocketAccountMenu"
+        >
           <div style={styles.accountHeader}>
             <div style={styles.avatar}>V</div>
 
@@ -1078,7 +1089,9 @@ export default function LockScreen({ children }) {
             onClick={() => {
               setShowAccountMenu(false);
               window.dispatchEvent(
-                new CustomEvent("pocket:open-notes-settings"),
+                new CustomEvent("pocket:open-global-settings", {
+                  detail: { section: "general" },
+                }),
               );
             }}
           >
@@ -1945,15 +1958,26 @@ export default function LockScreen({ children }) {
             }
           }
 
-          @media (max-width: 760px) {
+          @media (max-width: 1023px) {
             .pocketAccountButton {
-              left: 12px !important;
-              right: 12px !important;
-              bottom: max(10px, env(safe-area-inset-bottom)) !important;
-              width: auto !important;
-              min-width: 0 !important;
-              max-width: 360px !important;
-              padding: 8px 10px !important;
+              display: none !important;
+            }
+
+            .pocketAccountButton + * {
+              display: block;
+            }
+          }
+
+          @media (max-width: 1023px) {
+            .pocketAccountMenu {
+              top: 88px !important;
+              right: 14px !important;
+              left: auto !important;
+              bottom: auto !important;
+              width: min(340px, calc(100vw - 28px)) !important;
+              max-height: calc(100dvh - 110px) !important;
+              overflow-y: auto !important;
+              z-index: 10001 !important;
             }
           }
         `}</style>
@@ -2017,15 +2041,26 @@ export default function LockScreen({ children }) {
             }
           }
 
-          @media (max-width: 760px) {
+          @media (max-width: 1023px) {
             .pocketAccountButton {
-              left: 12px !important;
-              right: 12px !important;
-              bottom: max(10px, env(safe-area-inset-bottom)) !important;
-              width: auto !important;
-              min-width: 0 !important;
-              max-width: 360px !important;
-              padding: 8px 10px !important;
+              display: none !important;
+            }
+
+            .pocketAccountButton + * {
+              display: block;
+            }
+          }
+
+          @media (max-width: 1023px) {
+            .pocketAccountMenu {
+              top: 88px !important;
+              right: 14px !important;
+              left: auto !important;
+              bottom: auto !important;
+              width: min(340px, calc(100vw - 28px)) !important;
+              max-height: calc(100dvh - 110px) !important;
+              overflow-y: auto !important;
+              z-index: 10001 !important;
             }
           }
         `}</style>
