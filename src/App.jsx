@@ -3339,18 +3339,13 @@ function GlobalSettingsModal({
                   title="Theme"
                   description="Choose how Pocket should look."
                 >
-                  <select
-                    className="settings-control"
+                  <ThemePicker
                     value={theme}
-                    onChange={(e) => {
-                      setTheme(e.target.value);
-                      save("pocket_theme", e.target.value);
+                    onChange={(next) => {
+                      setTheme(next);
+                      save("pocket_theme", next);
                     }}
-                  >
-                    <option value="dark">Dark</option>
-                    <option value="system">System</option>
-                    <option value="light">Light</option>
-                  </select>
+                  />
                 </SettingsRow>
                 <SettingsRow
                   title="Motion"
@@ -3750,6 +3745,118 @@ function SettingsToggle({ checked, onChange }) {
   );
 }
 
+function ThemePicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const options = [
+    {
+      value: "dark",
+      label: "Dark",
+      description: "Use Pocket's dark interface.",
+    },
+    {
+      value: "light",
+      label: "Light",
+      description: "Use Pocket's light interface.",
+    },
+    {
+      value: "system",
+      label: "System",
+      description: "Follow your device appearance.",
+    },
+  ];
+  const current =
+    options.find((option) => option.value === value) || options[0];
+  const currentIcon =
+    current.value === "dark"
+      ? Sun
+      : current.value === "light"
+        ? Sun
+        : MonitorSmartphone;
+  const CurrentIcon = currentIcon;
+  useEffect(() => {
+    const close = (event) => {
+      if (!event.target.closest(".theme-picker")) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
+  return (
+    <div className={`theme-picker ${open ? "open" : ""}`}>
+      <button
+        type="button"
+        className="theme-picker-button"
+        onClick={() => setOpen((currentOpen) => !currentOpen)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <span className="theme-picker-leading-icon">
+          <CurrentIcon size={17} />
+        </span>
+        <span className="theme-picker-copy">
+          <strong>{current.label}</strong>
+          <small>{current.description}</small>
+        </span>
+        <ChevronRight size={17} className="theme-picker-chevron" />
+      </button>
+      {open && (
+        <div className="theme-picker-menu" role="listbox" aria-label="Theme">
+          {options.map((option) => {
+            const Icon =
+              option.value === "dark"
+                ? MoonIconForPocket
+                : option.value === "light"
+                  ? Sun
+                  : MonitorSmartphone;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={`theme-picker-option ${value === option.value ? "active" : ""}`}
+                role="option"
+                aria-selected={value === option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="theme-picker-option-icon">
+                  <Icon size={17} />
+                </span>
+                <span className="theme-picker-option-copy">
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                </span>
+                {value === option.value && (
+                  <span className="theme-picker-check">✓</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoonIconForPocket(props) {
+  return (
+    <span
+      {...props}
+      style={{
+        width: 17,
+        height: 17,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 15,
+        lineHeight: 1,
+      }}
+    >
+      ◐
+    </span>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 12 }}>
@@ -3789,7 +3896,7 @@ const settingsCss = `
 .settings-row-value{color:#70D984;font:12px Inter,sans-serif;white-space:nowrap}
 .settings-control,.settings-action-button{min-height:42px;border:1px solid #303742;border-radius:10px;background:#1A2028;color:#E9E8E3;padding:0 12px;font:12px Inter,sans-serif;cursor:pointer}
 .settings-control{min-width:170px}.settings-text-control{width:min(270px,100%)!important}.settings-action-button{background:#20262E;border-color:#37404C;color:#75DD8A;font-weight:600}
-.settings-toggle{width:46px;height:27px;padding:3px;border:1px solid #343B46;border-radius:999px;background:#252B33;cursor:pointer;flex:0 0 auto}.settings-toggle span{display:block;width:19px;height:19px;border-radius:50%;background:#AAB1BB;transition:.2s}.settings-toggle.on{background:#45C963;border-color:#45C963}.settings-toggle.on span{transform:translateX(19px);background:#0E1810}
+.settings-toggle{width:51px;height:31px;padding:2px;border:0;border-radius:999px;background:rgba(120,120,128,.28);cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:flex-start;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),inset 0 1px 1px rgba(0,0,0,.18),0 1px 2px rgba(0,0,0,.16);transition:background-color 180ms cubic-bezier(.22,1,.36,1),box-shadow 180ms ease;appearance:none;-webkit-appearance:none}.settings-toggle span{display:block;width:27px;height:27px;border-radius:50%;background:#F2F2F7;box-shadow:0 2px 5px rgba(0,0,0,.34),0 .5px 1px rgba(0,0,0,.22);transform:translateX(0);transition:transform 190ms cubic-bezier(.2,.85,.25,1.2);flex:0 0 27px}.settings-toggle.on{background:#34C759;box-shadow:inset 0 0 0 1px rgba(0,0,0,.05),inset 0 1px 1px rgba(255,255,255,.08),0 1px 2px rgba(0,0,0,.12)}.settings-toggle.on span{transform:translateX(20px);background:#FFFFFF}.settings-toggle:focus-visible{outline:2px solid rgba(79,227,107,.45);outline-offset:2px}.settings-toggle:active span{transform:scale(.96)}.settings-toggle.on:active span{transform:translateX(20px) scale(.96)}
 .settings-key-row{display:flex;gap:8px;align-items:center}.settings-key-row input{width:230px;max-width:36vw;background:#101419;border:1px solid #303742;border-radius:9px;padding:9px 10px;color:#E9E8E3;outline:none;font:12px Inter,sans-serif}.settings-key-row button{border:1px solid #3B854A;border-radius:9px;background:#51D96B;color:#102014;padding:9px 13px;font:600 12px Inter,sans-serif;cursor:pointer}
 .settings-button-row{display:flex;gap:8px;flex-wrap:wrap}.settings-danger-button{min-height:42px;border:1px solid rgba(217,115,92,.42);border-radius:10px;background:rgba(217,115,92,.08);color:#F0A08F;padding:0 12px;font:600 12px Inter,sans-serif;cursor:pointer}.settings-file-input{color:#9AA2AE;font:11px Inter,sans-serif;max-width:290px}
 .settings-saved-pill{position:absolute;right:0;top:-6px;color:#79DD8B;font:600 10px Inter,sans-serif;background:rgba(79,227,107,.08);border:1px solid rgba(79,227,107,.16);padding:5px 8px;border-radius:999px}.settings-status-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 2px;padding:10px 12px;border:1px solid #3A4652;border-radius:10px;background:#1B222B;color:#BFC6D0;font:12px/1.4 Inter,sans-serif}.settings-status-banner button{border:0;background:transparent;color:#8D96A3;cursor:pointer;font-size:16px}
@@ -4123,10 +4230,13 @@ textarea:focus-visible {
 .settings-row strong { display:block; color:#E9E8E3; font-size:14px; font-weight:600; }
 .settings-row p { margin:6px 0 0; color:#818895; font-size:12px; line-height:1.45; max-width:460px; }
 .settings-row-value { color:#70D984; font-size:12px; white-space:nowrap; }
-.settings-toggle { width:46px; height:27px; padding:3px; border:1px solid #343B46; border-radius:999px; background:#252B33; cursor:pointer; flex:0 0 auto; transition:.2s; }
-.settings-toggle span { display:block; width:19px; height:19px; border-radius:50%; background:#AAB1BB; transition:.2s; }
-.settings-toggle.on { background:#45C963; border-color:#45C963; }
-.settings-toggle.on span { transform:translateX(19px); background:#0E1810; }
+.settings-toggle { width:51px; height:31px; padding:2px; border:0; border-radius:999px; background:#3A3A3C; cursor:pointer; flex:0 0 auto; display:flex; align-items:center; justify-content:flex-start; box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 1px 2px rgba(0,0,0,.18); transition:background-color 180ms ease,box-shadow 180ms ease; appearance:none; -webkit-appearance:none; }
+.settings-toggle span { display:block; width:27px; height:27px; border-radius:50%; background:#F2F2F7; box-shadow:0 2px 4px rgba(0,0,0,.28),0 0 1px rgba(0,0,0,.18); transform:translateX(0); transition:transform 180ms cubic-bezier(.22,1,.36,1); flex:0 0 27px; }
+.settings-toggle.on { background:#34C759; box-shadow:inset 0 0 0 1px rgba(0,0,0,.04),0 1px 2px rgba(0,0,0,.16); }
+.settings-toggle.on span { transform:translateX(20px); background:#FFFFFF; }
+.settings-toggle:focus-visible { outline:2px solid rgba(79,227,107,.45); outline-offset:2px; }
+.settings-toggle:active span { transform:scale(.96); }
+.settings-toggle.on:active span { transform:translateX(20px) scale(.96); }
 .settings-key-row { display:flex; gap:8px; align-items:center; }
 .settings-key-row input { width:220px; max-width:36vw; background:#101419; border:1px solid #303742; border-radius:9px; padding:9px 10px; color:#E9E8E3; outline:none; font:12px Inter,sans-serif; }
 .settings-key-row button { border:1px solid #3B854A; border-radius:9px; background:#51D96B; color:#102014; padding:9px 13px; font:600 12px Inter,sans-serif; cursor:pointer; }
@@ -4159,6 +4269,25 @@ textarea:focus-visible {
   outline-offset: 1px;
 }
 
+
+/* iOS-inspired theme picker */
+.theme-picker{position:relative;width:min(270px,100%)}
+.theme-picker-button{width:100%;min-height:50px;padding:8px 11px;display:flex;align-items:center;gap:11px;border:1px solid #303742;border-radius:13px;background:#1A2028;color:#E9E8E3;cursor:pointer;text-align:left;box-shadow:inset 0 1px 0 rgba(255,255,255,.025);transition:border-color 160ms ease,background 160ms ease,transform 140ms ease}
+.theme-picker-button:hover{background:#1D242D;border-color:#3A424F}
+.theme-picker-button:active{transform:scale(.995)}
+.theme-picker-leading-icon,.theme-picker-option-icon{width:34px;height:34px;flex:0 0 34px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#242B34;color:#8FD89C;border:1px solid #303844}
+.theme-picker-copy,.theme-picker-option-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.theme-picker-copy strong,.theme-picker-option-copy strong{font:600 13px Inter,sans-serif;color:#F0EFEA}
+.theme-picker-copy small,.theme-picker-option-copy small{font:11px/1.3 Inter,sans-serif;color:#7F8894;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.theme-picker-chevron{transition:transform 180ms ease;color:#7D8794}
+.theme-picker.open .theme-picker-chevron{transform:rotate(90deg)}
+.theme-picker-menu{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:40;padding:6px;background:#171C23;border:1px solid #303844;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.48),0 2px 10px rgba(0,0,0,.18);animation:pocketPickerIn 150ms cubic-bezier(.22,1,.36,1) both}
+.theme-picker-option{width:100%;min-height:58px;padding:8px;border:0;border-radius:10px;background:transparent;display:flex;align-items:center;gap:10px;text-align:left;color:#DDE1E6;cursor:pointer}
+.theme-picker-option:hover,.theme-picker-option.active{background:#202730}
+.theme-picker-option:active{transform:scale(.995)}
+.theme-picker-option.active .theme-picker-option-icon{color:#74E08A;border-color:#31583A;background:#1E2A22}
+.theme-picker-check{width:22px;height:22px;display:flex;align-items:center;justify-content:center;color:#65DB7B;font-weight:700}
+@keyframes pocketPickerIn{from{opacity:0;transform:translateY(-4px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 
 /* ---------- Universal Search ---------- */
 
@@ -4855,6 +4984,10 @@ textarea:focus-visible {
     min-height: 44px !important;
   }
 
+  .settings-toggle { width: 51px !important; height: 31px !important; min-width: 51px !important; max-width: 51px !important; align-self: flex-end !important; }
+  .theme-picker { width: 100% !important; max-width: none !important; }
+  .theme-picker-menu { top: calc(100% + 7px); }
+
   .settings-row-value {
     display: inline-flex !important;
     width: 100% !important;
@@ -5437,68 +5570,82 @@ button:not(:disabled):active,
 
 
 
-/* Final mobile toggle polish: compact, true on/off switch. */
+/* Final iOS switch correction: uses a pseudo-element track/knob so no older CSS can distort it. */
 .settings-toggle {
   position: relative !important;
-  width: 50px !important;
-  min-width: 50px !important;
-  max-width: 50px !important;
-  height: 30px !important;
-  min-height: 30px !important;
-  padding: 2px !important;
-  border: 1px solid #38404B !important;
+  display: inline-block !important;
+  width: 51px !important;
+  min-width: 51px !important;
+  max-width: 51px !important;
+  height: 31px !important;
+  min-height: 31px !important;
+  max-height: 31px !important;
+  flex: 0 0 51px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
   border-radius: 999px !important;
-  background: #252C35 !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: flex-start !important;
-  flex: 0 0 50px !important;
-  cursor: pointer !important;
-  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease !important;
+  background: transparent !important;
+  box-shadow: none !important;
   appearance: none !important;
   -webkit-appearance: none !important;
+  cursor: pointer !important;
+  overflow: visible !important;
 }
-
-.settings-toggle .settings-toggle-knob {
-  width: 24px !important;
-  height: 24px !important;
-  flex: 0 0 24px !important;
-  display: block !important;
-  border-radius: 50% !important;
-  background: #C5CDD7 !important;
-  transform: none !important;
-  transition: transform 180ms var(--pocket-ease), background-color 180ms ease, box-shadow 180ms ease !important;
-  box-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
+.settings-toggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: #3A3A3C;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
 }
-
-.settings-toggle.on {
-  background: #45C963 !important;
-  border-color: #45C963 !important;
-  justify-content: flex-end !important;
-  box-shadow: 0 0 0 1px rgba(69,201,99,.08) !important;
+.settings-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 2px 5px rgba(0,0,0,.28), 0 .5px 1px rgba(0,0,0,.18);
+  transform: translateX(0);
+  transition: transform 190ms cubic-bezier(.2,.85,.25,1.2);
+  z-index: 1;
 }
-
-.settings-toggle.on .settings-toggle-knob {
-  transform: none !important;
-  background: #0C1710 !important;
+.settings-toggle.on::before {
+  background: #34C759;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.05);
 }
-
+.settings-toggle.on::after {
+  transform: translateX(20px);
+}
+.settings-toggle > .settings-toggle-knob {
+  display: none !important;
+}
 .settings-toggle:active {
   transform: scale(.97) !important;
 }
-
+.settings-toggle:focus-visible {
+  outline: 2px solid rgba(79,227,107,.42) !important;
+  outline-offset: 3px !important;
+}
 @media (max-width: 768px) {
   .settings-row > .settings-toggle,
   .settings-row > .settings-toggle.on {
-    width: 50px !important;
-    min-width: 50px !important;
-    max-width: 50px !important;
-    height: 30px !important;
-    min-height: 30px !important;
+    width: 51px !important;
+    min-width: 51px !important;
+    max-width: 51px !important;
+    height: 31px !important;
+    min-height: 31px !important;
+    max-height: 31px !important;
+    flex: 0 0 51px !important;
     align-self: flex-end !important;
-    flex: 0 0 50px !important;
   }
 }
+
 `;
 
 const styles = {

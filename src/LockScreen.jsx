@@ -2153,81 +2153,79 @@ export default function LockScreen({ children }) {
       `}</style>
       <div className="pocket-lock-page" style={styles.lockWrap}>
         <div className="pocket-lock-card" style={styles.lockCard}>
-          <div style={styles.lockCard}>
-            <Fingerprint size={42} color="#C9A455" />
+          <Fingerprint size={42} color="#C9A455" />
 
-            <div style={styles.lockTitle}>Pocket</div>
+          <div style={styles.lockTitle}>Pocket</div>
 
-            {status.hasCredential ? (
-              <>
-                <div style={styles.lockSubtitle}>
-                  Unlock with your fingerprint, Face ID, or passkey
-                </div>
+          {status.hasCredential ? (
+            <>
+              <div style={styles.lockSubtitle}>
+                Unlock with your fingerprint, Face ID, or passkey
+              </div>
 
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  onClick={handleUnlock}
-                  disabled={loading}
-                >
-                  {loading ? "Waiting…" : "Unlock"}
-                </button>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={handleUnlock}
+                disabled={loading}
+              >
+                {loading ? "Waiting…" : "Unlock"}
+              </button>
 
-                <button
-                  type="button"
-                  style={styles.lockSecondaryButton}
-                  onClick={openNewDevicePairing}
-                >
-                  <Link2 size={15} />
-                  Pair this device
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={styles.lockSubtitle}>
-                  Set up biometric unlock for this device
-                </div>
+              <button
+                type="button"
+                style={styles.lockSecondaryButton}
+                onClick={openNewDevicePairing}
+              >
+                <Link2 size={15} />
+                Pair this device
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={styles.lockSubtitle}>
+                Set up biometric unlock for this device
+              </div>
 
-                <input
-                  type="password"
-                  placeholder="Setup code"
-                  value={setupCode}
-                  onChange={(e) => setSetupCode(e.target.value)}
-                  style={styles.input}
-                />
+              <input
+                type="password"
+                placeholder="Setup code"
+                value={setupCode}
+                onChange={(e) => setSetupCode(e.target.value)}
+                style={styles.input}
+              />
 
-                <button
-                  type="button"
-                  style={styles.primaryButton}
-                  onClick={() => {
-                    setDeviceName("");
-                    setDeviceError(null);
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => {
+                  setDeviceName("");
+                  setDeviceError(null);
 
-                    setShowAddDevice(true);
-                  }}
-                  disabled={loading || !setupCode}
-                >
-                  Set up Face ID / Touch ID
-                </button>
+                  setShowAddDevice(true);
+                }}
+                disabled={loading || !setupCode}
+              >
+                Set up Face ID / Touch ID
+              </button>
 
-                <button
-                  type="button"
-                  style={styles.lockSecondaryButton}
-                  onClick={openNewDevicePairing}
-                >
-                  <Link2 size={15} />
-                  Pair this device
-                </button>
-              </>
-            )}
+              <button
+                type="button"
+                style={styles.lockSecondaryButton}
+                onClick={openNewDevicePairing}
+              >
+                <Link2 size={15} />
+                Pair this device
+              </button>
+            </>
+          )}
 
-            {error && <div style={styles.modalError}>{error}</div>}
-          </div>
-
-          {trustedPairingModal}
-
-          {newDevicePairingModal}
+          {error && <div style={styles.modalError}>{error}</div>}
         </div>
+
+        {trustedPairingModal}
+
+        {newDevicePairingModal}
       </div>
     </>
   );
