@@ -174,7 +174,6 @@ export default function LedgerApp() {
   const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [profileAnchor, setProfileAnchor] = useState(null);
   const [notesSettingsRequest, setNotesSettingsRequest] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("general");
@@ -277,31 +276,6 @@ export default function LedgerApp() {
     setSettingsOpen(true);
     setProfileMenuOpen(false);
   }, []);
-
-  const toggleProfileMenu = useCallback(
-    (event) => {
-      if (profileMenuOpen) {
-        setProfileMenuOpen(false);
-        return;
-      }
-
-      const rect = event?.currentTarget?.getBoundingClientRect?.();
-      if (rect) {
-        setProfileAnchor({
-          left: rect.left,
-          right: rect.right,
-          top: rect.top,
-          bottom: rect.bottom,
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight,
-        });
-      } else {
-        setProfileAnchor(null);
-      }
-      setProfileMenuOpen(true);
-    },
-    [profileMenuOpen],
-  );
 
   // Process due recurring entries once loaded
   useEffect(() => {
@@ -780,7 +754,11 @@ export default function LedgerApp() {
   return (
     <div style={styles.app} className="ledger-app">
       <style>{fontImports + settingsCss}</style>
-      <Sidebar tab={tab} setTab={setTab} onProfileClick={toggleProfileMenu} />
+      <Sidebar
+        tab={tab}
+        setTab={setTab}
+        onProfileClick={() => setProfileMenuOpen((open) => !open)}
+      />
       <main style={styles.main}>
         <TopBar
           netWorth={netWorth}
@@ -795,13 +773,12 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
-          onProfileClick={toggleProfileMenu}
+          onProfileClick={() => setProfileMenuOpen((open) => !open)}
           onOpenSettings={openSettings}
           saveError={saveError}
         />
         <ProfileMenu
           open={profileMenuOpen}
-          anchor={profileAnchor}
           onClose={() => setProfileMenuOpen(false)}
           onNavigate={(nextTab) => {
             setTab(nextTab);
@@ -1282,27 +1259,8 @@ function TopBar({
   );
 }
 
-function ProfileMenu({ open, anchor, onClose, onNavigate, onOpenSettings }) {
+function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
   if (!open) return null;
-
-  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
-  const menuWidth = isMobile
-    ? Math.min(344, Math.max(0, window.innerWidth - 20))
-    : 344;
-  const menuPosition = isMobile
-    ? {
-        left: anchor
-          ? Math.min(
-              Math.max(anchor.right - menuWidth, 10),
-              Math.max(10, window.innerWidth - menuWidth - 10),
-            )
-          : undefined,
-        top: anchor ? anchor.bottom + 12 : 86,
-      }
-    : {
-        left: anchor ? anchor.right + 12 : 272,
-        bottom: anchor ? Math.max(12, window.innerHeight - anchor.bottom) : 22,
-      };
 
   return (
     <>
@@ -1313,7 +1271,6 @@ function ProfileMenu({ open, anchor, onClose, onNavigate, onOpenSettings }) {
       />
       <div
         className="profile-menu-popover"
-        style={menuPosition}
         role="dialog"
         aria-modal="true"
         aria-label="Profile and settings menu"
@@ -5110,6 +5067,8 @@ button:not(:disabled):active,
 }
 
 .profile-menu-popover {
+  left: 272px !important;
+  bottom: 22px !important;
   width: 344px !important;
   max-width: calc(100vw - 294px);
   background: #171B21 !important;
@@ -5242,6 +5201,10 @@ button:not(:disabled):active,
 
 @media (max-width: 1023px) {
   .profile-menu-popover {
+    left: auto !important;
+    right: 16px !important;
+    bottom: auto !important;
+    top: calc(86px + env(safe-area-inset-top)) !important;
     width: min(344px, calc(100vw - 32px)) !important;
     max-width: none !important;
     transform-origin: top right;
@@ -5250,83 +5213,245 @@ button:not(:disabled):active,
 
 @media (max-width: 400px) {
   .profile-menu-popover {
+    right: 10px !important;
     width: calc(100vw - 20px) !important;
   }
 }
 
-/* FINAL PROFILE MENU POSITION + COLOR
-   Desktop: open exactly from the existing profile-card area in the sidebar.
-   Mobile: keep the menu attached to the top-right V avatar.
-*/
-.profile-menu-popover {
-  left: 18px !important;
-  right: auto !important;
-  bottom: 18px !important;
-  top: auto !important;
-  width: 220px !important;
-  max-width: 220px !important;
-  background: #15181D !important;
-  border: 1px solid #242830 !important;
-  border-radius: 13px !important;
-  box-shadow: 0 24px 70px rgba(0,0,0,.52), 0 4px 18px rgba(0,0,0,.28) !important;
-  transform-origin: left bottom !important;
-}
 
-.profile-menu-header {
-  background: #15181D !important;
-  min-height: 68px !important;
-  padding: 12px 10px !important;
-}
-
-.profile-menu-divider {
-  background: #242830 !important;
-}
-
-.profile-menu-item {
-  min-height: 54px !important;
-  padding: 8px 10px !important;
-  grid-template-columns: 32px minmax(0,1fr) 14px !important;
-  gap: 9px !important;
-  background: #15181D !important;
-}
-
-.profile-menu-item-rich {
-  min-height: 58px !important;
-}
-
-.profile-menu-item:hover {
-  background: #1A1E24 !important;
-}
-
-.profile-menu-item:active {
-  background: #20242A !important;
-}
-
-.profile-menu-item-icon {
-  width: 32px !important;
-  height: 32px !important;
-  border-radius: 9px !important;
-  background: #1F242B !important;
-}
-
-.profile-menu-name {
-  font-size: 13px !important;
-}
-
-.profile-menu-space {
-  font-size: 10px !important;
-}
-
-@media (max-width: 1023px) {
-  .profile-menu-popover {
-    left: auto !important;
-    right: 16px !important;
-    bottom: auto !important;
-    top: calc(86px + env(safe-area-inset-top)) !important;
-    width: min(344px, calc(100vw - 32px)) !important;
-    max-width: none !important;
-    border-radius: 18px !important;
+/* =========================================================
+   MOBILE CLEANUP v6
+   Keep the mobile dashboard calm: one primary action row,
+   no duplicate shortcut strip, and a compact settings shell.
+========================================================= */
+@media (max-width: 768px) {
+  /* The upper action controls already expose Add / theme / notifications.
+     Hide the duplicate Today / Dashboard / Add / Scan / More strip. */
+  .mobile-quick-actions {
+    display: none !important;
   }
+
+  .ledger-topbar {
+    padding: calc(18px + env(safe-area-inset-top)) 18px 12px !important;
+  }
+
+  .mobile-dashboard-header {
+    margin-bottom: 18px !important;
+  }
+
+  .mobile-greeting {
+    font-size: 30px !important;
+    letter-spacing: -0.8px !important;
+  }
+
+  .mobile-subtitle {
+    font-size: 14px !important;
+    margin-top: 5px !important;
+  }
+
+  .mobile-avatar-button {
+    width: 52px !important;
+    height: 52px !important;
+    min-width: 52px !important;
+    flex-basis: 52px !important;
+  }
+
+  .ledger-topbar .global-search {
+    height: 54px !important;
+    border-radius: 17px !important;
+  }
+
+  /* Keep the useful desktop actions available on mobile in one clean row. */
+  .ledger-topbar .topActions {
+    display: flex !important;
+    width: 100% !important;
+    gap: 8px !important;
+    margin-top: 10px !important;
+    overflow: hidden !important;
+  }
+
+  .ledger-topbar .topActions > * {
+    min-width: 0 !important;
+  }
+
+  .ledger-topbar .topActions > button {
+    flex: 0 0 52px !important;
+  }
+
+  .ledger-topbar .topActions > button:last-child {
+    flex: 1 1 auto !important;
+    min-width: 112px !important;
+  }
+
+  .ledger-page,
+  .modulePage {
+    padding-top: 6px !important;
+    padding-bottom: 112px !important;
+  }
+
+  .hero-grid,
+  .ledger-grid-3,
+  .ledger-grid-main,
+  .widget-grid,
+  .placeholderGrid {
+    width: 100% !important;
+    grid-template-columns: 1fr !important;
+  }
+
+  .widget-span-2 {
+    grid-column: span 1 !important;
+  }
+
+  .mobile-bottom-nav {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(10px + env(safe-area-inset-bottom)) !important;
+    height: 68px !important;
+    border-radius: 21px !important;
+  }
+
+  .mobile-bottom-nav button {
+    height: 58px !important;
+    font-size: 9px !important;
+  }
+
+  .mobile-bottom-nav button span {
+    font-size: 9px !important;
+  }
+
+  /* Settings: make the category strip feel like a deliberate mobile control. */
+  .global-settings-overlay {
+    padding: 0 !important;
+    background: rgba(4,6,8,.78) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+  }
+
+  .global-settings-shell {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    background: #15191F !important;
+  }
+
+  .global-settings-sidebar {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    gap: 7px !important;
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px !important;
+    background: #12161B !important;
+    border-bottom: 1px solid #292F38 !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+  }
+
+  .global-settings-sidebar::-webkit-scrollbar { display: none !important; }
+
+  .global-settings-nav {
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 9px 12px !important;
+    border-radius: 12px !important;
+    gap: 8px !important;
+    font-size: 12px !important;
+  }
+
+  .global-settings-nav svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  .global-settings-content {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding: 20px 18px calc(36px + env(safe-area-inset-bottom)) !important;
+  }
+
+  .global-settings-header {
+    padding-bottom: 20px !important;
+    align-items: center !important;
+  }
+
+  .global-settings-header h2 {
+    margin-top: 5px !important;
+    font-size: 28px !important;
+    letter-spacing: -0.7px !important;
+  }
+
+  .global-settings-close {
+    width: 44px !important;
+    height: 44px !important;
+    flex: 0 0 44px !important;
+    border-radius: 13px !important;
+  }
+
+  .settings-row {
+    padding: 20px 0 !important;
+    gap: 11px !important;
+  }
+
+  .settings-row strong {
+    font-size: 15px !important;
+  }
+
+  .settings-row p {
+    font-size: 12px !important;
+    line-height: 1.45 !important;
+  }
+
+  .settings-control,
+  .settings-action-button,
+  .settings-key-row input,
+  .settings-key-row button {
+    min-height: 48px !important;
+    border-radius: 13px !important;
+    font-size: 14px !important;
+  }
+
+  .settings-text-control,
+  .settings-control {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .settings-button-row {
+    width: 100% !important;
+    gap: 8px !important;
+  }
+
+  .settings-button-row .settings-action-button,
+  .settings-button-row .settings-danger-button {
+    flex: 1 1 auto !important;
+  }
+
+  .settings-toggle {
+    width: 52px !important;
+    height: 30px !important;
+  }
+
+  .settings-toggle span {
+    width: 22px !important;
+    height: 22px !important;
+  }
+
+  .settings-toggle.on span {
+    transform: translateX(22px) !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .ledger-topbar { padding-left: 14px !important; padding-right: 14px !important; }
+  .ledger-page, .modulePage { padding-left: 14px !important; padding-right: 14px !important; }
+  .mobile-greeting { font-size: 27px !important; }
+  .mobile-avatar-button { width: 48px !important; height: 48px !important; min-width: 48px !important; flex-basis: 48px !important; }
+  .global-settings-content { padding-left: 14px !important; padding-right: 14px !important; }
 }
 
 `;
