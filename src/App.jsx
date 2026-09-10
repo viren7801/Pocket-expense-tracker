@@ -113,41 +113,6 @@ function addInterval(dateStr, freq) {
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
-function getPocketPreference(key, fallback) {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value == null ? fallback : value;
-  } catch {
-    return fallback;
-  }
-}
-
-function setPocketPreference(key, value) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    // Preferences are optional when local storage is unavailable.
-  }
-  window.dispatchEvent(
-    new CustomEvent("pocket:preferences-changed", { detail: { key, value } }),
-  );
-}
-
-function useIsMobileLayout() {
-  const getValue = () =>
-    typeof window !== "undefined" ? window.innerWidth <= 1023 : false;
-  const [isMobile, setIsMobile] = useState(getValue);
-
-  useEffect(() => {
-    const update = () => setIsMobile(getValue());
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
-
-  return isMobile;
-}
-
 export default function LedgerApp() {
   const [loaded, setLoaded] = useState(false);
   const [accounts, setAccounts] = useState([]);
@@ -160,23 +125,7 @@ export default function LedgerApp() {
   const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState("general");
-  const [notesSearchIndex, setNotesSearchIndex] = useState([]);
-  const [notesVaultLocked, setNotesVaultLocked] = useState(true);
-  const isMobileLayout = useIsMobileLayout();
-
-  useEffect(() => {
-    const applyTheme = () => {
-      const theme = getPocketPreference("pocket_theme", "dark");
-      document.documentElement.dataset.pocketTheme = theme;
-      document.body.dataset.pocketTheme = theme;
-    };
-    applyTheme();
-    window.addEventListener("pocket:preferences-changed", applyTheme);
-    return () =>
-      window.removeEventListener("pocket:preferences-changed", applyTheme);
-  }, []);
+  const [notesSettingsRequest, setNotesSettingsRequest] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -559,209 +508,6 @@ export default function LedgerApp() {
   );
 
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || "—";
-  const universalSearchResults = useMemo(() => {
-    const results = [];
-
-    const add = (result) => {
-      results.push({
-        id: result.id,
-        type: result.type,
-        title: result.title,
-        subtitle: result.subtitle || "",
-        section: result.section,
-        tab: result.tab,
-        item: result.item || null,
-        searchText: result.searchText || "",
-        score: result.score || 0,
-      });
-    };
-
-    const pages = [
-      {
-        id: "dashboard",
-        title: "Dashboard",
-        subtitle: "Your finance overview",
-        section: "Pages",
-      },
-      {
-        id: "transactions",
-        title: "Pocket",
-        subtitle: "Income, expenses & transactions",
-        section: "Pages",
-      },
-      {
-        id: "passwords",
-        title: "Passwords",
-        subtitle: "Secure password vault",
-        section: "Pages",
-      },
-      {
-        id: "notes",
-        title: "Notes",
-        subtitle: "Private notes vault",
-        section: "Pages",
-      },
-      {
-        id: "accounts",
-        title: "Accounts",
-        subtitle: "Cash, bank & wallet accounts",
-        section: "Pages",
-      },
-      {
-        id: "budgets",
-        title: "Budgets",
-        subtitle: "Monthly category limits",
-        section: "Pages",
-      },
-      {
-        id: "goals",
-        title: "Goals",
-        subtitle: "Savings goals",
-        section: "Pages",
-      },
-      {
-        id: "recurring",
-        title: "Recurring",
-        subtitle: "Automatic recurring entries",
-        section: "Pages",
-      },
-    ];
-
-    pages.forEach((page) =>
-      add({
-        id: `page:${page.id}`,
-        type: "page",
-        title: page.title,
-        subtitle: page.subtitle,
-        section: page.section,
-        tab: page.id,
-      }),
-    );
-
-    add({
-      id: "settings:general",
-      type: "settings",
-      title: "Settings",
-      subtitle: "General, security, notifications & devices",
-      section: "Settings",
-      tab: "settings",
-    });
-
-    add({
-      id: "settings:security",
-      type: "settings",
-      title: "Security settings",
-      subtitle: "Vault protection & receipt scanning",
-      section: "Settings",
-      tab: "settings",
-    });
-
-    add({
-      id: "settings:devices",
-      type: "settings",
-      title: "Device settings",
-      subtitle: "Connected devices & passkeys",
-      section: "Settings",
-      tab: "settings",
-    });
-
-    transactions.forEach((t) => {
-      const account = accountName(t.accountId);
-      const haystack =
-        `${t.category} ${t.note || ""} ${account} ${t.type} ${t.date} ${t.amount}`.toLowerCase();
-      add({
-        id: `transaction:${t.id}`,
-        type: "transaction",
-        title: t.category || "Untitled transaction",
-        subtitle: `${t.type === "income" ? "Income" : "Expense"} · ${account} · ${fmtDate(t.date)} · ${fmtINR(t.amount)}${t.note ? ` · ${t.note}` : ""}`,
-        section: "Transactions",
-        tab: "transactions",
-        item: t,
-        score: haystack.length,
-      });
-    });
-
-    accounts.forEach((a) => {
-      add({
-        id: `account:${a.id}`,
-        type: "account",
-        title: a.name,
-        subtitle: `${a.type} · ${fmtINR(accountBalances[a.id] || 0)}`,
-        section: "Accounts",
-        tab: "accounts",
-        item: a,
-      });
-    });
-
-    budgets.forEach((b) => {
-      const status = budgetStatus.find((x) => x.id === b.id);
-      add({
-        id: `budget:${b.id}`,
-        type: "budget",
-        title: `${b.category} budget`,
-        subtitle: `${fmtINR(b.limit)} limit · ${fmtINR(status?.spent || 0)} spent`,
-        section: "Budgets",
-        tab: "budgets",
-        item: b,
-      });
-    });
-
-    goals.forEach((g) => {
-      const pct =
-        g.target > 0
-          ? Math.min(100, Math.round((g.saved / g.target) * 100))
-          : 0;
-      add({
-        id: `goal:${g.id}`,
-        type: "goal",
-        title: g.name,
-        subtitle: `${fmtINR(g.saved)} saved · ${pct}% of ${fmtINR(g.target)}`,
-        section: "Goals",
-        tab: "goals",
-        item: g,
-      });
-    });
-
-    recurring.forEach((r) => {
-      add({
-        id: `recurring:${r.id}`,
-        type: "recurring",
-        title: r.label,
-        subtitle: `${r.category} · ${r.frequency} · ${fmtINR(r.amount)}`,
-        section: "Recurring",
-        tab: "recurring",
-        item: r,
-      });
-    });
-
-    // Private Notes: the index contains decrypted note data only for the
-    // current unlocked in-memory session. NotesView clears this index as soon
-    // as the vault locks, so searching it here is safe while unlocked.
-    notesSearchIndex.forEach((note) => {
-      add({
-        id: `note:${note.id}`,
-        type: "note",
-        title: note.title || "Untitled note",
-        subtitle: note.preview || "Private note",
-        searchText: `${note.title || ""} ${note.content || ""} ${(note.tags || []).join(" ")}`,
-        section: "Notes",
-        tab: "notes",
-        item: note,
-      });
-    });
-
-    return results;
-  }, [
-    transactions,
-    accounts,
-    budgets,
-    goals,
-    recurring,
-    accountBalances,
-    budgetStatus,
-    notesSearchIndex,
-    notesVaultLocked,
-  ]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -773,25 +519,6 @@ export default function LedgerApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  useEffect(() => {
-    const openSettingsFromAccountMenu = (event) => {
-      const section = event.detail?.section || "general";
-      setSettingsSection(section);
-      setSettingsOpen(true);
-    };
-
-    window.addEventListener(
-      "pocket:open-global-settings",
-      openSettingsFromAccountMenu,
-    );
-
-    return () =>
-      window.removeEventListener(
-        "pocket:open-global-settings",
-        openSettingsFromAccountMenu,
-      );
   }, []);
 
   const isShareRoute =
@@ -829,15 +556,11 @@ export default function LedgerApp() {
   return (
     <div style={styles.app} className="ledger-app">
       <style>{fontImports}</style>
-      {!isMobileLayout && (
-        <Sidebar
-          tab={tab}
-          setTab={setTab}
-          onProfileClick={() =>
-            window.dispatchEvent(new CustomEvent("pocket:open-account-menu"))
-          }
-        />
-      )}
+      <Sidebar
+        tab={tab}
+        setTab={setTab}
+        onProfileClick={() => setProfileMenuOpen((open) => !open)}
+      />
       <main style={styles.main}>
         <TopBar
           netWorth={netWorth}
@@ -852,31 +575,22 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
-          onProfileClick={() =>
-            window.dispatchEvent(new CustomEvent("pocket:open-account-menu"))
-          }
+          onProfileClick={() => setProfileMenuOpen((open) => !open)}
           saveError={saveError}
         />
-        {settingsOpen && (
-          <GlobalSettingsModal
-            initialSection={settingsSection}
-            onClose={() => setSettingsOpen(false)}
-            onOpenNotesSettings={() => {
-              setSettingsOpen(false);
-              window.setTimeout(() => {
-                window.dispatchEvent(
-                  new CustomEvent("pocket:open-notes-settings"),
-                );
-              }, 0);
-            }}
-            onDeviceAction={(eventName) => {
-              setSettingsOpen(false);
-              window.setTimeout(() => {
-                window.dispatchEvent(new CustomEvent(eventName));
-              }, 0);
-            }}
-          />
-        )}
+        <ProfileMenu
+          open={profileMenuOpen}
+          onClose={() => setProfileMenuOpen(false)}
+          onNavigate={(nextTab) => {
+            setTab(nextTab);
+            setProfileMenuOpen(false);
+          }}
+          onOpenSettings={() => {
+            setProfileMenuOpen(false);
+            setTab("notes");
+            setNotesSettingsRequest((value) => value + 1);
+          }}
+        />
         <input
           ref={fileInputRef}
           type="file"
@@ -888,129 +602,107 @@ export default function LedgerApp() {
           }}
         />
 
-        <div key={tab} className="pocket-page-transition">
-          {tab === "dashboard" && (
-            <Dashboard
-              trendData={trendData}
-              netWorthTrend={netWorthTrend}
-              categoryBreakdown={categoryBreakdown}
-              transactions={transactions.slice(0, 6)}
-              accountName={accountName}
-              savingsRate={savingsRate}
-              expenseChangePct={expenseChangePct}
-              topCategory={topCategory}
-              accounts={accounts}
-              balances={accountBalances}
-              budgets={budgetStatus}
-              goals={goals}
-              monthIncome={monthIncome}
-              monthExpense={monthExpense}
-              onAddTxn={() => {
-                setEditingTxn(null);
-                setTxnPrefill(null);
-                setShowTxnForm(true);
-              }}
-              onViewTransactions={() => setTab("transactions")}
-              onScanClick={() => setShowScanModal(true)}
-              onEdit={(t) => {
-                setEditingTxn(t);
-                setShowTxnForm(true);
-              }}
-            />
-          )}
-          {tab === "transactions" && (
-            <TransactionsView
-              transactions={transactions}
-              accounts={accounts}
-              categories={categories}
-              onDelete={deleteTransaction}
-              onEdit={(t) => {
-                setEditingTxn(t);
-                setShowTxnForm(true);
-              }}
-            />
-          )}
-          {tab === "accounts" && (
-            <AccountsView
-              accounts={accounts}
-              balances={accountBalances}
-              onAdd={() => setShowAccountForm(true)}
-            />
-          )}
-          {tab === "budgets" && (
-            <BudgetsView
-              budgetStatus={budgetStatus}
-              onAdd={() => setShowBudgetForm(true)}
-              onDelete={deleteBudget}
-            />
-          )}
-          {tab === "goals" && (
-            <GoalsView
-              goals={goals}
-              onAdd={() => setShowGoalForm(true)}
-              onContribute={contributeGoal}
-              onDelete={deleteGoal}
-            />
-          )}
-          {tab === "passwords" && (
-            <PasswordsView
-              vault={passwordVault}
-              onVaultChange={setPasswordVault}
-            />
-          )}
-          {tab === "notes" && (
-            <NotesView
-              vault={notesVault}
-              onVaultChange={setNotesVault}
-              onSearchIndexChange={setNotesSearchIndex}
-              onVaultLockChange={setNotesVaultLocked}
-            />
-          )}
-          {tab === "recurring" && (
-            <RecurringView
-              recurring={recurring}
-              accountName={accountName}
-              onAdd={() => setShowRecurringForm(true)}
-              onDelete={deleteRecurring}
-            />
-          )}
-        </div>
+        {tab === "dashboard" && (
+          <Dashboard
+            trendData={trendData}
+            netWorthTrend={netWorthTrend}
+            categoryBreakdown={categoryBreakdown}
+            transactions={transactions.slice(0, 6)}
+            accountName={accountName}
+            savingsRate={savingsRate}
+            expenseChangePct={expenseChangePct}
+            topCategory={topCategory}
+            accounts={accounts}
+            balances={accountBalances}
+            budgets={budgetStatus}
+            goals={goals}
+            monthIncome={monthIncome}
+            monthExpense={monthExpense}
+            onAddTxn={() => {
+              setEditingTxn(null);
+              setTxnPrefill(null);
+              setShowTxnForm(true);
+            }}
+            onViewTransactions={() => setTab("transactions")}
+            onScanClick={() => setShowScanModal(true)}
+            onEdit={(t) => {
+              setEditingTxn(t);
+              setShowTxnForm(true);
+            }}
+          />
+        )}
+        {tab === "transactions" && (
+          <TransactionsView
+            transactions={transactions}
+            accounts={accounts}
+            categories={categories}
+            onDelete={deleteTransaction}
+            onEdit={(t) => {
+              setEditingTxn(t);
+              setShowTxnForm(true);
+            }}
+          />
+        )}
+        {tab === "accounts" && (
+          <AccountsView
+            accounts={accounts}
+            balances={accountBalances}
+            onAdd={() => setShowAccountForm(true)}
+          />
+        )}
+        {tab === "budgets" && (
+          <BudgetsView
+            budgetStatus={budgetStatus}
+            onAdd={() => setShowBudgetForm(true)}
+            onDelete={deleteBudget}
+          />
+        )}
+        {tab === "goals" && (
+          <GoalsView
+            goals={goals}
+            onAdd={() => setShowGoalForm(true)}
+            onContribute={contributeGoal}
+            onDelete={deleteGoal}
+          />
+        )}
+        {tab === "passwords" && (
+          <PasswordsView
+            vault={passwordVault}
+            onVaultChange={setPasswordVault}
+          />
+        )}
+        {tab === "notes" && (
+          <NotesView
+            vault={notesVault}
+            onVaultChange={setNotesVault}
+            openSettingsRequest={notesSettingsRequest}
+          />
+        )}
+        {tab === "recurring" && (
+          <RecurringView
+            recurring={recurring}
+            accountName={accountName}
+            onAdd={() => setShowRecurringForm(true)}
+            onDelete={deleteRecurring}
+          />
+        )}
       </main>
 
-      {isMobileLayout && (
-        <MobileBottomNav
-          tab={tab}
-          setTab={setTab}
-          onAddTxn={() => {
-            setEditingTxn(null);
-            setTxnPrefill(null);
-            setShowTxnForm(true);
-          }}
-        />
-      )}
+      <MobileBottomNav
+        tab={tab}
+        setTab={setTab}
+        onAddTxn={() => {
+          setEditingTxn(null);
+          setTxnPrefill(null);
+          setShowTxnForm(true);
+        }}
+      />
 
       {commandOpen && (
         <CommandPalette
-          results={universalSearchResults}
           onClose={() => setCommandOpen(false)}
-          notesVaultLocked={notesVaultLocked}
-          notesSearchIndex={notesSearchIndex}
-          onSelect={(result) => {
-            if (result.type === "transaction") {
-              setTab("transactions");
-              setEditingTxn(result.item);
-              setShowTxnForm(true);
-            } else if (
-              result.type === "note" ||
-              result.type === "notes-locked"
-            ) {
-              setTab("notes");
-            } else if (result.type === "settings") {
-              setSettingsSection(result.id.split(":")[1] || "general");
-              setSettingsOpen(true);
-            } else {
-              setTab(result.tab);
-            }
+          onNavigate={(next) => {
+            setTab(next);
             setCommandOpen(false);
           }}
         />
@@ -1264,7 +956,7 @@ function TopBar({
         <kbd style={styles.searchKey}>⌘ K</kbd>
       </button>
 
-      <div style={styles.topActions} className="topActions">
+      <div style={styles.topActions}>
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -1393,7 +1085,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => onOpenSettings("devices")}
+          onClick={() => {}}
         >
           <span className="profile-menu-item-icon">
             <Plus size={18} />
@@ -1408,7 +1100,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => onOpenSettings("devices")}
+          onClick={() => {}}
         >
           <span className="profile-menu-item-icon">
             <Link2 size={18} />
@@ -1423,7 +1115,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
         <button
           type="button"
           className="profile-menu-item profile-menu-item-rich"
-          onClick={() => onOpenSettings("devices")}
+          onClick={() => {}}
         >
           <span className="profile-menu-item-icon">
             <MonitorSmartphone size={18} />
@@ -1455,210 +1147,52 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
   );
 }
 
-function CommandPalette({
-  results,
-  onClose,
-  onSelect,
-  notesVaultLocked,
-  notesSearchIndex,
-}) {
+function CommandPalette({ onClose, onNavigate }) {
+  const items = [
+    ["dashboard", "Dashboard", LayoutDashboard],
+    ["transactions", "Pocket", Wallet],
+    ["passwords", "Passwords", KeyRound],
+    ["notes", "Notes", NotebookPen],
+    ["accounts", "Accounts", Landmark],
+    ["budgets", "Budgets", Target],
+  ];
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) {
-      return results
-        .filter((r) => ["page", "settings", "transaction"].includes(r.type))
-        .sort((a, b) => {
-          if (a.type === "page" && b.type !== "page") return -1;
-          if (a.type !== "page" && b.type === "page") return 1;
-          return 0;
-        })
-        .slice(0, 12);
-    }
-
-    const scored = results
-      .map((r) => {
-        const haystack =
-          `${r.title} ${r.subtitle} ${r.section} ${r.searchText || ""}`.toLowerCase();
-        let score = 0;
-        if (haystack === q) score += 100;
-        if (r.title.toLowerCase() === q) score += 80;
-        if (r.title.toLowerCase().startsWith(q)) score += 50;
-        if (r.title.toLowerCase().includes(q)) score += 35;
-        if (haystack.includes(q)) score += 20;
-        if (r.section.toLowerCase().includes(q)) score += 8;
-        return { ...r, searchScore: score };
-      })
-      .filter((r) => r.searchScore > 0)
-      .sort((a, b) => b.searchScore - a.searchScore)
-      .slice(0, 12);
-
-    return scored;
-  }, [query, results]);
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [query]);
-
-  const displayResults = useMemo(() => {
-    if (filtered.length > 0 || !query.trim()) return filtered;
-
-    // Only show the locked-note explanation when the vault is actually
-    // locked and there is no decrypted search index available. The previous
-    // implementation used `|| true`, which made an unlocked vault look locked
-    // whenever there was no matching result.
-    if (notesVaultLocked && notesSearchIndex.length === 0) {
-      const lockedResult = results.find((r) => r.id === "page:notes");
-      if (lockedResult) {
-        return [
-          {
-            id: "notes:locked-search",
-            type: "notes-locked",
-            title: "Private Notes",
-            subtitle: `Notes are locked — unlock to search “${query.trim()}” inside your encrypted notes`,
-            section: "Notes",
-            tab: "notes",
-            item: null,
-          },
-        ];
-      }
-    }
-
-    return filtered;
-  }, [filtered, query, results]);
-
-  const handleKeyDown = (e) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (filtered.length) {
-        setActiveIndex((i) => (i + 1) % filtered.length);
-      }
-      return;
-    }
-
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (filtered.length) {
-        setActiveIndex((i) => (i - 1 + filtered.length) % filtered.length);
-      }
-      return;
-    }
-
-    if (e.key === "Enter" && filtered[activeIndex]) {
-      e.preventDefault();
-      onSelect(filtered[activeIndex]);
-    }
-  };
-
-  const iconFor = (result) => {
-    if (result.type === "transaction") return Receipt;
-    if (result.type === "account") return Landmark;
-    if (result.type === "budget") return Target;
-    if (result.type === "goal") return PiggyBank;
-    if (result.type === "recurring") return Repeat;
-    if (result.type === "passwords") return KeyRound;
-    if (
-      result.type === "notes" ||
-      result.type === "note" ||
-      result.type === "notes-locked"
-    )
-      return NotebookPen;
-    if (result.type === "settings") return Settings;
-    if (result.tab === "dashboard") return LayoutDashboard;
-    if (result.tab === "transactions") return Wallet;
-    if (result.tab === "passwords") return KeyRound;
-    if (result.tab === "notes") return NotebookPen;
-    if (result.tab === "accounts") return Landmark;
-    if (result.tab === "budgets") return Target;
-    if (result.tab === "goals") return PiggyBank;
-    if (result.tab === "recurring") return Repeat;
-    return SearchCheck;
-  };
-
+  const filtered = items.filter(([, label]) =>
+    label.toLowerCase().includes(query.toLowerCase()),
+  );
   return (
-    <div className="universal-search-overlay" onMouseDown={onClose}>
-      <div
-        className="universal-search-panel"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="universal-search-input-row">
-          <Search size={19} color="#737B87" />
+    <div style={styles.commandOverlay} onMouseDown={onClose}>
+      <div style={styles.commandPanel} onMouseDown={(e) => e.stopPropagation()}>
+        <div style={styles.commandSearchRow}>
+          <Search size={18} color="#777C85" />
           <input
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Search anything in Pocket..."
-            className="universal-search-input"
-            aria-label="Search everything"
+            placeholder="Search Pocket, Passwords & Notes..."
+            style={styles.commandInput}
           />
-          <kbd className="universal-search-kbd">⌘ K</kbd>
+          <kbd style={styles.commandEsc}>ESC</kbd>
+        </div>
+        <div style={styles.commandLabel}>GO TO</div>
+        {filtered.map(([id, label, Icon]) => (
           <button
-            type="button"
-            className="universal-search-close"
-            onClick={onClose}
-            aria-label="Close search"
+            key={id}
+            style={styles.commandItem}
+            onClick={() => onNavigate(id)}
           >
-            <X size={15} />
+            <span style={styles.commandIcon}>
+              <Icon size={17} />
+            </span>
+            <span style={{ flex: 1 }}>{label}</span>
+            <ChevronRight size={15} color="#666B74" />
           </button>
-        </div>
-
-        <div className="universal-search-hint">
-          Search transactions, accounts, budgets, goals, recurring entries,
-          private notes, pages and settings.
-        </div>
-
-        <div className="universal-search-results">
-          {displayResults.length === 0 ? (
-            <div className="universal-search-empty">
-              <Search size={20} />
-              <strong>No results found</strong>
-              <span>
-                Try a name, category, note, account, amount or section.
-              </span>
-            </div>
-          ) : (
-            displayResults.map((result, index) => {
-              const Icon = iconFor(result);
-              const previous = filtered[index - 1];
-              const showSection =
-                !previous || previous.section !== result.section;
-
-              return (
-                <React.Fragment key={result.id}>
-                  {showSection && (
-                    <div className="universal-search-section-label">
-                      {result.section}
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    className={`universal-search-result ${index === activeIndex ? "active" : ""}`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => onSelect(result)}
-                  >
-                    <span className="universal-search-result-icon">
-                      <Icon size={17} />
-                    </span>
-                    <span className="universal-search-result-copy">
-                      <strong>{result.title}</strong>
-                      <small>{result.subtitle}</small>
-                    </span>
-                    <ChevronRight size={15} color="#5F6874" />
-                  </button>
-                </React.Fragment>
-              );
-            })
-          )}
-        </div>
-
-        <div className="universal-search-footer">
-          <span>↑↓ Navigate</span>
-          <span>↵ Open</span>
-          <span>ESC Close</span>
-        </div>
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ padding: "24px 12px", color: "#666B74", fontSize: 13 }}>
+            Nothing found.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2553,16 +2087,8 @@ function RecurringView({ recurring, accountName, onAdd, onDelete }) {
 
 function ModalShell({ title, onClose, children }) {
   return (
-    <div
-      style={styles.overlay}
-      className="pocket-modal-backdrop"
-      onClick={onClose}
-    >
-      <div
-        style={styles.modal}
-        className="pocket-modal-card"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div style={styles.overlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div
           style={{
             display: "flex",
@@ -3248,293 +2774,52 @@ function ScanReceiptModal({ onClose, onExtracted, onOpenSettings }) {
   );
 }
 
-function GlobalSettingsModal({
-  initialSection = "general",
-  onClose,
-  onOpenNotesSettings,
-  onDeviceAction,
-}) {
-  const [section, setSection] = useState(initialSection);
-  const [scanKey, setScanKey] = useState(() =>
-    getPocketPreference("pocket_scan_api_key", ""),
-  );
+function SettingsModal({ onClose }) {
+  const [key, setKey] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
-  const [theme, setTheme] = useState(() =>
-    getPocketPreference("pocket_theme", "dark"),
-  );
-  const [currency, setCurrency] = useState(() =>
-    getPocketPreference("pocket_currency", "INR"),
-  );
-  const [dateFormat, setDateFormat] = useState(() =>
-    getPocketPreference("pocket_date_format", "DD MMM YYYY"),
-  );
-
-  useEffect(() => setSection(initialSection), [initialSection]);
-
-  const sections = [
-    ["general", "General", Settings],
-    ["security", "Security", ShieldCheck],
-    ["notifications", "Notifications", Bell],
-    ["devices", "Devices", MonitorSmartphone],
-  ];
-
-  const updatePreference = (key, value) => {
-    setPocketPreference(key, value);
-    if (key === "pocket_theme") setTheme(value);
-    if (key === "pocket_currency") setCurrency(value);
-    if (key === "pocket_date_format") setDateFormat(value);
-  };
-
-  const openNotesSecurity = () => {
-    onClose();
-    window.setTimeout(() => onOpenNotesSettings?.(), 0);
-  };
 
   return (
-    <div
-      className="global-settings-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Pocket settings"
-    >
-      <div className="global-settings-shell">
-        <aside className="global-settings-sidebar">
-          <div className="global-settings-brand">Pocket settings</div>
-          {sections.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              className={`global-settings-nav ${section === id ? "active" : ""}`}
-              onClick={() => setSection(id)}
-            >
-              <Icon size={17} /> <span>{label}</span>
-            </button>
-          ))}
-        </aside>
-
-        <section className="global-settings-content">
-          <div className="global-settings-header">
-            <div>
-              <div className="global-settings-eyebrow">PERSONAL SPACE</div>
-              <h2>
-                {sections.find(([id]) => id === section)?.[1] || "Settings"}
-              </h2>
-            </div>
-            <button
-              type="button"
-              className="global-settings-close"
-              onClick={onClose}
-              aria-label="Close settings"
-            >
-              <X size={18} />
-            </button>
-          </div>
-
-          <div key={section} className="global-settings-section">
-            {section === "general" && (
-              <>
-                <SettingsRow
-                  title="Appearance"
-                  description="Choose the interface theme for Pocket."
-                >
-                  <select
-                    className="settings-control"
-                    value={theme}
-                    onChange={(e) =>
-                      updatePreference("pocket_theme", e.target.value)
-                    }
-                    aria-label="Appearance"
-                  >
-                    <option value="dark">Dark</option>
-                    <option value="system">System</option>
-                  </select>
-                </SettingsRow>
-
-                <SettingsRow
-                  title="Currency"
-                  description="Primary currency used across your Pocket."
-                >
-                  <select
-                    className="settings-control"
-                    value={currency}
-                    onChange={(e) =>
-                      updatePreference("pocket_currency", e.target.value)
-                    }
-                    aria-label="Currency"
-                  >
-                    <option value="INR">INR (₹)</option>
-                    <option value="USD">USD ($)</option>
-                    <option value="EUR">EUR (€)</option>
-                    <option value="GBP">GBP (£)</option>
-                  </select>
-                </SettingsRow>
-
-                <SettingsRow
-                  title="Date format"
-                  description="How dates are displayed in transactions and reports."
-                >
-                  <select
-                    className="settings-control"
-                    value={dateFormat}
-                    onChange={(e) =>
-                      updatePreference("pocket_date_format", e.target.value)
-                    }
-                    aria-label="Date format"
-                  >
-                    <option value="DD MMM YYYY">DD MMM YYYY</option>
-                    <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                    <option value="MMM DD, YYYY">MMM DD, YYYY</option>
-                  </select>
-                </SettingsRow>
-              </>
-            )}
-
-            {section === "security" && (
-              <>
-                <SettingsRow
-                  title="Vault protection"
-                  description="Passwords and private notes remain protected inside their own vaults."
-                  value="Enabled"
-                />
-                <SettingsRow
-                  title="Notes vault"
-                  description="Open the real Notes vault settings, including password, passkey recovery and auto-lock controls."
-                >
-                  <button
-                    type="button"
-                    className="settings-action-button"
-                    onClick={openNotesSecurity}
-                  >
-                    Open Notes security
-                  </button>
-                </SettingsRow>
-                <SettingsRow
-                  title="Receipt scanning API key"
-                  description="Optional key used only when you enable AI receipt scanning on this device."
-                >
-                  <div className="settings-key-row">
-                    <input
-                      type="password"
-                      value={scanKey}
-                      onChange={(e) => {
-                        setScanKey(e.target.value);
-                        setSaved(false);
-                      }}
-                      placeholder="Optional API key"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPocketPreference("pocket_scan_api_key", scanKey);
-                        setSaved(true);
-                      }}
-                    >
-                      {saved ? "Saved" : "Save"}
-                    </button>
-                  </div>
-                </SettingsRow>
-              </>
-            )}
-
-            {section === "notifications" && (
-              <>
-                <SettingsToggle
-                  title="Transaction reminders"
-                  description="Get reminded about recurring and scheduled entries."
-                  defaultChecked
-                />
-                <SettingsToggle
-                  title="Budget alerts"
-                  description="Show an alert when a category approaches its monthly limit."
-                  defaultChecked
-                />
-                <SettingsToggle
-                  title="Weekly summary"
-                  description="Prepare a weekly overview of spending and savings."
-                />
-              </>
-            )}
-
-            {section === "devices" && (
-              <>
-                <SettingsRow
-                  title="This device"
-                  description="Current Pocket session on this browser."
-                  value="Active"
-                />
-                <SettingsRow
-                  title="Add new device"
-                  description="Register another device with your Pocket account."
-                >
-                  <button
-                    type="button"
-                    className="settings-action-button"
-                    onClick={() => onDeviceAction?.("pocket:open-add-device")}
-                  >
-                    Add device
-                  </button>
-                </SettingsRow>
-                <SettingsRow
-                  title="Pair a new device"
-                  description="Pair another phone or computer with this Pocket account."
-                >
-                  <button
-                    type="button"
-                    className="settings-action-button"
-                    onClick={() => onDeviceAction?.("pocket:open-pair-device")}
-                  >
-                    Pair device
-                  </button>
-                </SettingsRow>
-                <SettingsRow
-                  title="Manage devices"
-                  description="View and revoke registered passkeys and devices."
-                >
-                  <button
-                    type="button"
-                    className="settings-action-button"
-                    onClick={() => onDeviceAction?.("pocket:open-devices")}
-                  >
-                    Manage devices
-                  </button>
-                </SettingsRow>
-              </>
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function SettingsRow({ title, description, value, children }) {
-  return (
-    <div className="settings-row">
-      <div>
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
-      {children || <span className="settings-row-value">{value}</span>}
-    </div>
-  );
-}
-
-function SettingsToggle({ title, description, defaultChecked = false }) {
-  const [checked, setChecked] = useState(defaultChecked);
-  return (
-    <div className="settings-row">
-      <div>
-        <strong>{title}</strong>
-        <p>{description}</p>
-      </div>
-      <button
-        className={`settings-toggle ${checked ? "on" : ""}`}
-        onClick={() => setChecked(!checked)}
-        aria-pressed={checked}
+    <ModalShell title="Claude API key" onClose={onClose}>
+      <div
+        style={{
+          fontSize: 12,
+          color: "#8B8F98",
+          fontFamily: "Inter, sans-serif",
+          marginBottom: 14,
+          lineHeight: 1.5,
+        }}
       >
-        <span />
+        Used only in your browser to call Claude's API for receipt scanning.
+        Stored locally on this device — it's never sent anywhere except
+        api.anthropic.com. Get a key from your Claude Console account.
+      </div>
+      <Field label="API key">
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => {
+            setKey(e.target.value);
+            setSaved(false);
+          }}
+          style={styles.input}
+          placeholder="sk-ant-…"
+        />
+      </Field>
+      <button
+        style={{
+          ...styles.primaryBtn,
+          width: "100%",
+          justifyContent: "center",
+          marginTop: 10,
+        }}
+        onClick={() => {
+          setApiKey(key);
+          setSaved(true);
+        }}
+      >
+        {saved ? "Saved" : "Save key"}
       </button>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -3568,532 +2853,30 @@ body { overflow-x: hidden; background: #0E1013; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* =========================================================
-   POCKET MOTION SYSTEM
-   Calm, fast and purposeful: feedback 140–180ms,
-   surfaces 220–300ms, page transitions ~360ms.
-========================================================= */
-:root {
-  --pocket-ease: cubic-bezier(.22, 1, .36, 1);
-  --pocket-ease-soft: cubic-bezier(.16, 1, .3, 1);
-  --pocket-fast: 160ms;
-  --pocket-surface: 240ms;
-}
-
-button,
-a,
-select,
-input,
-textarea {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button,
-a,
-select {
-  transition:
-    transform var(--pocket-fast) var(--pocket-ease),
-    background-color var(--pocket-fast) ease,
-    border-color var(--pocket-fast) ease,
-    color var(--pocket-fast) ease,
-    box-shadow var(--pocket-fast) ease,
-    opacity var(--pocket-fast) ease;
-}
-
-button:not(:disabled):active {
-  transform: translateY(1px) scale(.985);
-}
-
-button:focus-visible,
-a:focus-visible,
-select:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid rgba(79,227,107,.35);
-  outline-offset: 2px;
-}
-
-.pocket-page-transition {
-  animation: pocketPageEnter 360ms var(--pocket-ease) both;
-  transform-origin: 50% 18%;
-}
-
-@keyframes pocketPageEnter {
-  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.992); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-}
-
-.pocket-page-transition > * {
-  animation: pocketContentEnter 420ms var(--pocket-ease-soft) both;
-}
-
-.pocket-page-transition > *:nth-child(2) { animation-delay: 25ms; }
-.pocket-page-transition > *:nth-child(3) { animation-delay: 50ms; }
-.pocket-page-transition > *:nth-child(4) { animation-delay: 75ms; }
-
-.panel,
-.widget,
-.netWorthCard,
-.monthCard,
-.accountCard,
-.quickCard,
-.moduleHero,
-.placeholderCard,
-.global-settings-shell,
-.universal-search-panel,
-.profile-menu-popover,
-.mobile-bottom-nav,
-.pocket-modal-card {
-  transition:
-    transform var(--pocket-surface) var(--pocket-ease),
-    border-color var(--pocket-surface) ease,
-    box-shadow var(--pocket-surface) ease,
-    background-color var(--pocket-surface) ease;
-}
-
-.panel:hover,
-.widget:hover,
-.accountCard:hover,
-.quickCard:hover,
-.placeholderCard:hover {
-  transform: translateY(-2px);
-  border-color: #343B46;
-  box-shadow: 0 14px 34px rgba(0,0,0,.14);
-}
-
-.ledger-row,
-.account-row,
-.category-row,
-.goal-row,
-.mini-budget,
-.settings-row {
-  animation: pocketRowEnter 300ms var(--pocket-ease-soft) both;
-}
-
-.ledger-row:nth-child(2), .account-row:nth-child(2), .category-row:nth-child(2), .goal-row:nth-child(2), .settings-row:nth-child(2) { animation-delay: 20ms; }
-.ledger-row:nth-child(3), .account-row:nth-child(3), .category-row:nth-child(3), .goal-row:nth-child(3), .settings-row:nth-child(3) { animation-delay: 40ms; }
-.ledger-row:nth-child(4), .account-row:nth-child(4), .category-row:nth-child(4), .goal-row:nth-child(4), .settings-row:nth-child(4) { animation-delay: 60ms; }
-.ledger-row:nth-child(5), .account-row:nth-child(5), .category-row:nth-child(5), .goal-row:nth-child(5), .settings-row:nth-child(5) { animation-delay: 80ms; }
-
-@keyframes pocketContentEnter {
-  from { opacity: 0; transform: translate3d(0, 10px, 0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-@keyframes pocketRowEnter {
-  from { opacity: 0; transform: translate3d(0, 6px, 0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-.pocket-modal-backdrop,
-.global-settings-overlay,
-.universal-search-overlay {
-  animation: pocketOverlayIn 220ms ease both;
-}
-
-.pocket-modal-card,
-.global-settings-shell,
-.universal-search-panel {
-  animation: pocketSurfaceIn 280ms var(--pocket-ease) both;
-}
-
-@keyframes pocketOverlayIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-@keyframes pocketSurfaceIn {
-  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.985); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-}
-
-.profile-menu-popover {
-  animation: pocketProfileIn 220ms var(--pocket-ease) both !important;
-}
-
-@keyframes pocketProfileIn {
-  from { opacity: 0; transform: translate3d(0, -7px, 0) scale(.985); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-}
-
-.profile-menu-item:hover,
-.global-settings-nav:hover,
-.universal-search-result:hover {
-  transform: translateX(2px);
-}
-
-.global-settings-section {
-  animation: pocketSectionIn 260ms var(--pocket-ease) both;
-}
-
-@keyframes pocketSectionIn {
-  from { opacity: 0; transform: translate3d(8px, 0, 0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-.settings-toggle span {
-  transition: transform 220ms var(--pocket-ease), background-color 180ms ease;
-}
-
-.mobile-avatar-button {
-  transition: transform 180ms var(--pocket-ease), box-shadow 220ms ease;
-}
-
-.mobile-avatar-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(201,164,85,.2);
-}
-
-.mobile-bottom-nav .mobile-bottom-add {
-  transition: transform 180ms var(--pocket-ease), box-shadow 180ms ease;
-}
-
-.mobile-bottom-nav .mobile-bottom-add:hover {
-  transform: translateY(-16px) scale(1.025);
-  box-shadow: 0 14px 30px rgba(79,227,107,.28) !important;
-}
-
-@media (hover: none) {
-  .panel:hover,
-  .widget:hover,
-  .accountCard:hover,
-  .quickCard:hover,
-  .placeholderCard:hover,
-  .profile-menu-item:hover,
-  .global-settings-nav:hover,
-  .universal-search-result:hover {
-    transform: none;
-    box-shadow: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
 .mobile-dashboard-header,
 .mobile-quick-actions,
 .mobile-bottom-nav {
   display: none;
 }
 
-.profile-menu-backdrop {
-  display: block;
-  position: fixed;
-  inset: 0;
-  z-index: 1100;
-  background: rgba(0,0,0,.22);
-}
-
+.profile-menu-backdrop,
 .profile-menu-popover {
-  display: block;
-  position: fixed;
-  left: 18px;
-  bottom: 88px;
-  width: 320px;
-  z-index: 1101;
-  background: #171C24;
-  border: 1px solid #2B323D;
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow: 0 24px 70px rgba(0,0,0,.55);
-}
-
-.profile-menu-header { display:flex; align-items:center; gap:13px; padding:18px; }
-.profile-menu-avatar { width:48px; height:48px; border-radius:50%; flex:0 0 48px; display:flex; align-items:center; justify-content:center; background:linear-gradient(145deg,#E3BE63,#A97E30); color:#18140C; font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:18px; }
-.profile-menu-name { color:#F4F2EC; font-size:16px; font-weight:600; }
-.profile-menu-space { margin-top:4px; color:#89909B; font-size:12px; }
-.profile-menu-divider { height:1px; margin:0 12px; background:#2A313C; }
-.profile-menu-icon-close { width:30px; height:30px; border-radius:9px; border:1px solid #303846; background:#1A2029; color:#8D96A3; display:flex; align-items:center; justify-content:center; padding:0; cursor:pointer; }
-.profile-menu-item { width:100%; min-height:54px; padding:0 18px; border:0; background:transparent; color:#D9DDE5; display:flex; align-items:center; gap:12px; text-align:left; font-family:Inter,sans-serif; font-size:14px; cursor:pointer; }
-.profile-menu-item-rich { min-height:72px; padding-top:10px; padding-bottom:10px; }
-.profile-menu-item-icon { width:34px; height:34px; flex:0 0 34px; border-radius:10px; background:#202631; color:#C9A455; display:flex; align-items:center; justify-content:center; }
-.profile-menu-item-copy { min-width:0; flex:1; display:flex; flex-direction:column; gap:4px; }
-.profile-menu-item-copy strong { color:#E6E8EC; font-size:14px; font-weight:600; }
-.profile-menu-item-copy small { color:#7F8794; font-size:11px; line-height:1.35; }
-.profile-menu-item > svg:last-child { flex:0 0 auto; color:#7D8591; }
-.profile-menu-item:hover { background:rgba(255,255,255,.025); }
-.profile-menu-logout { color:#E78A78; }
-.profile-menu-logout .profile-menu-item-icon { color:#D9735C; }
-
-.global-settings-overlay { position:fixed; inset:0; z-index:2000; background:rgba(4,6,8,.72); backdrop-filter:blur(10px); display:flex; align-items:center; justify-content:center; padding:18px; }
-.global-settings-shell { width:min(920px,100%); min-height:560px; max-height:calc(100dvh - 36px); overflow:hidden; display:grid; grid-template-columns:220px minmax(0,1fr); background:#15191F; border:1px solid #303742; border-radius:22px; box-shadow:0 30px 90px rgba(0,0,0,.58); }
-.global-settings-sidebar { padding:22px 12px; background:#12161B; border-right:1px solid #292F38; }
-.global-settings-brand { padding:4px 12px 22px; color:#F1F0EB; font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:600; }
-.global-settings-nav { width:100%; display:flex; align-items:center; gap:10px; border:0; border-radius:10px; padding:11px 12px; background:transparent; color:#89909B; text-align:left; font:500 13px Inter,sans-serif; cursor:pointer; }
-.global-settings-nav.active { background:#20262E; color:#74DF88; }
-.global-settings-content { min-width:0; overflow:auto; padding:28px 32px 38px; }
-.global-settings-header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:24px; border-bottom:1px solid #2A3039; }
-.global-settings-eyebrow { color:#6D7480; font-size:9px; letter-spacing:.16em; font-weight:700; }
-.global-settings-header h2 { margin:7px 0 0; color:#F3F1EC; font-family:'Space Grotesk',sans-serif; font-size:28px; letter-spacing:-.7px; }
-.global-settings-close { width:38px; height:38px; border-radius:11px; border:1px solid #303742; background:#1A2028; color:#AAB1BB; display:flex; align-items:center; justify-content:center; cursor:pointer; }
-.settings-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 0; border-bottom:1px solid #252B33; }
-.settings-row strong { display:block; color:#E9E8E3; font-size:14px; font-weight:600; }
-.settings-row p { margin:6px 0 0; color:#818895; font-size:12px; line-height:1.45; max-width:460px; }
-.settings-row-value { color:#70D984; font-size:12px; white-space:nowrap; }
-.settings-toggle { width:46px; height:27px; padding:3px; border:1px solid #343B46; border-radius:999px; background:#252B33; cursor:pointer; flex:0 0 auto; transition:.2s; }
-.settings-toggle span { display:block; width:19px; height:19px; border-radius:50%; background:#AAB1BB; transition:.2s; }
-.settings-toggle.on { background:#45C963; border-color:#45C963; }
-.settings-toggle.on span { transform:translateX(19px); background:#0E1810; }
-.settings-key-row { display:flex; gap:8px; align-items:center; }
-.settings-key-row input { width:220px; max-width:36vw; background:#101419; border:1px solid #303742; border-radius:9px; padding:9px 10px; color:#E9E8E3; outline:none; font:12px Inter,sans-serif; }
-.settings-key-row button { border:1px solid #3B854A; border-radius:9px; background:#51D96B; color:#102014; padding:9px 13px; font:600 12px Inter,sans-serif; cursor:pointer; }
-
-
-.settings-control,
-.settings-action-button {
-  min-height: 42px;
-  border: 1px solid #303742;
-  border-radius: 10px;
-  background: #1A2028;
-  color: #E9E8E3;
-  padding: 0 12px;
-  font: 12px Inter, sans-serif;
-  cursor: pointer;
-}
-
-.settings-control { min-width: 160px; }
-
-.settings-action-button {
-  background: #20262E;
-  border-color: #37404C;
-  color: #75DD8A;
-  font-weight: 600;
-}
-
-.settings-action-button:active,
-.settings-control:focus {
-  outline: 2px solid rgba(79,227,107,.18);
-  outline-offset: 1px;
-}
-
-
-/* ---------- Universal Search ---------- */
-
-.universal-search-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  background: rgba(4, 6, 8, .68);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 9vh 18px 24px;
-}
-
-.universal-search-panel {
-  width: min(720px, 100%);
-  max-height: min(720px, 82dvh);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: #171B21;
-  border: 1px solid #323A46;
-  border-radius: 20px;
-  box-shadow: 0 30px 100px rgba(0,0,0,.62);
-}
-
-.universal-search-input-row {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-height: 66px;
-  padding: 0 14px 0 18px;
-  border-bottom: 1px solid #2A313B;
-}
-
-.universal-search-input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #F2F0EB;
-  font: 500 16px Inter, sans-serif;
-}
-
-.universal-search-input::placeholder {
-  color: #6E7682;
-}
-
-.universal-search-kbd {
-  color: #858D98;
-  background: #202630;
-  border: 1px solid #303844;
-  border-radius: 8px;
-  padding: 6px 8px;
-  font: 10px Inter, sans-serif;
-  white-space: nowrap;
-}
-
-.universal-search-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  border: 1px solid #303844;
-  background: #1C222A;
-  color: #89929E;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.universal-search-hint {
-  padding: 10px 18px;
-  color: #68717D;
-  font: 11px/1.45 Inter, sans-serif;
-  border-bottom: 1px solid #242B34;
-}
-
-.universal-search-results {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 8px 10px;
-}
-
-.universal-search-section-label {
-  padding: 9px 10px 6px;
-  color: #616A76;
-  font: 700 9px Inter, sans-serif;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
-.universal-search-result {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: #E7E8EA;
-  text-align: left;
-  cursor: pointer;
-}
-
-.universal-search-result.active,
-.universal-search-result:hover {
-  background: #20262F;
-}
-
-.universal-search-result-icon {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #232A34;
-  color: #8ACF99;
-}
-
-.universal-search-result-copy {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.universal-search-result-copy strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #EDECE8;
-  font: 600 13px Inter, sans-serif;
-}
-
-.universal-search-result-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #7D8692;
-  font: 10px/1.35 Inter, sans-serif;
-}
-
-.universal-search-empty {
-  min-height: 220px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #6F7884;
-  text-align: center;
-}
-
-.universal-search-empty strong {
-  color: #C8CDD4;
-  font: 600 13px Inter, sans-serif;
-}
-
-.universal-search-empty span {
-  max-width: 300px;
-  font: 11px/1.5 Inter, sans-serif;
-}
-
-.universal-search-footer {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  border-top: 1px solid #292F38;
-  color: #626B77;
-  font: 10px Inter, sans-serif;
-}
-
-@media (max-width: 600px) {
-  .universal-search-overlay {
-    align-items: flex-start;
-    padding: calc(12px + env(safe-area-inset-top)) 10px 12px;
-  }
-
-  .universal-search-panel {
-    width: 100%;
-    max-height: calc(100dvh - 24px - env(safe-area-inset-top));
-    border-radius: 18px;
-  }
-
-  .universal-search-input-row {
-    min-height: 60px;
-    padding-left: 14px;
-  }
-
-  .universal-search-input {
-    font-size: 15px;
-  }
-
-  .universal-search-hint {
-    font-size: 10px;
-    padding: 9px 14px;
-  }
-
-  .universal-search-footer {
-    justify-content: space-between;
-    gap: 8px;
-    padding: 9px 12px;
-  }
+  display: none;
 }
 
 @media (max-width: 1023px) and (min-width: 769px) {
-  .ledger-sidebar { width: 210px !important; }
+  /* Tablet uses the same account model as mobile: no large profile card/sidebar. */
+  .ledger-sidebar { display: none !important; }
+  .ledger-app { display: block !important; width: 100% !important; }
+  .ledger-app > main { width: 100% !important; min-width: 0 !important; max-width: 100% !important; padding-bottom: 96px !important; }
+  .mobile-dashboard-header, .mobile-bottom-nav { display: flex !important; }
+  .mobile-avatar-button { display: flex !important; }
   .hero-grid { grid-template-columns: 1fr !important; }
   .widget-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .widget-span-2 { grid-column: span 2 !important; }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1023px) {
   html, body, #root {
     width: 100%;
     max-width: 100%;
@@ -4118,7 +2901,7 @@ textarea:focus-visible {
     width: 100% !important;
     min-width: 0 !important;
     max-width: 100% !important;
-    padding-bottom: calc(148px + env(safe-area-inset-bottom)) !important;
+    padding-bottom: calc(122px + env(safe-area-inset-bottom)) !important;
   }
 
   .ledger-topbar {
@@ -4126,7 +2909,7 @@ textarea:focus-visible {
     position: relative !important;
     top: auto !important;
     width: 100% !important;
-    padding: calc(18px + env(safe-area-inset-top)) 18px 4px !important;
+    padding: 24px 18px 8px !important;
     background: #0E1013 !important;
     backdrop-filter: none !important;
   }
@@ -4137,7 +2920,7 @@ textarea:focus-visible {
     justify-content: space-between;
     gap: 16px;
     width: 100%;
-    margin-bottom: 16px;
+    margin-bottom: 20px;
   }
 
   .mobile-greeting {
@@ -4185,7 +2968,7 @@ textarea:focus-visible {
   .ledger-topbar .global-search {
     width: 100% !important;
     min-width: 0 !important;
-    height: 56px !important;
+    height: 60px !important;
     border-radius: 18px !important;
     font-size: 16px !important;
     padding: 0 15px !important;
@@ -4193,8 +2976,6 @@ textarea:focus-visible {
   }
 
   .ledger-topbar .topActions,
-  .ledger-topbar > .topActions,
-  .ledger-topbar .utilityRow,
   .ledger-utility-row {
     display: none !important;
   }
@@ -4204,7 +2985,7 @@ textarea:focus-visible {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
     width: 100%;
-    margin: 14px 0 22px;
+    margin: 18px 0 20px;
   }
 
   .mobile-quick-action {
@@ -4271,7 +3052,6 @@ textarea:focus-visible {
     box-sizing: border-box !important;
     padding-left: 18px !important;
     padding-right: 18px !important;
-    padding-top: 4px !important;
     padding-bottom: 32px !important;
   }
 
@@ -4294,10 +3074,8 @@ textarea:focus-visible {
   .hero-grid > *,
   .ledger-grid-3 > *,
   .ledger-grid-main > *,
-  .widget-grid > * {
-    min-width: 0 !important;
-    max-width: 100% !important;
-  }
+  .widget-grid > *,
+
 
   /* Bottom navigation is independent and never covered by profile UI. */
   .mobile-bottom-nav {
@@ -4359,14 +3137,33 @@ textarea:focus-visible {
     height: 27px !important;
   }
 
-  /* Mobile profile dropdown opened only by the circular V avatar. */
-  .profile-menu-backdrop { background: rgba(0,0,0,.25); }
+  /* Mobile profile dropdown opened by circular V. */
+  .profile-menu-backdrop {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background: rgba(0,0,0,.25);
+  }
+
   .profile-menu-popover {
+    display: block !important;
+    position: fixed;
     top: calc(20px + env(safe-area-inset-top));
     right: 16px;
-    left: auto;
-    bottom: auto;
     width: min(320px, calc(100vw - 32px));
+    z-index: 1101;
+    background: #171C24;
+    border: 1px solid #2B323D;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0,0,0,.55);
+    animation: profileMenuIn .18s ease-out;
+  }
+
+  @keyframes profileMenuIn {
+    from { opacity: 0; transform: translateY(-8px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .profile-menu-header {
@@ -4488,129 +3285,6 @@ textarea:focus-visible {
   .profile-menu-close { color: #9CA4AF; }
 }
 
-
-@media (max-width: 768px) {
-  .global-settings-overlay {
-    position: fixed !important;
-    inset: 0 !important;
-    z-index: 99999 !important;
-    padding: max(10px, env(safe-area-inset-top)) 0 0 !important;
-    align-items: stretch !important;
-    justify-content: stretch !important;
-  }
-
-  .global-settings-shell {
-    width: 100% !important;
-    height: 100dvh !important;
-    min-height: 100dvh !important;
-    max-height: 100dvh !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    overflow: hidden !important;
-  }
-
-  .global-settings-sidebar {
-    position: relative !important;
-    top: auto !important;
-    z-index: 4 !important;
-    flex: 0 0 auto !important;
-    display: flex !important;
-    gap: 6px !important;
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    scrollbar-width: none !important;
-    padding: 10px 12px !important;
-    border-right: 0 !important;
-    border-bottom: 1px solid #292F38 !important;
-    background: #12161B !important;
-  }
-
-  .global-settings-sidebar::-webkit-scrollbar { display: none; }
-  .global-settings-brand { display: none !important; }
-
-  .global-settings-nav {
-    width: auto !important;
-    min-width: max-content !important;
-    flex: 0 0 auto !important;
-    min-height: 42px !important;
-    padding: 10px 13px !important;
-    touch-action: manipulation !important;
-    white-space: nowrap !important;
-  }
-
-  .global-settings-content {
-    flex: 1 1 auto !important;
-    min-height: 0 !important;
-    padding: 20px 18px calc(34px + env(safe-area-inset-bottom)) !important;
-    overflow-y: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-  }
-
-  .global-settings-header h2 { font-size: 25px !important; }
-
-  .settings-row {
-    align-items: flex-start !important;
-    gap: 14px !important;
-    flex-direction: column !important;
-  }
-
-  .settings-row > :last-child {
-    width: 100%;
-    align-self: stretch;
-  }
-
-  .settings-control,
-  .settings-action-button,
-  .settings-key-row input,
-  .settings-key-row button {
-    min-height: 44px !important;
-  }
-
-  .settings-row-value {
-    display: inline-flex !important;
-    width: 100% !important;
-    min-height: 42px !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    padding: 0 12px !important;
-    border: 1px solid #303742 !important;
-    border-radius: 10px !important;
-    background: #1A2028 !important;
-  }
-
-  .settings-key-row { width:100% !important; flex-wrap:wrap !important; margin-top:12px !important; }
-  .settings-key-row input { width:100% !important; max-width:none !important; }
-}
-
-@media (max-width: 1023px) {
-  .ledger-topbar {
-    width: 100% !important;
-    overflow: visible !important;
-  }
-
-  .ledger-topbar .global-search {
-    margin: 0 !important;
-  }
-
-  .mobile-quick-actions {
-    align-items: start !important;
-  }
-
-  .mobile-quick-action {
-    min-height: 80px !important;
-  }
-
-  .mobile-add-action {
-    transform: translateY(-2px);
-  }
-
-  .mobile-bottom-nav {
-    bottom: calc(10px + env(safe-area-inset-bottom)) !important;
-  }
-}
-
 @media (max-width: 380px) {
   .ledger-topbar { padding-left: 14px !important; padding-right: 14px !important; }
   .ledger-page, .modulePage { padding-left: 14px !important; padding-right: 14px !important; }
@@ -4630,17 +3304,18 @@ const styles = {
   },
   sidebar: {
     width: 252,
-    position: "sticky",
-    top: 0,
     height: "100vh",
     maxHeight: "100vh",
-    overflow: "hidden",
+    position: "sticky",
+    top: 0,
+    alignSelf: "flex-start",
     borderRight: "1px solid #22262E",
     padding: "28px 16px 18px",
     flexShrink: 0,
     boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
     background: "#0D0F12",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, padding: "0 10px" },
@@ -4709,11 +3384,12 @@ const styles = {
     fontFamily: "Inter, sans-serif",
   },
   navDivider: { height: 1, background: "#22262E", margin: "20px 10px 18px" },
-  sidebarSpacer: { flex: 1, minHeight: 16 },
+  sidebarSpacer: { flex: 1 },
   profileCard: {
     display: "flex",
     alignItems: "center",
     gap: 10,
+    flexShrink: 0,
     width: "100%",
     padding: 10,
     borderRadius: 13,
@@ -4832,7 +3508,7 @@ const styles = {
     cursor: "pointer",
   },
   dashboardPage: {
-    padding: "16px 32px 28px",
+    padding: "16px 32px 42px",
     maxWidth: 1500,
     margin: "0 auto",
   },
@@ -5081,29 +3757,6 @@ const styles = {
     overflow: "hidden",
   },
   progressFill: { height: "100%", borderRadius: 5 },
-  quickCard: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    border: "1px solid #292D35",
-    background: "#13161A",
-    color: "#ECEAE3",
-    textAlign: "left",
-    cursor: "pointer",
-  },
-  quickIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    background: "#18231B",
-    color: "#4FE36B",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  quickCardStrong: { fontSize: 11 },
   modulePage: { padding: "46px 32px", maxWidth: 1100, margin: "0 auto" },
   moduleHero: {
     display: "flex",
