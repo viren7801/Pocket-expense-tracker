@@ -174,6 +174,7 @@ export default function LedgerApp() {
   const [notesVault, setNotesVault] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [profileAnchor, setProfileAnchor] = useState(null);
   const [notesSettingsRequest, setNotesSettingsRequest] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("general");
@@ -276,6 +277,31 @@ export default function LedgerApp() {
     setSettingsOpen(true);
     setProfileMenuOpen(false);
   }, []);
+
+  const toggleProfileMenu = useCallback(
+    (event) => {
+      if (profileMenuOpen) {
+        setProfileMenuOpen(false);
+        return;
+      }
+
+      const rect = event?.currentTarget?.getBoundingClientRect?.();
+      if (rect) {
+        setProfileAnchor({
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+        });
+      } else {
+        setProfileAnchor(null);
+      }
+      setProfileMenuOpen(true);
+    },
+    [profileMenuOpen],
+  );
 
   // Process due recurring entries once loaded
   useEffect(() => {
@@ -754,11 +780,7 @@ export default function LedgerApp() {
   return (
     <div style={styles.app} className="ledger-app">
       <style>{fontImports + settingsCss}</style>
-      <Sidebar
-        tab={tab}
-        setTab={setTab}
-        onProfileClick={() => setProfileMenuOpen((open) => !open)}
-      />
+      <Sidebar tab={tab} setTab={setTab} onProfileClick={toggleProfileMenu} />
       <main style={styles.main}>
         <TopBar
           netWorth={netWorth}
@@ -773,12 +795,13 @@ export default function LedgerApp() {
           onExport={exportCSV}
           onImportClick={() => fileInputRef.current?.click()}
           onScanClick={() => setShowScanModal(true)}
-          onProfileClick={() => setProfileMenuOpen((open) => !open)}
+          onProfileClick={toggleProfileMenu}
           onOpenSettings={openSettings}
           saveError={saveError}
         />
         <ProfileMenu
           open={profileMenuOpen}
+          anchor={profileAnchor}
           onClose={() => setProfileMenuOpen(false)}
           onNavigate={(nextTab) => {
             setTab(nextTab);
@@ -1176,7 +1199,7 @@ function TopBar({
         <kbd style={styles.searchKey}>⌘ K</kbd>
       </button>
 
-      <div style={styles.topActions}>
+      <div style={styles.topActions} className="desktop-top-actions">
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -1259,8 +1282,27 @@ function TopBar({
   );
 }
 
-function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
+function ProfileMenu({ open, anchor, onClose, onNavigate, onOpenSettings }) {
   if (!open) return null;
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+  const menuWidth = isMobile
+    ? Math.min(344, Math.max(0, window.innerWidth - 20))
+    : 344;
+  const menuPosition = isMobile
+    ? {
+        left: anchor
+          ? Math.min(
+              Math.max(anchor.right - menuWidth, 10),
+              Math.max(10, window.innerWidth - menuWidth - 10),
+            )
+          : undefined,
+        top: anchor ? anchor.bottom + 12 : 86,
+      }
+    : {
+        left: anchor ? anchor.right + 12 : 272,
+        bottom: anchor ? Math.max(12, window.innerHeight - anchor.bottom) : 22,
+      };
 
   return (
     <>
@@ -1271,6 +1313,7 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
       />
       <div
         className="profile-menu-popover"
+        style={menuPosition}
         role="dialog"
         aria-modal="true"
         aria-label="Profile and settings menu"
@@ -3077,13 +3120,11 @@ function GlobalSettingsModal({
   const [incomeInput, setIncomeInput] = useState("");
   const [danger, setDanger] = useState(false);
   const [message, setMessage] = useState("");
-  useEffect(
-    () =>
-      setSection(
-        initialSection === "appearance" ? "appearance" : initialSection,
-      ),
-    [initialSection],
-  );
+  const [mobileSectionOpen, setMobileSectionOpen] = useState(false);
+  useEffect(() => {
+    setSection(initialSection === "appearance" ? "appearance" : initialSection);
+    setMobileSectionOpen(false);
+  }, [initialSection]);
   const sections = [
     ["general", "General", Settings],
     ["appearance", "Appearance", Palette],
@@ -3130,6 +3171,8 @@ function GlobalSettingsModal({
     onCategoriesChange({ ...categories, [type]: next });
   };
   const title = sections.find(([id]) => id === section)?.[1] || "Settings";
+  const titleIcon = sections.find(([id]) => id === section)?.[2] || Settings;
+  const MobileSectionIcon = titleIcon;
   return (
     <div
       className="global-settings-overlay"
@@ -3150,6 +3193,56 @@ function GlobalSettingsModal({
               <span>{label}</span>
             </button>
           ))}
+          <div className="mobile-settings-picker">
+            <button
+              type="button"
+              className={`mobile-settings-picker-button ${mobileSectionOpen ? "open" : ""}`}
+              onClick={() => setMobileSectionOpen((v) => !v)}
+              aria-expanded={mobileSectionOpen}
+              aria-haspopup="listbox"
+            >
+              <span className="mobile-settings-picker-icon">
+                <MobileSectionIcon size={18} />
+              </span>
+              <span className="mobile-settings-picker-copy">
+                <strong>{title}</strong>
+                <small>Settings section</small>
+              </span>
+              <ChevronRight
+                size={17}
+                className="mobile-settings-picker-chevron"
+              />
+            </button>
+            {mobileSectionOpen && (
+              <div
+                className="mobile-settings-picker-menu"
+                role="listbox"
+                aria-label="Settings sections"
+              >
+                {sections.map(([id, label, Icon]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="option"
+                    aria-selected={section === id}
+                    className={`mobile-settings-picker-option ${section === id ? "active" : ""}`}
+                    onClick={() => {
+                      setSection(id);
+                      setMobileSectionOpen(false);
+                    }}
+                  >
+                    <span className="mobile-settings-picker-option-icon">
+                      <Icon size={17} />
+                    </span>
+                    <span>{label}</span>
+                    {section === id && (
+                      <span className="mobile-settings-picker-check">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </aside>
         <section className="global-settings-content">
           <div className="global-settings-header">
@@ -3650,8 +3743,9 @@ function SettingsToggle({ checked, onChange }) {
       className={`settings-toggle ${checked ? "on" : ""}`}
       onClick={() => onChange(!checked)}
       aria-pressed={checked}
+      aria-label={checked ? "Enabled" : "Disabled"}
     >
-      <span />
+      <span className="settings-toggle-knob" />
     </button>
   );
 }
@@ -3703,6 +3797,52 @@ const settingsCss = `
 html[data-pocket-motion="off"] *,html[data-pocket-motion="off"] *::before,html[data-pocket-motion="off"] *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
 html[data-pocket-theme="light"] body{background:#F3F5F7!important;color:#171A1F}html[data-pocket-theme="light"] .global-settings-shell{background:#fff;border-color:#D7DDE4;box-shadow:0 30px 90px rgba(22,30,40,.18)}html[data-pocket-theme="light"] .global-settings-sidebar{background:#F7F8FA;border-color:#E0E4EA}html[data-pocket-theme="light"] .global-settings-nav{color:#68717C}html[data-pocket-theme="light"] .global-settings-nav.active{background:#E9F6EC;color:#188A36}html[data-pocket-theme="light"] .global-settings-content{background:#fff}html[data-pocket-theme="light"] .global-settings-header h2,html[data-pocket-theme="light"] .settings-row strong,html[data-pocket-theme="light"] .category-settings-header strong{color:#1E2329}html[data-pocket-theme="light"] .settings-row,html[data-pocket-theme="light"] .category-settings-group{border-color:#E7EAEE}html[data-pocket-theme="light"] .settings-row p,html[data-pocket-theme="light"] .category-settings-header p{color:#6D7580}html[data-pocket-theme="light"] .settings-control,html[data-pocket-theme="light"] .category-chip{background:#F7F8FA;border-color:#D8DDE4;color:#242930}
 @media(max-width:768px){.global-settings-overlay{padding:0;align-items:stretch}.global-settings-shell{width:100%;height:100dvh;max-height:100dvh;min-height:0;border-radius:0;border:0;display:flex;flex-direction:column}.global-settings-sidebar{display:flex;overflow-x:auto;overflow-y:hidden;border-right:0;border-bottom:1px solid #292F38;padding:10px 12px;gap:6px}.global-settings-brand{display:none}.global-settings-nav{width:auto;min-width:max-content}.global-settings-content{padding:20px 18px 36px}.settings-row{align-items:flex-start;flex-direction:column;gap:13px}.settings-row>:last-child{width:100%;align-self:stretch}.settings-row-value{display:flex;width:100%;min-height:42px;align-items:center;padding:0 12px;border:1px solid #303742;border-radius:10px;background:#1A2028}.settings-key-row{width:100%;flex-wrap:wrap}.settings-key-row input{width:100%;max-width:none}}
+
+/* Mobile settings: replace the cramped tab strip with a polished picker. */
+@media(max-width:768px){
+  .global-settings-sidebar{
+    display:block !important;
+    position:relative !important;
+    overflow:visible !important;
+    flex:0 0 auto !important;
+    padding:12px 16px !important;
+    border-right:0 !important;
+    border-bottom:1px solid #292F38 !important;
+    background:#11151A !important;
+  }
+  .global-settings-sidebar > .global-settings-brand,
+  .global-settings-sidebar > .global-settings-nav{display:none !important;}
+  .mobile-settings-picker{position:relative;display:block;width:100%;}
+  .mobile-settings-picker-button{
+    width:100%;min-height:58px;display:flex;align-items:center;gap:12px;
+    padding:9px 12px;border:1px solid #2C3440;border-radius:14px;
+    background:#191E25;color:#E9E8E3;cursor:pointer;text-align:left;
+  }
+  .mobile-settings-picker-button.open{border-color:#3B8150;background:#1B222A;box-shadow:0 8px 24px rgba(0,0,0,.18);}
+  .mobile-settings-picker-icon,.mobile-settings-picker-option-icon{
+    width:38px;height:38px;flex:0 0 38px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+    background:#202731;color:#71D786;border:1px solid #303946;
+  }
+  .mobile-settings-picker-copy{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px;}
+  .mobile-settings-picker-copy strong{font:600 14px Inter,sans-serif;color:#F0EEE8;}
+  .mobile-settings-picker-copy small{font:11px Inter,sans-serif;color:#7F8793;}
+  .mobile-settings-picker-chevron{color:#8B94A1;transform:rotate(90deg);transition:transform .18s ease;}
+  .mobile-settings-picker-button.open .mobile-settings-picker-chevron{transform:rotate(-90deg);}
+  .mobile-settings-picker-menu{
+    position:absolute;z-index:20;top:66px;left:0;right:0;max-height:350px;overflow:auto;
+    padding:8px;background:#171C23;border:1px solid #303946;border-radius:14px;
+    box-shadow:0 18px 42px rgba(0,0,0,.45);
+  }
+  .mobile-settings-picker-option{
+    width:100%;min-height:50px;border:0;border-radius:10px;background:transparent;color:#CDD2D9;
+    display:flex;align-items:center;gap:10px;padding:6px 8px;text-align:left;cursor:pointer;font:500 13px Inter,sans-serif;
+  }
+  .mobile-settings-picker-option:hover,.mobile-settings-picker-option.active{background:#202731;color:#F2F0EB;}
+  .mobile-settings-picker-option-icon{width:32px;height:32px;flex-basis:32px;border-radius:9px;background:#1E252F;color:#8D96A3;border:0;}
+  .mobile-settings-picker-option.active .mobile-settings-picker-option-icon{color:#71D786;background:#22352A;}
+  .mobile-settings-picker-check{margin-left:auto;color:#71D786;font-weight:700;font-size:15px;padding-right:4px;}
+  .global-settings-content{padding:20px 18px 36px !important;}
+}
 `;
 
 const fontImports = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
@@ -3927,6 +4067,7 @@ textarea:focus-visible {
 .mobile-bottom-nav {
   display: none;
 }
+.mobile-settings-picker{display:none;}
 
 .profile-menu-backdrop {
   display: block;
@@ -5067,8 +5208,6 @@ button:not(:disabled):active,
 }
 
 .profile-menu-popover {
-  left: 272px !important;
-  bottom: 22px !important;
   width: 344px !important;
   max-width: calc(100vw - 294px);
   background: #171B21 !important;
@@ -5201,10 +5340,6 @@ button:not(:disabled):active,
 
 @media (max-width: 1023px) {
   .profile-menu-popover {
-    left: auto !important;
-    right: 16px !important;
-    bottom: auto !important;
-    top: calc(86px + env(safe-area-inset-top)) !important;
     width: min(344px, calc(100vw - 32px)) !important;
     max-width: none !important;
     transform-origin: top right;
@@ -5213,247 +5348,157 @@ button:not(:disabled):active,
 
 @media (max-width: 400px) {
   .profile-menu-popover {
-    right: 10px !important;
     width: calc(100vw - 20px) !important;
   }
 }
 
+/* FINAL PROFILE MENU POSITION + COLOR
+   Desktop: open exactly from the existing profile-card area in the sidebar.
+   Mobile: keep the menu attached to the top-right V avatar.
+*/
+.profile-menu-popover {
+  left: 18px !important;
+  right: auto !important;
+  bottom: 18px !important;
+  top: auto !important;
+  width: 220px !important;
+  max-width: 220px !important;
+  background: #15181D !important;
+  border: 1px solid #242830 !important;
+  border-radius: 13px !important;
+  box-shadow: 0 24px 70px rgba(0,0,0,.52), 0 4px 18px rgba(0,0,0,.28) !important;
+  transform-origin: left bottom !important;
+}
 
-/* =========================================================
-   MOBILE CLEANUP v6
-   Keep the mobile dashboard calm: one primary action row,
-   no duplicate shortcut strip, and a compact settings shell.
-========================================================= */
+.profile-menu-header {
+  background: #15181D !important;
+  min-height: 68px !important;
+  padding: 12px 10px !important;
+}
+
+.profile-menu-divider {
+  background: #242830 !important;
+}
+
+.profile-menu-item {
+  min-height: 54px !important;
+  padding: 8px 10px !important;
+  grid-template-columns: 32px minmax(0,1fr) 14px !important;
+  gap: 9px !important;
+  background: #15181D !important;
+}
+
+.profile-menu-item-rich {
+  min-height: 58px !important;
+}
+
+.profile-menu-item:hover {
+  background: #1A1E24 !important;
+}
+
+.profile-menu-item:active {
+  background: #20242A !important;
+}
+
+.profile-menu-item-icon {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 9px !important;
+  background: #1F242B !important;
+}
+
+.profile-menu-name {
+  font-size: 13px !important;
+}
+
+.profile-menu-space {
+  font-size: 10px !important;
+}
+
+@media (max-width: 1023px) {
+  .profile-menu-popover {
+    left: auto !important;
+    right: 16px !important;
+    bottom: auto !important;
+    top: calc(86px + env(safe-area-inset-top)) !important;
+    width: min(344px, calc(100vw - 32px)) !important;
+    max-width: none !important;
+    border-radius: 18px !important;
+  }
+}
+
+
+  @media (max-width: 1023px) {
+    /* Mobile: remove the desktop command / appearance / notifications / date / add row. */
+    .ledger-topbar .desktop-top-actions {
+      display: none !important;
+    }
+  }
+
+
+
+/* Final mobile toggle polish: compact, true on/off switch. */
+.settings-toggle {
+  position: relative !important;
+  width: 50px !important;
+  min-width: 50px !important;
+  max-width: 50px !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 2px !important;
+  border: 1px solid #38404B !important;
+  border-radius: 999px !important;
+  background: #252C35 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  flex: 0 0 50px !important;
+  cursor: pointer !important;
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+}
+
+.settings-toggle .settings-toggle-knob {
+  width: 24px !important;
+  height: 24px !important;
+  flex: 0 0 24px !important;
+  display: block !important;
+  border-radius: 50% !important;
+  background: #C5CDD7 !important;
+  transform: none !important;
+  transition: transform 180ms var(--pocket-ease), background-color 180ms ease, box-shadow 180ms ease !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.28) !important;
+}
+
+.settings-toggle.on {
+  background: #45C963 !important;
+  border-color: #45C963 !important;
+  justify-content: flex-end !important;
+  box-shadow: 0 0 0 1px rgba(69,201,99,.08) !important;
+}
+
+.settings-toggle.on .settings-toggle-knob {
+  transform: none !important;
+  background: #0C1710 !important;
+}
+
+.settings-toggle:active {
+  transform: scale(.97) !important;
+}
+
 @media (max-width: 768px) {
-  /* The upper action controls already expose Add / theme / notifications.
-     Hide the duplicate Today / Dashboard / Add / Scan / More strip. */
-  .mobile-quick-actions {
-    display: none !important;
-  }
-
-  .ledger-topbar {
-    padding: calc(18px + env(safe-area-inset-top)) 18px 12px !important;
-  }
-
-  .mobile-dashboard-header {
-    margin-bottom: 18px !important;
-  }
-
-  .mobile-greeting {
-    font-size: 30px !important;
-    letter-spacing: -0.8px !important;
-  }
-
-  .mobile-subtitle {
-    font-size: 14px !important;
-    margin-top: 5px !important;
-  }
-
-  .mobile-avatar-button {
-    width: 52px !important;
-    height: 52px !important;
-    min-width: 52px !important;
-    flex-basis: 52px !important;
-  }
-
-  .ledger-topbar .global-search {
-    height: 54px !important;
-    border-radius: 17px !important;
-  }
-
-  /* Keep the useful desktop actions available on mobile in one clean row. */
-  .ledger-topbar .topActions {
-    display: flex !important;
-    width: 100% !important;
-    gap: 8px !important;
-    margin-top: 10px !important;
-    overflow: hidden !important;
-  }
-
-  .ledger-topbar .topActions > * {
-    min-width: 0 !important;
-  }
-
-  .ledger-topbar .topActions > button {
-    flex: 0 0 52px !important;
-  }
-
-  .ledger-topbar .topActions > button:last-child {
-    flex: 1 1 auto !important;
-    min-width: 112px !important;
-  }
-
-  .ledger-page,
-  .modulePage {
-    padding-top: 6px !important;
-    padding-bottom: 112px !important;
-  }
-
-  .hero-grid,
-  .ledger-grid-3,
-  .ledger-grid-main,
-  .widget-grid,
-  .placeholderGrid {
-    width: 100% !important;
-    grid-template-columns: 1fr !important;
-  }
-
-  .widget-span-2 {
-    grid-column: span 1 !important;
-  }
-
-  .mobile-bottom-nav {
-    left: 12px !important;
-    right: 12px !important;
-    bottom: calc(10px + env(safe-area-inset-bottom)) !important;
-    height: 68px !important;
-    border-radius: 21px !important;
-  }
-
-  .mobile-bottom-nav button {
-    height: 58px !important;
-    font-size: 9px !important;
-  }
-
-  .mobile-bottom-nav button span {
-    font-size: 9px !important;
-  }
-
-  /* Settings: make the category strip feel like a deliberate mobile control. */
-  .global-settings-overlay {
-    padding: 0 !important;
-    background: rgba(4,6,8,.78) !important;
-    backdrop-filter: blur(12px) !important;
-    -webkit-backdrop-filter: blur(12px) !important;
-  }
-
-  .global-settings-shell {
-    width: 100% !important;
-    height: 100dvh !important;
-    min-height: 0 !important;
-    max-height: none !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    display: flex !important;
-    flex-direction: column !important;
-    background: #15191F !important;
-  }
-
-  .global-settings-sidebar {
-    flex: 0 0 auto !important;
-    display: flex !important;
-    gap: 7px !important;
-    padding: calc(10px + env(safe-area-inset-top)) 14px 10px !important;
-    background: #12161B !important;
-    border-bottom: 1px solid #292F38 !important;
-    overflow-x: auto !important;
-    scrollbar-width: none !important;
-  }
-
-  .global-settings-sidebar::-webkit-scrollbar { display: none !important; }
-
-  .global-settings-nav {
-    flex: 0 0 auto !important;
-    min-width: 0 !important;
-    min-height: 40px !important;
-    padding: 9px 12px !important;
-    border-radius: 12px !important;
-    gap: 8px !important;
-    font-size: 12px !important;
-  }
-
-  .global-settings-nav svg {
-    width: 16px !important;
-    height: 16px !important;
-  }
-
-  .global-settings-content {
-    flex: 1 1 auto !important;
-    min-height: 0 !important;
-    overflow-y: auto !important;
-    padding: 20px 18px calc(36px + env(safe-area-inset-bottom)) !important;
-  }
-
-  .global-settings-header {
-    padding-bottom: 20px !important;
-    align-items: center !important;
-  }
-
-  .global-settings-header h2 {
-    margin-top: 5px !important;
-    font-size: 28px !important;
-    letter-spacing: -0.7px !important;
-  }
-
-  .global-settings-close {
-    width: 44px !important;
-    height: 44px !important;
-    flex: 0 0 44px !important;
-    border-radius: 13px !important;
-  }
-
-  .settings-row {
-    padding: 20px 0 !important;
-    gap: 11px !important;
-  }
-
-  .settings-row strong {
-    font-size: 15px !important;
-  }
-
-  .settings-row p {
-    font-size: 12px !important;
-    line-height: 1.45 !important;
-  }
-
-  .settings-control,
-  .settings-action-button,
-  .settings-key-row input,
-  .settings-key-row button {
-    min-height: 48px !important;
-    border-radius: 13px !important;
-    font-size: 14px !important;
-  }
-
-  .settings-text-control,
-  .settings-control {
-    width: 100% !important;
-    min-width: 0 !important;
-  }
-
-  .settings-button-row {
-    width: 100% !important;
-    gap: 8px !important;
-  }
-
-  .settings-button-row .settings-action-button,
-  .settings-button-row .settings-danger-button {
-    flex: 1 1 auto !important;
-  }
-
-  .settings-toggle {
-    width: 52px !important;
+  .settings-row > .settings-toggle,
+  .settings-row > .settings-toggle.on {
+    width: 50px !important;
+    min-width: 50px !important;
+    max-width: 50px !important;
     height: 30px !important;
-  }
-
-  .settings-toggle span {
-    width: 22px !important;
-    height: 22px !important;
-  }
-
-  .settings-toggle.on span {
-    transform: translateX(22px) !important;
+    min-height: 30px !important;
+    align-self: flex-end !important;
+    flex: 0 0 50px !important;
   }
 }
-
-@media (max-width: 380px) {
-  .ledger-topbar { padding-left: 14px !important; padding-right: 14px !important; }
-  .ledger-page, .modulePage { padding-left: 14px !important; padding-right: 14px !important; }
-  .mobile-greeting { font-size: 27px !important; }
-  .mobile-avatar-button { width: 48px !important; height: 48px !important; min-width: 48px !important; flex-basis: 48px !important; }
-  .global-settings-content { padding-left: 14px !important; padding-right: 14px !important; }
-}
-
 `;
 
 const styles = {
