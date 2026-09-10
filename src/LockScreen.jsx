@@ -1036,6 +1036,11 @@ export default function LockScreen({ children }) {
       openDevices();
     };
 
+    const logoutFromApp = () => {
+      setShowAccountMenu(false);
+      setShowLogoutConfirm(true);
+    };
+
     window.addEventListener("pocket:open-account-menu", openAccountMenu);
     window.addEventListener(
       "pocket:open-add-device",
@@ -1046,6 +1051,7 @@ export default function LockScreen({ children }) {
       openPairDeviceFromSettings,
     );
     window.addEventListener("pocket:open-devices", openDevicesFromSettings);
+    window.addEventListener("pocket:logout", logoutFromApp);
 
     return () => {
       window.removeEventListener("pocket:open-account-menu", openAccountMenu);
@@ -1061,6 +1067,7 @@ export default function LockScreen({ children }) {
         "pocket:open-devices",
         openDevicesFromSettings,
       );
+      window.removeEventListener("pocket:logout", logoutFromApp);
     };
   }, []);
 
