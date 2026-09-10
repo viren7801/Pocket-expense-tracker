@@ -6678,6 +6678,33 @@ export default function NotesView({
   return (
     <>
       <style>{`
+        /* Pocket system motion — shared with the main shell. */
+        .notesResponsivePage { animation: pocketNotesPageIn 360ms cubic-bezier(.22,1,.36,1) both; }
+        .notesResponsivePage button, .notesResponsivePage a {
+          transition: transform 160ms cubic-bezier(.22,1,.36,1), background-color 160ms ease, border-color 160ms ease, box-shadow 180ms ease, color 160ms ease, opacity 160ms ease;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .notesResponsivePage button:not(:disabled):active { transform: translateY(1px) scale(.985); }
+        .notesResponsivePage input, .notesResponsivePage textarea, .notesResponsivePage select {
+          transition: border-color 160ms ease, box-shadow 180ms ease;
+        }
+        .notesResponsivePage input:focus, .notesResponsivePage textarea:focus, .notesResponsivePage select:focus {
+          outline: none;
+          border-color: #4FE36B !important;
+          box-shadow: 0 0 0 3px rgba(79,227,107,.08);
+        }
+        .notesResponsivePage .notesResponsiveListPanel > *,
+        .notesResponsivePage .notesResponsivePage > * {
+          animation: pocketNotesItemIn 300ms cubic-bezier(.16,1,.3,1) both;
+        }
+        .notesResponsivePage .notesResponsiveListPanel > *:nth-child(2) { animation-delay: 20ms; }
+        .notesResponsivePage .notesResponsiveListPanel > *:nth-child(3) { animation-delay: 40ms; }
+        .notesResponsivePage .notesResponsiveListPanel > *:nth-child(4) { animation-delay: 60ms; }
+        .notesResponsivePage .notesResponsiveListPanel > *:nth-child(5) { animation-delay: 80ms; }
+        @keyframes pocketNotesPageIn { from { opacity:0; transform:translate3d(0,10px,0); } to { opacity:1; transform:none; } }
+        @keyframes pocketNotesItemIn { from { opacity:0; transform:translate3d(0,6px,0); } to { opacity:1; transform:none; } }
+        @media (prefers-reduced-motion: reduce) { .notesResponsivePage, .notesResponsivePage * { animation:none !important; transition:none !important; } }
+
         .settingsItem span, .settingsItemControl span { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
         .settingsItem strong, .settingsItemControl strong { font-size: 12px; color: #ECEAE3; }
         .settingsItem small, .settingsItemControl small { font-size: 10px; color: #727883; line-height: 1.35; }

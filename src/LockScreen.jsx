@@ -97,7 +97,6 @@ export default function LockScreen({ children }) {
   // Explicit refs let the global outside-click handler distinguish the
   // account button/menu from every other part of the application.
   const accountMenuRef = useRef(null);
-  const accountButtonRef = useRef(null);
 
   useEffect(() => {
     if (!showAccountMenu) return undefined;
@@ -107,9 +106,8 @@ export default function LockScreen({ children }) {
       if (!(target instanceof Node)) return;
 
       const insideMenu = accountMenuRef.current?.contains(target);
-      const insideButton = accountButtonRef.current?.contains(target);
 
-      if (!insideMenu && !insideButton) {
+      if (!insideMenu) {
         setShowAccountMenu(false);
       }
     };
@@ -1243,26 +1241,6 @@ export default function LockScreen({ children }) {
           </button>
         </div>
       )}
-
-      <button
-        ref={accountButtonRef}
-        type="button"
-        className="pocketAccountButton"
-        style={styles.accountButton}
-        onClick={() => setShowAccountMenu((value) => !value)}
-      >
-        <div style={styles.accountButtonAvatar}>V</div>
-
-        <div style={styles.accountButtonText}>
-          <div style={styles.accountButtonName}>Viren Patel</div>
-
-          <div style={styles.accountButtonSubtitle}>Personal</div>
-        </div>
-
-        <div style={styles.accountButtonChevron}>
-          {showAccountMenu ? "⌃" : "⌄"}
-        </div>
-      </button>
     </>
   );
 
@@ -2004,13 +1982,6 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
-            .pocketAccountButton {
-              display: none !important;
-            }
-
-            .pocketAccountButton + * {
-              display: block;
-            }
           }
 
           @media (max-width: 1023px) {
@@ -2087,13 +2058,6 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
-            .pocketAccountButton {
-              display: none !important;
-            }
-
-            .pocketAccountButton + * {
-              display: block;
-            }
           }
 
           @media (max-width: 1023px) {
@@ -2138,82 +2102,95 @@ export default function LockScreen({ children }) {
    */
 
   return (
-    <div style={styles.lockWrap}>
-      <div style={styles.lockCard}>
-        <Fingerprint size={42} color="#C9A455" />
+    <>
+      <style>{`
+        .pocket-lock-page { animation: pocketLockIn 420ms cubic-bezier(.22,1,.36,1) both; }
+        .pocket-lock-card { animation: pocketLockCardIn 520ms cubic-bezier(.22,1,.36,1) both; }
+        .pocket-lock-page button { transition: transform 160ms cubic-bezier(.22,1,.36,1), opacity 160ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+        .pocket-lock-page button:not(:disabled):active { transform: scale(.985); }
+        .pocket-lock-page input { transition: border-color 160ms ease, box-shadow 180ms ease; }
+        .pocket-lock-page input:focus { border-color: #4FE36B !important; box-shadow: 0 0 0 3px rgba(79,227,107,.10); outline: none; }
+        @keyframes pocketLockIn { from { opacity:0; } to { opacity:1; } }
+        @keyframes pocketLockCardIn { from { opacity:0; transform:translate3d(0,16px,0) scale(.985); } to { opacity:1; transform:translate3d(0,0,0) scale(1); } }
+        @media (prefers-reduced-motion: reduce) { .pocket-lock-page, .pocket-lock-card { animation:none !important; } .pocket-lock-page * { transition:none !important; } }
+      `}</style>
+      <div className="pocket-lock-page" style={styles.lockWrap}>
+        <div className="pocket-lock-card" style={styles.lockCard}>
+          <Fingerprint size={42} color="#C9A455" />
 
-        <div style={styles.lockTitle}>Pocket</div>
+          <div style={styles.lockTitle}>Pocket</div>
 
-        {status.hasCredential ? (
-          <>
-            <div style={styles.lockSubtitle}>
-              Unlock with your fingerprint, Face ID, or passkey
-            </div>
+          {status.hasCredential ? (
+            <>
+              <div style={styles.lockSubtitle}>
+                Unlock with your fingerprint, Face ID, or passkey
+              </div>
 
-            <button
-              type="button"
-              style={styles.primaryButton}
-              onClick={handleUnlock}
-              disabled={loading}
-            >
-              {loading ? "Waiting…" : "Unlock"}
-            </button>
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={handleUnlock}
+                disabled={loading}
+              >
+                {loading ? "Waiting…" : "Unlock"}
+              </button>
 
-            <button
-              type="button"
-              style={styles.lockSecondaryButton}
-              onClick={openNewDevicePairing}
-            >
-              <Link2 size={15} />
-              Pair this device
-            </button>
-          </>
-        ) : (
-          <>
-            <div style={styles.lockSubtitle}>
-              Set up biometric unlock for this device
-            </div>
+              <button
+                type="button"
+                style={styles.lockSecondaryButton}
+                onClick={openNewDevicePairing}
+              >
+                <Link2 size={15} />
+                Pair this device
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={styles.lockSubtitle}>
+                Set up biometric unlock for this device
+              </div>
 
-            <input
-              type="password"
-              placeholder="Setup code"
-              value={setupCode}
-              onChange={(e) => setSetupCode(e.target.value)}
-              style={styles.input}
-            />
+              <input
+                type="password"
+                placeholder="Setup code"
+                value={setupCode}
+                onChange={(e) => setSetupCode(e.target.value)}
+                style={styles.input}
+              />
 
-            <button
-              type="button"
-              style={styles.primaryButton}
-              onClick={() => {
-                setDeviceName("");
-                setDeviceError(null);
+              <button
+                type="button"
+                style={styles.primaryButton}
+                onClick={() => {
+                  setDeviceName("");
+                  setDeviceError(null);
 
-                setShowAddDevice(true);
-              }}
-              disabled={loading || !setupCode}
-            >
-              Set up Face ID / Touch ID
-            </button>
+                  setShowAddDevice(true);
+                }}
+                disabled={loading || !setupCode}
+              >
+                Set up Face ID / Touch ID
+              </button>
 
-            <button
-              type="button"
-              style={styles.lockSecondaryButton}
-              onClick={openNewDevicePairing}
-            >
-              <Link2 size={15} />
-              Pair this device
-            </button>
-          </>
-        )}
+              <button
+                type="button"
+                style={styles.lockSecondaryButton}
+                onClick={openNewDevicePairing}
+              >
+                <Link2 size={15} />
+                Pair this device
+              </button>
+            </>
+          )}
 
-        {error && <div style={styles.modalError}>{error}</div>}
+          {error && <div style={styles.modalError}>{error}</div>}
+        </div>
+
+        {trustedPairingModal}
+
+        {newDevicePairingModal}
       </div>
-
-      {trustedPairingModal}
-
-      {newDevicePairingModal}
-    </div>
+    </>
   );
 }
 
@@ -2312,88 +2289,6 @@ const styles = {
     fontWeight: 500,
 
     cursor: "pointer",
-  },
-
-  accountButton: {
-    position: "fixed",
-
-    left: 18,
-    bottom: 18,
-
-    zIndex: 1000,
-
-    display: "flex",
-
-    alignItems: "center",
-
-    gap: 10,
-
-    minWidth: 190,
-
-    padding: "9px 11px",
-
-    background: "rgba(24,27,33,0.96)",
-
-    border: "1px solid #2C3038",
-
-    borderRadius: 12,
-
-    color: "#ECEAE3",
-
-    boxShadow: "0 12px 40px rgba(0,0,0,0.32)",
-
-    cursor: "pointer",
-
-    textAlign: "left",
-
-    backdropFilter: "blur(14px)",
-  },
-
-  accountButtonAvatar: {
-    width: 34,
-    height: 34,
-
-    borderRadius: "50%",
-
-    display: "flex",
-
-    alignItems: "center",
-
-    justifyContent: "center",
-
-    background: "#C9A455",
-
-    color: "#14161B",
-
-    fontSize: 13,
-
-    fontWeight: 700,
-  },
-
-  accountButtonText: {
-    flex: 1,
-
-    minWidth: 0,
-  },
-
-  accountButtonName: {
-    fontSize: 12,
-
-    fontWeight: 600,
-  },
-
-  accountButtonSubtitle: {
-    marginTop: 3,
-
-    fontSize: 10,
-
-    color: "#777C85",
-  },
-
-  accountButtonChevron: {
-    color: "#777C85",
-
-    fontSize: 14,
   },
 
   accountMenu: {

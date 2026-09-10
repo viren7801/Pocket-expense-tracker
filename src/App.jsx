@@ -888,91 +888,93 @@ export default function LedgerApp() {
           }}
         />
 
-        {tab === "dashboard" && (
-          <Dashboard
-            trendData={trendData}
-            netWorthTrend={netWorthTrend}
-            categoryBreakdown={categoryBreakdown}
-            transactions={transactions.slice(0, 6)}
-            accountName={accountName}
-            savingsRate={savingsRate}
-            expenseChangePct={expenseChangePct}
-            topCategory={topCategory}
-            accounts={accounts}
-            balances={accountBalances}
-            budgets={budgetStatus}
-            goals={goals}
-            monthIncome={monthIncome}
-            monthExpense={monthExpense}
-            onAddTxn={() => {
-              setEditingTxn(null);
-              setTxnPrefill(null);
-              setShowTxnForm(true);
-            }}
-            onViewTransactions={() => setTab("transactions")}
-            onScanClick={() => setShowScanModal(true)}
-            onEdit={(t) => {
-              setEditingTxn(t);
-              setShowTxnForm(true);
-            }}
-          />
-        )}
-        {tab === "transactions" && (
-          <TransactionsView
-            transactions={transactions}
-            accounts={accounts}
-            categories={categories}
-            onDelete={deleteTransaction}
-            onEdit={(t) => {
-              setEditingTxn(t);
-              setShowTxnForm(true);
-            }}
-          />
-        )}
-        {tab === "accounts" && (
-          <AccountsView
-            accounts={accounts}
-            balances={accountBalances}
-            onAdd={() => setShowAccountForm(true)}
-          />
-        )}
-        {tab === "budgets" && (
-          <BudgetsView
-            budgetStatus={budgetStatus}
-            onAdd={() => setShowBudgetForm(true)}
-            onDelete={deleteBudget}
-          />
-        )}
-        {tab === "goals" && (
-          <GoalsView
-            goals={goals}
-            onAdd={() => setShowGoalForm(true)}
-            onContribute={contributeGoal}
-            onDelete={deleteGoal}
-          />
-        )}
-        {tab === "passwords" && (
-          <PasswordsView
-            vault={passwordVault}
-            onVaultChange={setPasswordVault}
-          />
-        )}
-        {tab === "notes" && (
-          <NotesView
-            vault={notesVault}
-            onVaultChange={setNotesVault}
-            onSearchIndexChange={setNotesSearchIndex}
-            onVaultLockChange={setNotesVaultLocked}
-          />
-        )}
-        {tab === "recurring" && (
-          <RecurringView
-            recurring={recurring}
-            accountName={accountName}
-            onAdd={() => setShowRecurringForm(true)}
-            onDelete={deleteRecurring}
-          />
-        )}
+        <div key={tab} className="pocket-page-transition">
+          {tab === "dashboard" && (
+            <Dashboard
+              trendData={trendData}
+              netWorthTrend={netWorthTrend}
+              categoryBreakdown={categoryBreakdown}
+              transactions={transactions.slice(0, 6)}
+              accountName={accountName}
+              savingsRate={savingsRate}
+              expenseChangePct={expenseChangePct}
+              topCategory={topCategory}
+              accounts={accounts}
+              balances={accountBalances}
+              budgets={budgetStatus}
+              goals={goals}
+              monthIncome={monthIncome}
+              monthExpense={monthExpense}
+              onAddTxn={() => {
+                setEditingTxn(null);
+                setTxnPrefill(null);
+                setShowTxnForm(true);
+              }}
+              onViewTransactions={() => setTab("transactions")}
+              onScanClick={() => setShowScanModal(true)}
+              onEdit={(t) => {
+                setEditingTxn(t);
+                setShowTxnForm(true);
+              }}
+            />
+          )}
+          {tab === "transactions" && (
+            <TransactionsView
+              transactions={transactions}
+              accounts={accounts}
+              categories={categories}
+              onDelete={deleteTransaction}
+              onEdit={(t) => {
+                setEditingTxn(t);
+                setShowTxnForm(true);
+              }}
+            />
+          )}
+          {tab === "accounts" && (
+            <AccountsView
+              accounts={accounts}
+              balances={accountBalances}
+              onAdd={() => setShowAccountForm(true)}
+            />
+          )}
+          {tab === "budgets" && (
+            <BudgetsView
+              budgetStatus={budgetStatus}
+              onAdd={() => setShowBudgetForm(true)}
+              onDelete={deleteBudget}
+            />
+          )}
+          {tab === "goals" && (
+            <GoalsView
+              goals={goals}
+              onAdd={() => setShowGoalForm(true)}
+              onContribute={contributeGoal}
+              onDelete={deleteGoal}
+            />
+          )}
+          {tab === "passwords" && (
+            <PasswordsView
+              vault={passwordVault}
+              onVaultChange={setPasswordVault}
+            />
+          )}
+          {tab === "notes" && (
+            <NotesView
+              vault={notesVault}
+              onVaultChange={setNotesVault}
+              onSearchIndexChange={setNotesSearchIndex}
+              onVaultLockChange={setNotesVaultLocked}
+            />
+          )}
+          {tab === "recurring" && (
+            <RecurringView
+              recurring={recurring}
+              accountName={accountName}
+              onAdd={() => setShowRecurringForm(true)}
+              onDelete={deleteRecurring}
+            />
+          )}
+        </div>
       </main>
 
       {isMobileLayout && (
@@ -2030,39 +2032,6 @@ function Dashboard({
           )}
         </div>
       </section>
-
-      <section style={styles.quickRow} className="quickRow">
-        <button style={styles.quickCard} onClick={onAddTxn}>
-          <div style={styles.quickIcon}>
-            <Plus size={19} />
-          </div>
-          <div>
-            <strong>Add transaction</strong>
-            <span>Record income or expense</span>
-          </div>
-          <ChevronRight size={16} />
-        </button>
-        <button style={styles.quickCard} onClick={onScanClick}>
-          <div style={styles.quickIcon}>
-            <Receipt size={19} />
-          </div>
-          <div>
-            <strong>Scan receipt</strong>
-            <span>Turn a receipt into an entry</span>
-          </div>
-          <ChevronRight size={16} />
-        </button>
-        <button style={styles.quickCard} onClick={() => onViewTransactions()}>
-          <div style={styles.quickIcon}>
-            <Settings size={19} />
-          </div>
-          <div>
-            <strong>Manage Pocket</strong>
-            <span>Accounts, budgets and goals</span>
-          </div>
-          <ChevronRight size={16} />
-        </button>
-      </section>
     </div>
   );
 }
@@ -2584,8 +2553,16 @@ function RecurringView({ recurring, accountName, onAdd, onDelete }) {
 
 function ModalShell({ title, onClose, children }) {
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+    <div
+      style={styles.overlay}
+      className="pocket-modal-backdrop"
+      onClick={onClose}
+    >
+      <div
+        style={styles.modal}
+        className="pocket-modal-card"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div
           style={{
             display: "flex",
@@ -3353,175 +3330,177 @@ function GlobalSettingsModal({
             </button>
           </div>
 
-          {section === "general" && (
-            <>
-              <SettingsRow
-                title="Appearance"
-                description="Choose the interface theme for Pocket."
-              >
-                <select
-                  className="settings-control"
-                  value={theme}
-                  onChange={(e) =>
-                    updatePreference("pocket_theme", e.target.value)
-                  }
-                  aria-label="Appearance"
+          <div key={section} className="global-settings-section">
+            {section === "general" && (
+              <>
+                <SettingsRow
+                  title="Appearance"
+                  description="Choose the interface theme for Pocket."
                 >
-                  <option value="dark">Dark</option>
-                  <option value="system">System</option>
-                </select>
-              </SettingsRow>
+                  <select
+                    className="settings-control"
+                    value={theme}
+                    onChange={(e) =>
+                      updatePreference("pocket_theme", e.target.value)
+                    }
+                    aria-label="Appearance"
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="system">System</option>
+                  </select>
+                </SettingsRow>
 
-              <SettingsRow
-                title="Currency"
-                description="Primary currency used across your Pocket."
-              >
-                <select
-                  className="settings-control"
-                  value={currency}
-                  onChange={(e) =>
-                    updatePreference("pocket_currency", e.target.value)
-                  }
-                  aria-label="Currency"
+                <SettingsRow
+                  title="Currency"
+                  description="Primary currency used across your Pocket."
                 >
-                  <option value="INR">INR (₹)</option>
-                  <option value="USD">USD ($)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="GBP">GBP (£)</option>
-                </select>
-              </SettingsRow>
+                  <select
+                    className="settings-control"
+                    value={currency}
+                    onChange={(e) =>
+                      updatePreference("pocket_currency", e.target.value)
+                    }
+                    aria-label="Currency"
+                  >
+                    <option value="INR">INR (₹)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                  </select>
+                </SettingsRow>
 
-              <SettingsRow
-                title="Date format"
-                description="How dates are displayed in transactions and reports."
-              >
-                <select
-                  className="settings-control"
-                  value={dateFormat}
-                  onChange={(e) =>
-                    updatePreference("pocket_date_format", e.target.value)
-                  }
-                  aria-label="Date format"
+                <SettingsRow
+                  title="Date format"
+                  description="How dates are displayed in transactions and reports."
                 >
-                  <option value="DD MMM YYYY">DD MMM YYYY</option>
-                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                  <option value="MMM DD, YYYY">MMM DD, YYYY</option>
-                </select>
-              </SettingsRow>
-            </>
-          )}
+                  <select
+                    className="settings-control"
+                    value={dateFormat}
+                    onChange={(e) =>
+                      updatePreference("pocket_date_format", e.target.value)
+                    }
+                    aria-label="Date format"
+                  >
+                    <option value="DD MMM YYYY">DD MMM YYYY</option>
+                    <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                    <option value="MMM DD, YYYY">MMM DD, YYYY</option>
+                  </select>
+                </SettingsRow>
+              </>
+            )}
 
-          {section === "security" && (
-            <>
-              <SettingsRow
-                title="Vault protection"
-                description="Passwords and private notes remain protected inside their own vaults."
-                value="Enabled"
-              />
-              <SettingsRow
-                title="Notes vault"
-                description="Open the real Notes vault settings, including password, passkey recovery and auto-lock controls."
-              >
-                <button
-                  type="button"
-                  className="settings-action-button"
-                  onClick={openNotesSecurity}
+            {section === "security" && (
+              <>
+                <SettingsRow
+                  title="Vault protection"
+                  description="Passwords and private notes remain protected inside their own vaults."
+                  value="Enabled"
+                />
+                <SettingsRow
+                  title="Notes vault"
+                  description="Open the real Notes vault settings, including password, passkey recovery and auto-lock controls."
                 >
-                  Open Notes security
-                </button>
-              </SettingsRow>
-              <SettingsRow
-                title="Receipt scanning API key"
-                description="Optional key used only when you enable AI receipt scanning on this device."
-              >
-                <div className="settings-key-row">
-                  <input
-                    type="password"
-                    value={scanKey}
-                    onChange={(e) => {
-                      setScanKey(e.target.value);
-                      setSaved(false);
-                    }}
-                    placeholder="Optional API key"
-                  />
                   <button
                     type="button"
-                    onClick={() => {
-                      setPocketPreference("pocket_scan_api_key", scanKey);
-                      setSaved(true);
-                    }}
+                    className="settings-action-button"
+                    onClick={openNotesSecurity}
                   >
-                    {saved ? "Saved" : "Save"}
+                    Open Notes security
                   </button>
-                </div>
-              </SettingsRow>
-            </>
-          )}
+                </SettingsRow>
+                <SettingsRow
+                  title="Receipt scanning API key"
+                  description="Optional key used only when you enable AI receipt scanning on this device."
+                >
+                  <div className="settings-key-row">
+                    <input
+                      type="password"
+                      value={scanKey}
+                      onChange={(e) => {
+                        setScanKey(e.target.value);
+                        setSaved(false);
+                      }}
+                      placeholder="Optional API key"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPocketPreference("pocket_scan_api_key", scanKey);
+                        setSaved(true);
+                      }}
+                    >
+                      {saved ? "Saved" : "Save"}
+                    </button>
+                  </div>
+                </SettingsRow>
+              </>
+            )}
 
-          {section === "notifications" && (
-            <>
-              <SettingsToggle
-                title="Transaction reminders"
-                description="Get reminded about recurring and scheduled entries."
-                defaultChecked
-              />
-              <SettingsToggle
-                title="Budget alerts"
-                description="Show an alert when a category approaches its monthly limit."
-                defaultChecked
-              />
-              <SettingsToggle
-                title="Weekly summary"
-                description="Prepare a weekly overview of spending and savings."
-              />
-            </>
-          )}
+            {section === "notifications" && (
+              <>
+                <SettingsToggle
+                  title="Transaction reminders"
+                  description="Get reminded about recurring and scheduled entries."
+                  defaultChecked
+                />
+                <SettingsToggle
+                  title="Budget alerts"
+                  description="Show an alert when a category approaches its monthly limit."
+                  defaultChecked
+                />
+                <SettingsToggle
+                  title="Weekly summary"
+                  description="Prepare a weekly overview of spending and savings."
+                />
+              </>
+            )}
 
-          {section === "devices" && (
-            <>
-              <SettingsRow
-                title="This device"
-                description="Current Pocket session on this browser."
-                value="Active"
-              />
-              <SettingsRow
-                title="Add new device"
-                description="Register another device with your Pocket account."
-              >
-                <button
-                  type="button"
-                  className="settings-action-button"
-                  onClick={() => onDeviceAction?.("pocket:open-add-device")}
+            {section === "devices" && (
+              <>
+                <SettingsRow
+                  title="This device"
+                  description="Current Pocket session on this browser."
+                  value="Active"
+                />
+                <SettingsRow
+                  title="Add new device"
+                  description="Register another device with your Pocket account."
                 >
-                  Add device
-                </button>
-              </SettingsRow>
-              <SettingsRow
-                title="Pair a new device"
-                description="Pair another phone or computer with this Pocket account."
-              >
-                <button
-                  type="button"
-                  className="settings-action-button"
-                  onClick={() => onDeviceAction?.("pocket:open-pair-device")}
+                  <button
+                    type="button"
+                    className="settings-action-button"
+                    onClick={() => onDeviceAction?.("pocket:open-add-device")}
+                  >
+                    Add device
+                  </button>
+                </SettingsRow>
+                <SettingsRow
+                  title="Pair a new device"
+                  description="Pair another phone or computer with this Pocket account."
                 >
-                  Pair device
-                </button>
-              </SettingsRow>
-              <SettingsRow
-                title="Manage devices"
-                description="View and revoke registered passkeys and devices."
-              >
-                <button
-                  type="button"
-                  className="settings-action-button"
-                  onClick={() => onDeviceAction?.("pocket:open-devices")}
+                  <button
+                    type="button"
+                    className="settings-action-button"
+                    onClick={() => onDeviceAction?.("pocket:open-pair-device")}
+                  >
+                    Pair device
+                  </button>
+                </SettingsRow>
+                <SettingsRow
+                  title="Manage devices"
+                  description="View and revoke registered passkeys and devices."
                 >
-                  Manage devices
-                </button>
-              </SettingsRow>
-            </>
-          )}
+                  <button
+                    type="button"
+                    className="settings-action-button"
+                    onClick={() => onDeviceAction?.("pocket:open-devices")}
+                  >
+                    Manage devices
+                  </button>
+                </SettingsRow>
+              </>
+            )}
+          </div>
         </section>
       </div>
     </div>
@@ -3588,6 +3567,214 @@ body { overflow-x: hidden; background: #0E1013; }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* =========================================================
+   POCKET MOTION SYSTEM
+   Calm, fast and purposeful: feedback 140–180ms,
+   surfaces 220–300ms, page transitions ~360ms.
+========================================================= */
+:root {
+  --pocket-ease: cubic-bezier(.22, 1, .36, 1);
+  --pocket-ease-soft: cubic-bezier(.16, 1, .3, 1);
+  --pocket-fast: 160ms;
+  --pocket-surface: 240ms;
+}
+
+button,
+a,
+select,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a,
+select {
+  transition:
+    transform var(--pocket-fast) var(--pocket-ease),
+    background-color var(--pocket-fast) ease,
+    border-color var(--pocket-fast) ease,
+    color var(--pocket-fast) ease,
+    box-shadow var(--pocket-fast) ease,
+    opacity var(--pocket-fast) ease;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(.985);
+}
+
+button:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(79,227,107,.35);
+  outline-offset: 2px;
+}
+
+.pocket-page-transition {
+  animation: pocketPageEnter 360ms var(--pocket-ease) both;
+  transform-origin: 50% 18%;
+}
+
+@keyframes pocketPageEnter {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.992); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.pocket-page-transition > * {
+  animation: pocketContentEnter 420ms var(--pocket-ease-soft) both;
+}
+
+.pocket-page-transition > *:nth-child(2) { animation-delay: 25ms; }
+.pocket-page-transition > *:nth-child(3) { animation-delay: 50ms; }
+.pocket-page-transition > *:nth-child(4) { animation-delay: 75ms; }
+
+.panel,
+.widget,
+.netWorthCard,
+.monthCard,
+.accountCard,
+.quickCard,
+.moduleHero,
+.placeholderCard,
+.global-settings-shell,
+.universal-search-panel,
+.profile-menu-popover,
+.mobile-bottom-nav,
+.pocket-modal-card {
+  transition:
+    transform var(--pocket-surface) var(--pocket-ease),
+    border-color var(--pocket-surface) ease,
+    box-shadow var(--pocket-surface) ease,
+    background-color var(--pocket-surface) ease;
+}
+
+.panel:hover,
+.widget:hover,
+.accountCard:hover,
+.quickCard:hover,
+.placeholderCard:hover {
+  transform: translateY(-2px);
+  border-color: #343B46;
+  box-shadow: 0 14px 34px rgba(0,0,0,.14);
+}
+
+.ledger-row,
+.account-row,
+.category-row,
+.goal-row,
+.mini-budget,
+.settings-row {
+  animation: pocketRowEnter 300ms var(--pocket-ease-soft) both;
+}
+
+.ledger-row:nth-child(2), .account-row:nth-child(2), .category-row:nth-child(2), .goal-row:nth-child(2), .settings-row:nth-child(2) { animation-delay: 20ms; }
+.ledger-row:nth-child(3), .account-row:nth-child(3), .category-row:nth-child(3), .goal-row:nth-child(3), .settings-row:nth-child(3) { animation-delay: 40ms; }
+.ledger-row:nth-child(4), .account-row:nth-child(4), .category-row:nth-child(4), .goal-row:nth-child(4), .settings-row:nth-child(4) { animation-delay: 60ms; }
+.ledger-row:nth-child(5), .account-row:nth-child(5), .category-row:nth-child(5), .goal-row:nth-child(5), .settings-row:nth-child(5) { animation-delay: 80ms; }
+
+@keyframes pocketContentEnter {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes pocketRowEnter {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.pocket-modal-backdrop,
+.global-settings-overlay,
+.universal-search-overlay {
+  animation: pocketOverlayIn 220ms ease both;
+}
+
+.pocket-modal-card,
+.global-settings-shell,
+.universal-search-panel {
+  animation: pocketSurfaceIn 280ms var(--pocket-ease) both;
+}
+
+@keyframes pocketOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pocketSurfaceIn {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.985); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.profile-menu-popover {
+  animation: pocketProfileIn 220ms var(--pocket-ease) both !important;
+}
+
+@keyframes pocketProfileIn {
+  from { opacity: 0; transform: translate3d(0, -7px, 0) scale(.985); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.profile-menu-item:hover,
+.global-settings-nav:hover,
+.universal-search-result:hover {
+  transform: translateX(2px);
+}
+
+.global-settings-section {
+  animation: pocketSectionIn 260ms var(--pocket-ease) both;
+}
+
+@keyframes pocketSectionIn {
+  from { opacity: 0; transform: translate3d(8px, 0, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.settings-toggle span {
+  transition: transform 220ms var(--pocket-ease), background-color 180ms ease;
+}
+
+.mobile-avatar-button {
+  transition: transform 180ms var(--pocket-ease), box-shadow 220ms ease;
+}
+
+.mobile-avatar-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(201,164,85,.2);
+}
+
+.mobile-bottom-nav .mobile-bottom-add {
+  transition: transform 180ms var(--pocket-ease), box-shadow 180ms ease;
+}
+
+.mobile-bottom-nav .mobile-bottom-add:hover {
+  transform: translateY(-16px) scale(1.025);
+  box-shadow: 0 14px 30px rgba(79,227,107,.28) !important;
+}
+
+@media (hover: none) {
+  .panel:hover,
+  .widget:hover,
+  .accountCard:hover,
+  .quickCard:hover,
+  .placeholderCard:hover,
+  .profile-menu-item:hover,
+  .global-settings-nav:hover,
+  .universal-search-result:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 
 .mobile-dashboard-header,
 .mobile-quick-actions,
@@ -4091,7 +4278,6 @@ body { overflow-x: hidden; background: #0E1013; }
   .hero-grid,
   .ledger-grid-3,
   .ledger-grid-main,
-  .quickRow,
   .placeholderGrid {
     grid-template-columns: 1fr !important;
     width: 100% !important;
@@ -4108,8 +4294,7 @@ body { overflow-x: hidden; background: #0E1013; }
   .hero-grid > *,
   .ledger-grid-3 > *,
   .ledger-grid-main > *,
-  .widget-grid > *,
-  .quickRow > * {
+  .widget-grid > * {
     min-width: 0 !important;
     max-width: 100% !important;
   }
@@ -4182,12 +4367,6 @@ body { overflow-x: hidden; background: #0E1013; }
     left: auto;
     bottom: auto;
     width: min(320px, calc(100vw - 32px));
-    animation: profileMenuIn .18s ease-out;
-  }
-
-  @keyframes profileMenuIn {
-    from { opacity: 0; transform: translateY(-8px) scale(.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .profile-menu-header {
@@ -4451,6 +4630,11 @@ const styles = {
   },
   sidebar: {
     width: 252,
+    position: "sticky",
+    top: 0,
+    height: "100vh",
+    maxHeight: "100vh",
+    overflow: "hidden",
     borderRight: "1px solid #22262E",
     padding: "28px 16px 18px",
     flexShrink: 0,
@@ -4525,7 +4709,7 @@ const styles = {
     fontFamily: "Inter, sans-serif",
   },
   navDivider: { height: 1, background: "#22262E", margin: "20px 10px 18px" },
-  sidebarSpacer: { flex: 1 },
+  sidebarSpacer: { flex: 1, minHeight: 16 },
   profileCard: {
     display: "flex",
     alignItems: "center",
@@ -4648,7 +4832,7 @@ const styles = {
     cursor: "pointer",
   },
   dashboardPage: {
-    padding: "16px 32px 42px",
+    padding: "16px 32px 28px",
     maxWidth: 1500,
     margin: "0 auto",
   },
@@ -4897,12 +5081,6 @@ const styles = {
     overflow: "hidden",
   },
   progressFill: { height: "100%", borderRadius: 5 },
-  quickRow: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3,1fr)",
-    gap: 14,
-    marginTop: 14,
-  },
   quickCard: {
     display: "flex",
     alignItems: "center",
