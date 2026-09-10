@@ -1014,9 +1014,54 @@ export default function LockScreen({ children }) {
 
   useEffect(() => {
     const openAccountMenu = () => setShowAccountMenu(true);
+
+    const openAddDeviceFromSettings = () => {
+      setShowAccountMenu(false);
+      setShowDevices(false);
+      setDeviceName("");
+      setDeviceError(null);
+      setShowAddDevice(true);
+    };
+
+    const openPairDeviceFromSettings = () => {
+      setShowAccountMenu(false);
+      setShowAddDevice(false);
+      setShowDevices(false);
+      openTrustedPairing();
+    };
+
+    const openDevicesFromSettings = () => {
+      setShowAccountMenu(false);
+      setShowAddDevice(false);
+      openDevices();
+    };
+
     window.addEventListener("pocket:open-account-menu", openAccountMenu);
-    return () =>
+    window.addEventListener(
+      "pocket:open-add-device",
+      openAddDeviceFromSettings,
+    );
+    window.addEventListener(
+      "pocket:open-pair-device",
+      openPairDeviceFromSettings,
+    );
+    window.addEventListener("pocket:open-devices", openDevicesFromSettings);
+
+    return () => {
       window.removeEventListener("pocket:open-account-menu", openAccountMenu);
+      window.removeEventListener(
+        "pocket:open-add-device",
+        openAddDeviceFromSettings,
+      );
+      window.removeEventListener(
+        "pocket:open-pair-device",
+        openPairDeviceFromSettings,
+      );
+      window.removeEventListener(
+        "pocket:open-devices",
+        openDevicesFromSettings,
+      );
+    };
   }, []);
 
   /*
@@ -1959,17 +2004,6 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
-            body {
-              overflow-x: hidden;
-            }
-
-            .pocketAccountMenu {
-              box-sizing: border-box;
-              max-width: calc(100vw - 28px);
-            }
-          }
-
-          @media (max-width: 1023px) {
             .pocketAccountButton {
               display: none !important;
             }
@@ -1981,7 +2015,7 @@ export default function LockScreen({ children }) {
 
           @media (max-width: 1023px) {
             .pocketAccountMenu {
-              top: calc(84px + env(safe-area-inset-top)) !important;
+              top: 88px !important;
               right: 14px !important;
               left: auto !important;
               bottom: auto !important;
@@ -2053,17 +2087,6 @@ export default function LockScreen({ children }) {
           }
 
           @media (max-width: 1023px) {
-            body {
-              overflow-x: hidden;
-            }
-
-            .pocketAccountMenu {
-              box-sizing: border-box;
-              max-width: calc(100vw - 28px);
-            }
-          }
-
-          @media (max-width: 1023px) {
             .pocketAccountButton {
               display: none !important;
             }
@@ -2075,7 +2098,7 @@ export default function LockScreen({ children }) {
 
           @media (max-width: 1023px) {
             .pocketAccountMenu {
-              top: calc(84px + env(safe-area-inset-top)) !important;
+              top: 88px !important;
               right: 14px !important;
               left: auto !important;
               bottom: auto !important;
@@ -2116,7 +2139,7 @@ export default function LockScreen({ children }) {
 
   return (
     <div style={styles.lockWrap}>
-      <div style={styles.lockCard} className="pocket-lock-card-mobile">
+      <div style={styles.lockCard}>
         <Fingerprint size={42} color="#C9A455" />
 
         <div style={styles.lockTitle}>Pocket</div>
@@ -2226,9 +2249,9 @@ const styles = {
 
     borderRadius: 16,
 
-    padding: "32px 24px",
+    padding: "38px 34px",
 
-    width: "min(420px, calc(100vw - 32px))",
+    width: 320,
 
     boxSizing: "border-box",
   },

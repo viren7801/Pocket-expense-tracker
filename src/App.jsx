@@ -113,6 +113,26 @@ function addInterval(dateStr, freq) {
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+function getPocketPreference(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value == null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+function setPocketPreference(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Preferences are optional when local storage is unavailable.
+  }
+  window.dispatchEvent(
+    new CustomEvent("pocket:preferences-changed", { detail: { key, value } }),
+  );
+}
+
 function useIsMobileLayout() {
   const getValue = () =>
     typeof window !== "undefined" ? window.innerWidth <= 1023 : false;
@@ -145,6 +165,18 @@ export default function LedgerApp() {
   const [notesSearchIndex, setNotesSearchIndex] = useState([]);
   const [notesVaultLocked, setNotesVaultLocked] = useState(true);
   const isMobileLayout = useIsMobileLayout();
+
+  useEffect(() => {
+    const applyTheme = () => {
+      const theme = getPocketPreference("pocket_theme", "dark");
+      document.documentElement.dataset.pocketTheme = theme;
+      document.body.dataset.pocketTheme = theme;
+    };
+    applyTheme();
+    window.addEventListener("pocket:preferences-changed", applyTheme);
+    return () =>
+      window.removeEventListener("pocket:preferences-changed", applyTheme);
+  }, []);
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -829,6 +861,20 @@ export default function LedgerApp() {
           <GlobalSettingsModal
             initialSection={settingsSection}
             onClose={() => setSettingsOpen(false)}
+            onOpenNotesSettings={() => {
+              setSettingsOpen(false);
+              window.setTimeout(() => {
+                window.dispatchEvent(
+                  new CustomEvent("pocket:open-notes-settings"),
+                );
+              }, 0);
+            }}
+            onDeviceAction={(eventName) => {
+              setSettingsOpen(false);
+              window.setTimeout(() => {
+                window.dispatchEvent(new CustomEvent(eventName));
+              }, 0);
+            }}
           />
         )}
         <input
@@ -3225,12 +3271,26 @@ function ScanReceiptModal({ onClose, onExtracted, onOpenSettings }) {
   );
 }
 
-function GlobalSettingsModal({ initialSection = "general", onClose }) {
+function GlobalSettingsModal({
+  initialSection = "general",
+  onClose,
+  onOpenNotesSettings,
+  onDeviceAction,
+}) {
   const [section, setSection] = useState(initialSection);
-  const [scanKey, setScanKey] = useState(
-    () => localStorage.getItem("pocket_scan_api_key") || "",
+  const [scanKey, setScanKey] = useState(() =>
+    getPocketPreference("pocket_scan_api_key", ""),
   );
   const [saved, setSaved] = useState(false);
+  const [theme, setTheme] = useState(() =>
+    getPocketPreference("pocket_theme", "dark"),
+  );
+  const [currency, setCurrency] = useState(() =>
+    getPocketPreference("pocket_currency", "INR"),
+  );
+  const [dateFormat, setDateFormat] = useState(() =>
+    getPocketPreference("pocket_date_format", "DD MMM YYYY"),
+  );
 
   useEffect(() => setSection(initialSection), [initialSection]);
 
@@ -3240,6 +3300,18 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
     ["notifications", "Notifications", Bell],
     ["devices", "Devices", MonitorSmartphone],
   ];
+
+  const updatePreference = (key, value) => {
+    setPocketPreference(key, value);
+    if (key === "pocket_theme") setTheme(value);
+    if (key === "pocket_currency") setCurrency(value);
+    if (key === "pocket_date_format") setDateFormat(value);
+  };
+
+  const openNotesSecurity = () => {
+    onClose();
+    window.setTimeout(() => onOpenNotesSettings?.(), 0);
+  };
 
   return (
     <div
@@ -3254,6 +3326,7 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
           {sections.map(([id, label, Icon]) => (
             <button
               key={id}
+              type="button"
               className={`global-settings-nav ${section === id ? "active" : ""}`}
               onClick={() => setSection(id)}
             >
@@ -3261,6 +3334,7 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
             </button>
           ))}
         </aside>
+
         <section className="global-settings-content">
           <div className="global-settings-header">
             <div>
@@ -3270,6 +3344,7 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
               </h2>
             </div>
             <button
+              type="button"
               className="global-settings-close"
               onClick={onClose}
               aria-label="Close settings"
@@ -3282,19 +3357,57 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
             <>
               <SettingsRow
                 title="Appearance"
-                description="Pocket uses the current dark interface designed for comfortable daily use."
-                value="Dark"
-              />
+                description="Choose the interface theme for Pocket."
+              >
+                <select
+                  className="settings-control"
+                  value={theme}
+                  onChange={(e) =>
+                    updatePreference("pocket_theme", e.target.value)
+                  }
+                  aria-label="Appearance"
+                >
+                  <option value="dark">Dark</option>
+                  <option value="system">System</option>
+                </select>
+              </SettingsRow>
+
               <SettingsRow
                 title="Currency"
                 description="Primary currency used across your Pocket."
-                value="INR (₹)"
-              />
+              >
+                <select
+                  className="settings-control"
+                  value={currency}
+                  onChange={(e) =>
+                    updatePreference("pocket_currency", e.target.value)
+                  }
+                  aria-label="Currency"
+                >
+                  <option value="INR">INR (₹)</option>
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                </select>
+              </SettingsRow>
+
               <SettingsRow
                 title="Date format"
                 description="How dates are displayed in transactions and reports."
-                value="DD MMM YYYY"
-              />
+              >
+                <select
+                  className="settings-control"
+                  value={dateFormat}
+                  onChange={(e) =>
+                    updatePreference("pocket_date_format", e.target.value)
+                  }
+                  aria-label="Date format"
+                >
+                  <option value="DD MMM YYYY">DD MMM YYYY</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="MMM DD, YYYY">MMM DD, YYYY</option>
+                </select>
+              </SettingsRow>
             </>
           )}
 
@@ -3305,6 +3418,18 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
                 description="Passwords and private notes remain protected inside their own vaults."
                 value="Enabled"
               />
+              <SettingsRow
+                title="Notes vault"
+                description="Open the real Notes vault settings, including password, passkey recovery and auto-lock controls."
+              >
+                <button
+                  type="button"
+                  className="settings-action-button"
+                  onClick={openNotesSecurity}
+                >
+                  Open Notes security
+                </button>
+              </SettingsRow>
               <SettingsRow
                 title="Receipt scanning API key"
                 description="Optional key used only when you enable AI receipt scanning on this device."
@@ -3320,8 +3445,9 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
                     placeholder="Optional API key"
                   />
                   <button
+                    type="button"
                     onClick={() => {
-                      localStorage.setItem("pocket_scan_api_key", scanKey);
+                      setPocketPreference("pocket_scan_api_key", scanKey);
                       setSaved(true);
                     }}
                   >
@@ -3360,14 +3486,40 @@ function GlobalSettingsModal({ initialSection = "general", onClose }) {
               />
               <SettingsRow
                 title="Add new device"
-                description="Sign in to Pocket on another phone or computer to use your account there."
-                value="Use same account"
-              />
+                description="Register another device with your Pocket account."
+              >
+                <button
+                  type="button"
+                  className="settings-action-button"
+                  onClick={() => onDeviceAction?.("pocket:open-add-device")}
+                >
+                  Add device
+                </button>
+              </SettingsRow>
               <SettingsRow
                 title="Pair a new device"
-                description="Pairing and passkey management will appear here when multi-device sync is enabled."
-                value="Coming soon"
-              />
+                description="Pair another phone or computer with this Pocket account."
+              >
+                <button
+                  type="button"
+                  className="settings-action-button"
+                  onClick={() => onDeviceAction?.("pocket:open-pair-device")}
+                >
+                  Pair device
+                </button>
+              </SettingsRow>
+              <SettingsRow
+                title="Manage devices"
+                description="View and revoke registered passkeys and devices."
+              >
+                <button
+                  type="button"
+                  className="settings-action-button"
+                  onClick={() => onDeviceAction?.("pocket:open-devices")}
+                >
+                  Manage devices
+                </button>
+              </SettingsRow>
             </>
           )}
         </section>
@@ -3505,6 +3657,33 @@ body { overflow-x: hidden; background: #0E1013; }
 .settings-key-row input { width:220px; max-width:36vw; background:#101419; border:1px solid #303742; border-radius:9px; padding:9px 10px; color:#E9E8E3; outline:none; font:12px Inter,sans-serif; }
 .settings-key-row button { border:1px solid #3B854A; border-radius:9px; background:#51D96B; color:#102014; padding:9px 13px; font:600 12px Inter,sans-serif; cursor:pointer; }
 
+
+.settings-control,
+.settings-action-button {
+  min-height: 42px;
+  border: 1px solid #303742;
+  border-radius: 10px;
+  background: #1A2028;
+  color: #E9E8E3;
+  padding: 0 12px;
+  font: 12px Inter, sans-serif;
+  cursor: pointer;
+}
+
+.settings-control { min-width: 160px; }
+
+.settings-action-button {
+  background: #20262E;
+  border-color: #37404C;
+  color: #75DD8A;
+  font-weight: 600;
+}
+
+.settings-action-button:active,
+.settings-control:focus {
+  outline: 2px solid rgba(79,227,107,.18);
+  outline-offset: 1px;
+}
 
 
 /* ---------- Universal Search ---------- */
@@ -4132,15 +4311,98 @@ body { overflow-x: hidden; background: #0E1013; }
 
 
 @media (max-width: 768px) {
-  .global-settings-overlay { padding:0; align-items:stretch; }
-  .global-settings-shell { width:100%; min-height:100dvh; max-height:100dvh; border:0; border-radius:0; display:block; overflow:auto; }
-  .global-settings-sidebar { position:sticky; top:0; z-index:2; display:flex; gap:6px; overflow-x:auto; padding:14px 14px 10px; border-right:0; border-bottom:1px solid #292F38; }
-  .global-settings-brand { display:none; }
-  .global-settings-nav { width:auto; flex:0 0 auto; padding:9px 12px; }
-  .global-settings-content { padding:22px 18px calc(110px + env(safe-area-inset-bottom)); overflow:visible; }
-  .settings-row { align-items:flex-start; gap:14px; }
-  .settings-key-row { width:100%; flex-wrap:wrap; margin-top:12px; }
-  .settings-key-row input { width:100%; max-width:none; }
+  .global-settings-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 99999 !important;
+    padding: max(10px, env(safe-area-inset-top)) 0 0 !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+  }
+
+  .global-settings-shell {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .global-settings-sidebar {
+    position: relative !important;
+    top: auto !important;
+    z-index: 4 !important;
+    flex: 0 0 auto !important;
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    padding: 10px 12px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid #292F38 !important;
+    background: #12161B !important;
+  }
+
+  .global-settings-sidebar::-webkit-scrollbar { display: none; }
+  .global-settings-brand { display: none !important; }
+
+  .global-settings-nav {
+    width: auto !important;
+    min-width: max-content !important;
+    flex: 0 0 auto !important;
+    min-height: 42px !important;
+    padding: 10px 13px !important;
+    touch-action: manipulation !important;
+    white-space: nowrap !important;
+  }
+
+  .global-settings-content {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    padding: 20px 18px calc(34px + env(safe-area-inset-bottom)) !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  .global-settings-header h2 { font-size: 25px !important; }
+
+  .settings-row {
+    align-items: flex-start !important;
+    gap: 14px !important;
+    flex-direction: column !important;
+  }
+
+  .settings-row > :last-child {
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .settings-control,
+  .settings-action-button,
+  .settings-key-row input,
+  .settings-key-row button {
+    min-height: 44px !important;
+  }
+
+  .settings-row-value {
+    display: inline-flex !important;
+    width: 100% !important;
+    min-height: 42px !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 0 12px !important;
+    border: 1px solid #303742 !important;
+    border-radius: 10px !important;
+    background: #1A2028 !important;
+  }
+
+  .settings-key-row { width:100% !important; flex-wrap:wrap !important; margin-top:12px !important; }
+  .settings-key-row input { width:100% !important; max-width:none !important; }
 }
 
 @media (max-width: 1023px) {

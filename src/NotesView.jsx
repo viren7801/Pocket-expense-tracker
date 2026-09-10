@@ -598,23 +598,23 @@ export default function NotesView({
       return;
     }
 
+    const searchIndex = notes
+      .filter((note) => !note.trashed)
+      .map((note) => ({
+        id: note.id,
+        title: note.title || "Untitled note",
+        preview:
+          String(note.content || "")
+            .replace(/[#*_`>\[\]()-]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 140) || "Private note",
+        content: String(note.content || ""),
+        tags: Array.isArray(note.tags) ? note.tags : [],
+      }));
+
+    onSearchIndexChange?.(searchIndex);
     onVaultLockChange?.(false);
-    onSearchIndexChange?.(
-      notes
-        .filter((note) => !note.trashed)
-        .map((note) => ({
-          id: note.id,
-          title: note.title || "Untitled note",
-          preview:
-            String(note.content || "")
-              .replace(/[#*_`>\[\]()-]/g, " ")
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 140) || "Private note",
-          content: String(note.content || ""),
-          tags: Array.isArray(note.tags) ? note.tags : [],
-        })),
-    );
   }, [phase, notes, onSearchIndexChange, onVaultLockChange]);
 
   const [selectedFolder, setSelectedFolder] = useState("all");
