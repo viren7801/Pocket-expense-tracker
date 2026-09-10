@@ -575,7 +575,8 @@ const NOTE_TEMPLATES = [
 export default function NotesView({
   vault,
   onVaultChange,
-  openSettingsRequest = 0,
+  onSearchIndexChange,
+  onVaultLockChange,
 }) {
   const isDevelopment = import.meta.env.DEV;
 
@@ -586,6 +587,35 @@ export default function NotesView({
   const [confirmPassword, setConfirmPassword] = useState("");
 
   const [notes, setNotes] = useState([]);
+
+  // Keep the app-level universal search index synchronized with decrypted
+  // note data only while the vault is unlocked. Locked vaults never expose
+  // plaintext note content to the global search layer.
+  useEffect(() => {
+    if (phase !== "unlocked") {
+      onVaultLockChange?.(true);
+      onSearchIndexChange?.([]);
+      return;
+    }
+
+    onVaultLockChange?.(false);
+    onSearchIndexChange?.(
+      notes
+        .filter((note) => !note.trashed)
+        .map((note) => ({
+          id: note.id,
+          title: note.title || "Untitled note",
+          preview:
+            String(note.content || "")
+              .replace(/[#*_`>\[\]()-]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 140) || "Private note",
+          content: String(note.content || ""),
+          tags: Array.isArray(note.tags) ? note.tags : [],
+        })),
+    );
+  }, [phase, notes, onSearchIndexChange, onVaultLockChange]);
 
   const [selectedFolder, setSelectedFolder] = useState("all");
   const [showFavorites, setShowFavorites] = useState(false);
@@ -620,14 +650,6 @@ export default function NotesView({
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showNotesSettings, setShowNotesSettings] = useState(false);
-
-  // Allows the global Pocket profile/settings button to open Notes settings
-  // from any screen, not only from inside the Notes workspace.
-  useEffect(() => {
-    if (openSettingsRequest > 0) {
-      setShowNotesSettings(true);
-    }
-  }, [openSettingsRequest]);
   const [showAutoLockMenu, setShowAutoLockMenu] = useState(false);
   const [autoLockMinutes, setAutoLockMinutes] = useState(0);
   const [trashRetentionDays, setTrashRetentionDays] = useState(0);

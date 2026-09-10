@@ -142,6 +142,8 @@ export default function LedgerApp() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("general");
+  const [notesSearchIndex, setNotesSearchIndex] = useState([]);
+  const [notesVaultLocked, setNotesVaultLocked] = useState(true);
   const isMobileLayout = useIsMobileLayout();
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
@@ -525,6 +527,209 @@ export default function LedgerApp() {
   );
 
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || "—";
+  const universalSearchResults = useMemo(() => {
+    const results = [];
+
+    const add = (result) => {
+      results.push({
+        id: result.id,
+        type: result.type,
+        title: result.title,
+        subtitle: result.subtitle || "",
+        section: result.section,
+        tab: result.tab,
+        item: result.item || null,
+        searchText: result.searchText || "",
+        score: result.score || 0,
+      });
+    };
+
+    const pages = [
+      {
+        id: "dashboard",
+        title: "Dashboard",
+        subtitle: "Your finance overview",
+        section: "Pages",
+      },
+      {
+        id: "transactions",
+        title: "Pocket",
+        subtitle: "Income, expenses & transactions",
+        section: "Pages",
+      },
+      {
+        id: "passwords",
+        title: "Passwords",
+        subtitle: "Secure password vault",
+        section: "Pages",
+      },
+      {
+        id: "notes",
+        title: "Notes",
+        subtitle: "Private notes vault",
+        section: "Pages",
+      },
+      {
+        id: "accounts",
+        title: "Accounts",
+        subtitle: "Cash, bank & wallet accounts",
+        section: "Pages",
+      },
+      {
+        id: "budgets",
+        title: "Budgets",
+        subtitle: "Monthly category limits",
+        section: "Pages",
+      },
+      {
+        id: "goals",
+        title: "Goals",
+        subtitle: "Savings goals",
+        section: "Pages",
+      },
+      {
+        id: "recurring",
+        title: "Recurring",
+        subtitle: "Automatic recurring entries",
+        section: "Pages",
+      },
+    ];
+
+    pages.forEach((page) =>
+      add({
+        id: `page:${page.id}`,
+        type: "page",
+        title: page.title,
+        subtitle: page.subtitle,
+        section: page.section,
+        tab: page.id,
+      }),
+    );
+
+    add({
+      id: "settings:general",
+      type: "settings",
+      title: "Settings",
+      subtitle: "General, security, notifications & devices",
+      section: "Settings",
+      tab: "settings",
+    });
+
+    add({
+      id: "settings:security",
+      type: "settings",
+      title: "Security settings",
+      subtitle: "Vault protection & receipt scanning",
+      section: "Settings",
+      tab: "settings",
+    });
+
+    add({
+      id: "settings:devices",
+      type: "settings",
+      title: "Device settings",
+      subtitle: "Connected devices & passkeys",
+      section: "Settings",
+      tab: "settings",
+    });
+
+    transactions.forEach((t) => {
+      const account = accountName(t.accountId);
+      const haystack =
+        `${t.category} ${t.note || ""} ${account} ${t.type} ${t.date} ${t.amount}`.toLowerCase();
+      add({
+        id: `transaction:${t.id}`,
+        type: "transaction",
+        title: t.category || "Untitled transaction",
+        subtitle: `${t.type === "income" ? "Income" : "Expense"} · ${account} · ${fmtDate(t.date)} · ${fmtINR(t.amount)}${t.note ? ` · ${t.note}` : ""}`,
+        section: "Transactions",
+        tab: "transactions",
+        item: t,
+        score: haystack.length,
+      });
+    });
+
+    accounts.forEach((a) => {
+      add({
+        id: `account:${a.id}`,
+        type: "account",
+        title: a.name,
+        subtitle: `${a.type} · ${fmtINR(accountBalances[a.id] || 0)}`,
+        section: "Accounts",
+        tab: "accounts",
+        item: a,
+      });
+    });
+
+    budgets.forEach((b) => {
+      const status = budgetStatus.find((x) => x.id === b.id);
+      add({
+        id: `budget:${b.id}`,
+        type: "budget",
+        title: `${b.category} budget`,
+        subtitle: `${fmtINR(b.limit)} limit · ${fmtINR(status?.spent || 0)} spent`,
+        section: "Budgets",
+        tab: "budgets",
+        item: b,
+      });
+    });
+
+    goals.forEach((g) => {
+      const pct =
+        g.target > 0
+          ? Math.min(100, Math.round((g.saved / g.target) * 100))
+          : 0;
+      add({
+        id: `goal:${g.id}`,
+        type: "goal",
+        title: g.name,
+        subtitle: `${fmtINR(g.saved)} saved · ${pct}% of ${fmtINR(g.target)}`,
+        section: "Goals",
+        tab: "goals",
+        item: g,
+      });
+    });
+
+    recurring.forEach((r) => {
+      add({
+        id: `recurring:${r.id}`,
+        type: "recurring",
+        title: r.label,
+        subtitle: `${r.category} · ${r.frequency} · ${fmtINR(r.amount)}`,
+        section: "Recurring",
+        tab: "recurring",
+        item: r,
+      });
+    });
+
+    // Private Notes: the index contains decrypted note data only for the
+    // current unlocked in-memory session. NotesView clears this index as soon
+    // as the vault locks, so searching it here is safe while unlocked.
+    notesSearchIndex.forEach((note) => {
+      add({
+        id: `note:${note.id}`,
+        type: "note",
+        title: note.title || "Untitled note",
+        subtitle: note.preview || "Private note",
+        searchText: `${note.title || ""} ${note.content || ""} ${(note.tags || []).join(" ")}`,
+        section: "Notes",
+        tab: "notes",
+        item: note,
+      });
+    });
+
+    return results;
+  }, [
+    transactions,
+    accounts,
+    budgets,
+    goals,
+    recurring,
+    accountBalances,
+    budgetStatus,
+    notesSearchIndex,
+    notesVaultLocked,
+  ]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -707,7 +912,12 @@ export default function LedgerApp() {
           />
         )}
         {tab === "notes" && (
-          <NotesView vault={notesVault} onVaultChange={setNotesVault} />
+          <NotesView
+            vault={notesVault}
+            onVaultChange={setNotesVault}
+            onSearchIndexChange={setNotesSearchIndex}
+            onVaultLockChange={setNotesVaultLocked}
+          />
         )}
         {tab === "recurring" && (
           <RecurringView
@@ -733,9 +943,26 @@ export default function LedgerApp() {
 
       {commandOpen && (
         <CommandPalette
+          results={universalSearchResults}
           onClose={() => setCommandOpen(false)}
-          onNavigate={(next) => {
-            setTab(next);
+          notesVaultLocked={notesVaultLocked}
+          notesSearchIndex={notesSearchIndex}
+          onSelect={(result) => {
+            if (result.type === "transaction") {
+              setTab("transactions");
+              setEditingTxn(result.item);
+              setShowTxnForm(true);
+            } else if (
+              result.type === "note" ||
+              result.type === "notes-locked"
+            ) {
+              setTab("notes");
+            } else if (result.type === "settings") {
+              setSettingsSection(result.id.split(":")[1] || "general");
+              setSettingsOpen(true);
+            } else {
+              setTab(result.tab);
+            }
             setCommandOpen(false);
           }}
         />
@@ -1180,52 +1407,210 @@ function ProfileMenu({ open, onClose, onNavigate, onOpenSettings }) {
   );
 }
 
-function CommandPalette({ onClose, onNavigate }) {
-  const items = [
-    ["dashboard", "Dashboard", LayoutDashboard],
-    ["transactions", "Pocket", Wallet],
-    ["passwords", "Passwords", KeyRound],
-    ["notes", "Notes", NotebookPen],
-    ["accounts", "Accounts", Landmark],
-    ["budgets", "Budgets", Target],
-  ];
+function CommandPalette({
+  results,
+  onClose,
+  onSelect,
+  notesVaultLocked,
+  notesSearchIndex,
+}) {
   const [query, setQuery] = useState("");
-  const filtered = items.filter(([, label]) =>
-    label.toLowerCase().includes(query.toLowerCase()),
-  );
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return results
+        .filter((r) => ["page", "settings", "transaction"].includes(r.type))
+        .sort((a, b) => {
+          if (a.type === "page" && b.type !== "page") return -1;
+          if (a.type !== "page" && b.type === "page") return 1;
+          return 0;
+        })
+        .slice(0, 12);
+    }
+
+    const scored = results
+      .map((r) => {
+        const haystack =
+          `${r.title} ${r.subtitle} ${r.section} ${r.searchText || ""}`.toLowerCase();
+        let score = 0;
+        if (haystack === q) score += 100;
+        if (r.title.toLowerCase() === q) score += 80;
+        if (r.title.toLowerCase().startsWith(q)) score += 50;
+        if (r.title.toLowerCase().includes(q)) score += 35;
+        if (haystack.includes(q)) score += 20;
+        if (r.section.toLowerCase().includes(q)) score += 8;
+        return { ...r, searchScore: score };
+      })
+      .filter((r) => r.searchScore > 0)
+      .sort((a, b) => b.searchScore - a.searchScore)
+      .slice(0, 12);
+
+    return scored;
+  }, [query, results]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query]);
+
+  const displayResults = useMemo(() => {
+    if (filtered.length > 0 || !query.trim()) return filtered;
+
+    // Only show the locked-note explanation when the vault is actually
+    // locked and there is no decrypted search index available. The previous
+    // implementation used `|| true`, which made an unlocked vault look locked
+    // whenever there was no matching result.
+    if (notesVaultLocked && notesSearchIndex.length === 0) {
+      const lockedResult = results.find((r) => r.id === "page:notes");
+      if (lockedResult) {
+        return [
+          {
+            id: "notes:locked-search",
+            type: "notes-locked",
+            title: "Private Notes",
+            subtitle: `Notes are locked — unlock to search “${query.trim()}” inside your encrypted notes`,
+            section: "Notes",
+            tab: "notes",
+            item: null,
+          },
+        ];
+      }
+    }
+
+    return filtered;
+  }, [filtered, query, results]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (filtered.length) {
+        setActiveIndex((i) => (i + 1) % filtered.length);
+      }
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (filtered.length) {
+        setActiveIndex((i) => (i - 1 + filtered.length) % filtered.length);
+      }
+      return;
+    }
+
+    if (e.key === "Enter" && filtered[activeIndex]) {
+      e.preventDefault();
+      onSelect(filtered[activeIndex]);
+    }
+  };
+
+  const iconFor = (result) => {
+    if (result.type === "transaction") return Receipt;
+    if (result.type === "account") return Landmark;
+    if (result.type === "budget") return Target;
+    if (result.type === "goal") return PiggyBank;
+    if (result.type === "recurring") return Repeat;
+    if (result.type === "passwords") return KeyRound;
+    if (
+      result.type === "notes" ||
+      result.type === "note" ||
+      result.type === "notes-locked"
+    )
+      return NotebookPen;
+    if (result.type === "settings") return Settings;
+    if (result.tab === "dashboard") return LayoutDashboard;
+    if (result.tab === "transactions") return Wallet;
+    if (result.tab === "passwords") return KeyRound;
+    if (result.tab === "notes") return NotebookPen;
+    if (result.tab === "accounts") return Landmark;
+    if (result.tab === "budgets") return Target;
+    if (result.tab === "goals") return PiggyBank;
+    if (result.tab === "recurring") return Repeat;
+    return SearchCheck;
+  };
+
   return (
-    <div style={styles.commandOverlay} onMouseDown={onClose}>
-      <div style={styles.commandPanel} onMouseDown={(e) => e.stopPropagation()}>
-        <div style={styles.commandSearchRow}>
-          <Search size={18} color="#777C85" />
+    <div className="universal-search-overlay" onMouseDown={onClose}>
+      <div
+        className="universal-search-panel"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="universal-search-input-row">
+          <Search size={19} color="#737B87" />
           <input
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search Pocket, Passwords & Notes..."
-            style={styles.commandInput}
+            onKeyDown={handleKeyDown}
+            placeholder="Search anything in Pocket..."
+            className="universal-search-input"
+            aria-label="Search everything"
           />
-          <kbd style={styles.commandEsc}>ESC</kbd>
-        </div>
-        <div style={styles.commandLabel}>GO TO</div>
-        {filtered.map(([id, label, Icon]) => (
+          <kbd className="universal-search-kbd">⌘ K</kbd>
           <button
-            key={id}
-            style={styles.commandItem}
-            onClick={() => onNavigate(id)}
+            type="button"
+            className="universal-search-close"
+            onClick={onClose}
+            aria-label="Close search"
           >
-            <span style={styles.commandIcon}>
-              <Icon size={17} />
-            </span>
-            <span style={{ flex: 1 }}>{label}</span>
-            <ChevronRight size={15} color="#666B74" />
+            <X size={15} />
           </button>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ padding: "24px 12px", color: "#666B74", fontSize: 13 }}>
-            Nothing found.
-          </div>
-        )}
+        </div>
+
+        <div className="universal-search-hint">
+          Search transactions, accounts, budgets, goals, recurring entries,
+          private notes, pages and settings.
+        </div>
+
+        <div className="universal-search-results">
+          {displayResults.length === 0 ? (
+            <div className="universal-search-empty">
+              <Search size={20} />
+              <strong>No results found</strong>
+              <span>
+                Try a name, category, note, account, amount or section.
+              </span>
+            </div>
+          ) : (
+            displayResults.map((result, index) => {
+              const Icon = iconFor(result);
+              const previous = filtered[index - 1];
+              const showSection =
+                !previous || previous.section !== result.section;
+
+              return (
+                <React.Fragment key={result.id}>
+                  {showSection && (
+                    <div className="universal-search-section-label">
+                      {result.section}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={`universal-search-result ${index === activeIndex ? "active" : ""}`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => onSelect(result)}
+                  >
+                    <span className="universal-search-result-icon">
+                      <Icon size={17} />
+                    </span>
+                    <span className="universal-search-result-copy">
+                      <strong>{result.title}</strong>
+                      <small>{result.subtitle}</small>
+                    </span>
+                    <ChevronRight size={15} color="#5F6874" />
+                  </button>
+                </React.Fragment>
+              );
+            })
+          )}
+        </div>
+
+        <div className="universal-search-footer">
+          <span>↑↓ Navigate</span>
+          <span>↵ Open</span>
+          <span>ESC Close</span>
+        </div>
       </div>
     </div>
   );
@@ -3120,6 +3505,220 @@ body { overflow-x: hidden; background: #0E1013; }
 .settings-key-row input { width:220px; max-width:36vw; background:#101419; border:1px solid #303742; border-radius:9px; padding:9px 10px; color:#E9E8E3; outline:none; font:12px Inter,sans-serif; }
 .settings-key-row button { border:1px solid #3B854A; border-radius:9px; background:#51D96B; color:#102014; padding:9px 13px; font:600 12px Inter,sans-serif; cursor:pointer; }
 
+
+
+/* ---------- Universal Search ---------- */
+
+.universal-search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(4, 6, 8, .68);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 9vh 18px 24px;
+}
+
+.universal-search-panel {
+  width: min(720px, 100%);
+  max-height: min(720px, 82dvh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #171B21;
+  border: 1px solid #323A46;
+  border-radius: 20px;
+  box-shadow: 0 30px 100px rgba(0,0,0,.62);
+}
+
+.universal-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 66px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid #2A313B;
+}
+
+.universal-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #F2F0EB;
+  font: 500 16px Inter, sans-serif;
+}
+
+.universal-search-input::placeholder {
+  color: #6E7682;
+}
+
+.universal-search-kbd {
+  color: #858D98;
+  background: #202630;
+  border: 1px solid #303844;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: 10px Inter, sans-serif;
+  white-space: nowrap;
+}
+
+.universal-search-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid #303844;
+  background: #1C222A;
+  color: #89929E;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.universal-search-hint {
+  padding: 10px 18px;
+  color: #68717D;
+  font: 11px/1.45 Inter, sans-serif;
+  border-bottom: 1px solid #242B34;
+}
+
+.universal-search-results {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 8px 10px;
+}
+
+.universal-search-section-label {
+  padding: 9px 10px 6px;
+  color: #616A76;
+  font: 700 9px Inter, sans-serif;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.universal-search-result {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #E7E8EA;
+  text-align: left;
+  cursor: pointer;
+}
+
+.universal-search-result.active,
+.universal-search-result:hover {
+  background: #20262F;
+}
+
+.universal-search-result-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #232A34;
+  color: #8ACF99;
+}
+
+.universal-search-result-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.universal-search-result-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #EDECE8;
+  font: 600 13px Inter, sans-serif;
+}
+
+.universal-search-result-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #7D8692;
+  font: 10px/1.35 Inter, sans-serif;
+}
+
+.universal-search-empty {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #6F7884;
+  text-align: center;
+}
+
+.universal-search-empty strong {
+  color: #C8CDD4;
+  font: 600 13px Inter, sans-serif;
+}
+
+.universal-search-empty span {
+  max-width: 300px;
+  font: 11px/1.5 Inter, sans-serif;
+}
+
+.universal-search-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid #292F38;
+  color: #626B77;
+  font: 10px Inter, sans-serif;
+}
+
+@media (max-width: 600px) {
+  .universal-search-overlay {
+    align-items: flex-start;
+    padding: calc(12px + env(safe-area-inset-top)) 10px 12px;
+  }
+
+  .universal-search-panel {
+    width: 100%;
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top));
+    border-radius: 18px;
+  }
+
+  .universal-search-input-row {
+    min-height: 60px;
+    padding-left: 14px;
+  }
+
+  .universal-search-input {
+    font-size: 15px;
+  }
+
+  .universal-search-hint {
+    font-size: 10px;
+    padding: 9px 14px;
+  }
+
+  .universal-search-footer {
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 12px;
+  }
+}
 
 @media (max-width: 1023px) and (min-width: 769px) {
   .ledger-sidebar { width: 210px !important; }
