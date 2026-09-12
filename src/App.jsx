@@ -852,6 +852,7 @@ export default function LedgerApp() {
             balances={accountBalances}
             budgets={budgetStatus}
             goals={goals}
+            recurring={recurring}
             monthIncome={monthIncome}
             monthExpense={monthExpense}
             onAddTxn={() => {
@@ -860,6 +861,10 @@ export default function LedgerApp() {
               setShowTxnForm(true);
             }}
             onViewTransactions={() => setTab("transactions")}
+            onOpenAccounts={() => setTab("accounts")}
+            onOpenBudgets={() => setTab("budgets")}
+            onOpenRecurring={() => setTab("recurring")}
+            onOpenGoals={() => setTab("goals")}
             onScanClick={() => setShowScanModal(true)}
             onEdit={(t) => {
               setEditingTxn(t);
@@ -1542,10 +1547,15 @@ function Dashboard({
   balances,
   budgets,
   goals,
+  recurring,
   monthIncome,
   monthExpense,
   onAddTxn,
   onViewTransactions,
+  onOpenAccounts,
+  onOpenBudgets,
+  onOpenRecurring,
+  onOpenGoals,
   onScanClick,
   onEdit,
 }) {
@@ -1685,7 +1695,12 @@ function Dashboard({
           </ResponsiveContainer>
         </div>
 
-        <div style={styles.widget}>
+        <button
+          type="button"
+          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
+          onClick={onViewTransactions}
+          aria-label="Open spending and transactions"
+        >
           <div style={styles.widgetHeader}>
             <div>
               <div style={styles.widgetTitle}>Spending</div>
@@ -1720,9 +1735,24 @@ function Dashboard({
               </div>
             ))
           )}
-        </div>
+        </button>
 
-        <div style={styles.widget}>
+        <div
+          style={{ ...styles.widget, cursor: "pointer" }}
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            if (e.target.closest("button")) return;
+            onViewTransactions();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onViewTransactions();
+            }
+          }}
+          aria-label="Open recent transactions"
+        >
           <div style={styles.widgetHeader}>
             <div>
               <div style={styles.widgetTitle}>Recent transactions</div>
@@ -1735,20 +1765,26 @@ function Dashboard({
           {transactions.length === 0 ? (
             <EmptyRow text="No entries yet." />
           ) : (
-            transactions
-              .slice(0, 5)
-              .map((t) => (
-                <LedgerRow
-                  key={t.id}
-                  t={t}
-                  accountLabel={accountName(t.accountId)}
-                  onEdit={() => onEdit(t)}
-                />
-              ))
+            transactions.slice(0, 5).map((t) => (
+              <LedgerRow
+                key={t.id}
+                t={t}
+                accountLabel={accountName(t.accountId)}
+                onEdit={(event) => {
+                  event?.stopPropagation?.();
+                  onEdit(t);
+                }}
+              />
+            ))
           )}
         </div>
 
-        <div style={styles.widget}>
+        <button
+          type="button"
+          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
+          onClick={onOpenBudgets}
+          aria-label="Open Budgets"
+        >
           <div style={styles.widgetHeader}>
             <div>
               <div style={styles.widgetTitle}>Budget</div>
@@ -1785,9 +1821,14 @@ function Dashboard({
               <span>{Math.round(b.pct)}%</span>
             </div>
           ))}
-        </div>
+        </button>
 
-        <div style={styles.widget}>
+        <button
+          type="button"
+          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
+          onClick={onOpenAccounts}
+          aria-label="Open Accounts"
+        >
           <div style={styles.widgetHeader}>
             <div>
               <div style={styles.widgetTitle}>Accounts</div>
@@ -1812,9 +1853,14 @@ function Dashboard({
           {accounts.length === 0 && (
             <EmptyRow text="Add an account to see it here." />
           )}
-        </div>
+        </button>
 
-        <div style={styles.widget}>
+        <button
+          type="button"
+          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
+          onClick={onOpenGoals}
+          aria-label="Open Goals"
+        >
           <div style={styles.widgetHeader}>
             <div>
               <div style={styles.widgetTitle}>Goals</div>
@@ -1851,7 +1897,45 @@ function Dashboard({
           {goals.length === 0 && (
             <EmptyRow text="Create your first savings goal." />
           )}
-        </div>
+        </button>
+
+        <button
+          type="button"
+          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
+          onClick={onOpenRecurring}
+          aria-label="Open Recurring"
+        >
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Recurring</div>
+              <div style={styles.widgetSub}>Upcoming scheduled payments</div>
+            </div>
+            <Repeat size={18} color="#707580" />
+          </div>
+          {recurring.slice(0, 4).map((r) => (
+            <div key={r.id} style={styles.goalRow}>
+              <div style={styles.goalLine}>
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {r.name}
+                </span>
+                <span>{fmtINR(Number(r.amount || 0))}</span>
+              </div>
+              <div style={styles.widgetSub}>
+                Next: {r.nextDate || "Not scheduled"}
+              </div>
+            </div>
+          ))}
+          {recurring.length === 0 && (
+            <EmptyRow text="Add a recurring payment to track it here." />
+          )}
+        </button>
       </section>
     </div>
   );
@@ -1997,7 +2081,7 @@ function LedgerRow({ t, accountLabel, onDelete, onEdit }) {
     <div style={styles.ledgerRow}>
       <div
         style={{ flex: 1, minWidth: 0, cursor: onEdit ? "pointer" : "default" }}
-        onClick={onEdit}
+        onClick={(e) => onEdit?.(e)}
       >
         <div style={styles.ledgerCategory}>{t.category}</div>
         <div style={styles.ledgerMeta}>
@@ -2015,12 +2099,26 @@ function LedgerRow({ t, accountLabel, onDelete, onEdit }) {
         {fmtINR(t.amount)}
       </div>
       {onEdit && (
-        <button onClick={onEdit} style={styles.iconBtn} title="Edit">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit?.(e);
+          }}
+          style={styles.iconBtn}
+          title="Edit"
+        >
           <Pencil size={13} />
         </button>
       )}
       {onDelete && (
-        <button onClick={onDelete} style={styles.iconBtn} title="Delete">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete?.(e);
+          }}
+          style={styles.iconBtn}
+          title="Delete"
+        >
           <Trash2 size={14} />
         </button>
       )}
@@ -4715,6 +4813,20 @@ textarea:focus-visible {
     max-width: 100% !important;
   }
 
+  .dashboardLinkWidget {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid #20252D;
+    background: #171A1F;
+    font: inherit;
+  }
+
+  .dashboardLinkWidget:hover {
+    border-color: #313844;
+    background: #191D23;
+    transform: translateY(-1px);
+  }
+
   /* Bottom navigation is independent and never covered by profile UI. */
   .mobile-bottom-nav {
     position: fixed !important;
@@ -4986,7 +5098,16 @@ textarea:focus-visible {
 
   .settings-toggle { width: 51px !important; height: 31px !important; min-width: 51px !important; max-width: 51px !important; align-self: flex-end !important; }
   .theme-picker { width: 100% !important; max-width: none !important; }
-  .theme-picker-menu { top: calc(100% + 7px); }
+  /* On mobile the theme menu stays in normal flow so it never overlaps the next settings row. */
+  .theme-picker-menu {
+    position: static !important;
+    width: 100% !important;
+    margin-top: 8px !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    z-index: auto !important;
+  }
 
   .settings-row-value {
     display: inline-flex !important;
@@ -5646,6 +5767,89 @@ button:not(:disabled):active,
   }
 }
 
+/* Final light-theme contrast fixes for the custom controls. */
+html[data-pocket-theme="light"] .theme-picker-button {
+  background: #F7F8FA !important;
+  border-color: #D7DDE4 !important;
+  color: #20252B !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9) !important;
+}
+html[data-pocket-theme="light"] .theme-picker-button:hover {
+  background: #F0F3F6 !important;
+  border-color: #C8D0D9 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-leading-icon,
+html[data-pocket-theme="light"] .theme-picker-option-icon {
+  background: #EEF2F5 !important;
+  border-color: #D7DDE4 !important;
+  color: #2A9D47 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-copy strong,
+html[data-pocket-theme="light"] .theme-picker-option-copy strong {
+  color: #1E2329 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-copy small,
+html[data-pocket-theme="light"] .theme-picker-option-copy small {
+  color: #68717C !important;
+}
+html[data-pocket-theme="light"] .theme-picker-chevron {
+  color: #66717D !important;
+}
+html[data-pocket-theme="light"] .theme-picker-menu {
+  background: #FFFFFF !important;
+  border-color: #D7DDE4 !important;
+  box-shadow: 0 18px 46px rgba(30,38,48,.18), 0 3px 12px rgba(30,38,48,.08) !important;
+}
+html[data-pocket-theme="light"] .theme-picker-option {
+  color: #252B31 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-option:hover,
+html[data-pocket-theme="light"] .theme-picker-option.active {
+  background: #F0F5F1 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-option.active .theme-picker-option-icon {
+  background: #E8F5EB !important;
+  border-color: #BFE2C7 !important;
+  color: #188A36 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-check {
+  color: #188A36 !important;
+}
+html[data-pocket-theme="light"] .theme-picker-option:active,
+html[data-pocket-theme="light"] .theme-picker-button:active {
+  background: #E9EEF2 !important;
+}
+@media (max-width: 768px) {
+  /* Mobile dashboard: avoid CSS-grid row stretching that creates blank space beside
+     taller widgets. Keep Spending and Recent transactions readable at full width,
+     then return to the compact two-column layout for the smaller cards. */
+  .widget-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    align-items: start !important;
+    gap: 12px !important;
+  }
+
+  .widget-grid > * {
+    min-width: 0 !important;
+    align-self: start !important;
+  }
+
+  .widget-grid > :nth-child(2),
+  .widget-grid > :nth-child(3) {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+
+  .widget-grid > :nth-child(4),
+  .widget-grid > :nth-child(5),
+  .widget-grid > :nth-child(6),
+  .widget-grid > :nth-child(7) {
+    grid-column: auto !important;
+    width: 100% !important;
+  }
+}
+
 `;
 
 const styles = {
@@ -5951,6 +6155,14 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "repeat(3,minmax(0,1fr))",
     gap: 14,
+  },
+  dashboardLinkWidget: {
+    width: "100%",
+    textAlign: "left",
+    color: "inherit",
+    cursor: "pointer",
+    transition:
+      "transform 160ms ease, border-color 160ms ease, background 160ms ease",
   },
   widget: {
     border: "1px solid #292D35",
