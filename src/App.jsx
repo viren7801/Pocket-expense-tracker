@@ -61,6 +61,7 @@ import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
 import NotesView from "./NotesView";
 import ShareView from "./ShareView";
+import RemindersView from "./RemindersView";
 
 const SEED_CATEGORIES = {
   income: ["Salary", "Business", "Freelance", "Investment", "Other Income"],
@@ -169,6 +170,7 @@ export default function LedgerApp() {
   const [budgets, setBudgets] = useState([]);
   const [goals, setGoals] = useState([]);
   const [recurring, setRecurring] = useState([]);
+  const [reminders, setReminders] = useState([]);
   const [categories, setCategories] = useState(SEED_CATEGORIES);
   const [passwordVault, setPasswordVault] = useState(null);
   const [notesVault, setNotesVault] = useState(null);
@@ -202,6 +204,7 @@ export default function LedgerApp() {
           setBudgets(data.budgets || []);
           setGoals(data.goals || []);
           setRecurring(data.recurring || []);
+          setReminders(data.reminders || []);
           setCategories(data.categories || SEED_CATEGORIES);
           setPasswordVault(data.passwordVault || null);
           setNotesVault(data.notesVault || null);
@@ -345,6 +348,7 @@ export default function LedgerApp() {
           budgets,
           goals,
           recurring,
+          reminders,
           categories,
           passwordVault,
           notesVault,
@@ -360,6 +364,7 @@ export default function LedgerApp() {
     budgets,
     goals,
     recurring,
+    reminders,
     categories,
     passwordVault,
     notesVault,
@@ -440,10 +445,48 @@ export default function LedgerApp() {
     (id) => setRecurring((prev) => prev.filter((r) => r.id !== id)),
     [],
   );
+  const addReminder = useCallback((reminder) => {
+    const normalized = {
+      ...reminder,
+      id: uid(),
+      completed: Boolean(reminder.completed),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    setReminders((prev) => [...prev, normalized]);
+  }, []);
+
+  const updateReminder = useCallback((id, reminder) => {
+    setReminders((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? { ...item, ...reminder, id, updatedAt: new Date().toISOString() }
+          : item,
+      ),
+    );
+  }, []);
+
+  const deleteReminder = useCallback((id) => {
+    setReminders((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const toggleReminderComplete = useCallback((id) => {
+    setReminders((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              completed: !item.completed,
+              updatedAt: new Date().toISOString(),
+            }
+          : item,
+      ),
+    );
+  }, []);
 
   const exportBackup = useCallback(() => {
     const payload = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       data: {
         accounts,
@@ -451,6 +494,7 @@ export default function LedgerApp() {
         budgets,
         goals,
         recurring,
+        reminders,
         categories,
         passwordVault,
         notesVault,
@@ -477,6 +521,7 @@ export default function LedgerApp() {
     budgets,
     goals,
     recurring,
+    reminders,
     categories,
     passwordVault,
     notesVault,
@@ -500,6 +545,7 @@ export default function LedgerApp() {
         setBudgets(data.budgets || []);
         setGoals(data.goals || []);
         setRecurring(data.recurring || []);
+        setReminders(data.reminders || []);
         setCategories(data.categories || SEED_CATEGORIES);
         setPasswordVault(data.passwordVault || null);
         setNotesVault(data.notesVault || null);
@@ -522,6 +568,7 @@ export default function LedgerApp() {
         budgets: [],
         goals: [],
         recurring: [],
+        reminders: [],
         categories: SEED_CATEGORIES,
         passwordVault: null,
         notesVault: null,
@@ -531,6 +578,7 @@ export default function LedgerApp() {
       setBudgets([]);
       setGoals([]);
       setRecurring([]);
+      setReminders([]);
       setCategories(SEED_CATEGORIES);
       setPasswordVault(null);
       setNotesVault(null);
@@ -853,6 +901,7 @@ export default function LedgerApp() {
             budgets={budgetStatus}
             goals={goals}
             recurring={recurring}
+            reminders={reminders}
             monthIncome={monthIncome}
             monthExpense={monthExpense}
             onAddTxn={() => {
@@ -865,6 +914,7 @@ export default function LedgerApp() {
             onOpenBudgets={() => setTab("budgets")}
             onOpenRecurring={() => setTab("recurring")}
             onOpenGoals={() => setTab("goals")}
+            onOpenReminders={() => setTab("reminders")}
             onScanClick={() => setShowScanModal(true)}
             onEdit={(t) => {
               setEditingTxn(t);
@@ -904,6 +954,15 @@ export default function LedgerApp() {
             onAdd={() => setShowGoalForm(true)}
             onContribute={contributeGoal}
             onDelete={deleteGoal}
+          />
+        )}
+        {tab === "reminders" && (
+          <RemindersView
+            reminders={reminders}
+            onCreate={addReminder}
+            onUpdate={updateReminder}
+            onDelete={deleteReminder}
+            onToggleComplete={toggleReminderComplete}
           />
         )}
         {tab === "passwords" && (
@@ -1045,6 +1104,7 @@ function Sidebar({ tab, setTab, onProfileClick }) {
   const primary = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, key: "D" },
     { id: "transactions", label: "Pocket", icon: Wallet, key: "P" },
+    { id: "reminders", label: "Reminders", icon: Bell, key: "M" },
     { id: "passwords", label: "Passwords", icon: KeyRound, key: "W" },
     { id: "notes", label: "Notes", icon: NotebookPen, key: "N" },
   ];
@@ -1443,6 +1503,7 @@ function CommandPalette({ onClose, onNavigate }) {
   const items = [
     ["dashboard", "Dashboard", LayoutDashboard],
     ["transactions", "Pocket", Wallet],
+    ["reminders", "Reminders", Bell],
     ["passwords", "Passwords", KeyRound],
     ["notes", "Notes", NotebookPen],
     ["accounts", "Accounts", Landmark],
@@ -1548,6 +1609,7 @@ function Dashboard({
   budgets,
   goals,
   recurring,
+  reminders,
   monthIncome,
   monthExpense,
   onAddTxn,
@@ -1556,6 +1618,7 @@ function Dashboard({
   onOpenBudgets,
   onOpenRecurring,
   onOpenGoals,
+  onOpenReminders,
   onScanClick,
   onEdit,
 }) {
@@ -1934,6 +1997,50 @@ function Dashboard({
           ))}
           {recurring.length === 0 && (
             <EmptyRow text="Add a recurring payment to track it here." />
+          )}
+        </button>
+
+        <button
+          type="button"
+          className="dashboard-reminders-card"
+          style={{
+            ...styles.widget,
+            ...styles.dashboardLinkWidget,
+            gridColumn: "1 / -1",
+          }}
+          onClick={onOpenReminders}
+          aria-label="Open Reminders"
+        >
+          <div style={styles.widgetHeader}>
+            <div>
+              <div style={styles.widgetTitle}>Reminders</div>
+              <div style={styles.widgetSub}>
+                Upcoming things you do not want to miss
+              </div>
+            </div>
+            <Bell size={18} color="#707580" />
+          </div>
+          {reminders
+            .filter((r) => !r.completed)
+            .sort((a, b) =>
+              `${a.date}T${a.time || "23:59"}`.localeCompare(
+                `${b.date}T${b.time || "23:59"}`,
+              ),
+            )
+            .slice(0, 4)
+            .map((r) => (
+              <div key={r.id} style={styles.reminderDashboardRow}>
+                <span style={styles.reminderDashboardDot} />
+                <span style={styles.reminderDashboardTitle}>{r.title}</span>
+                <span style={styles.reminderDashboardDate}>
+                  {r.date}
+                  {r.time ? ` · ${r.time}` : ""}
+                </span>
+                <ChevronRight size={15} color="#626A75" />
+              </div>
+            ))}
+          {reminders.filter((r) => !r.completed).length === 0 && (
+            <EmptyRow text="Create a reminder from the calendar." />
           )}
         </button>
       </section>
@@ -3409,6 +3516,7 @@ function GlobalSettingsModal({
                     <option value="budgets">Budgets</option>
                     <option value="goals">Goals</option>
                     <option value="recurring">Recurring</option>
+                    <option value="reminders">Reminders</option>
                     <option value="passwords">Passwords</option>
                     <option value="notes">Notes</option>
                   </select>
@@ -6222,6 +6330,34 @@ const styles = {
     fontSize: 10,
     color: "#D8D5CE",
     textAlign: "right",
+  },
+  reminderDashboardRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    padding: "10px 0",
+    borderBottom: "1px solid #23272F",
+  },
+  reminderDashboardDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "#4FE36B",
+    flexShrink: 0,
+  },
+  reminderDashboardTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: "#E4E7EB",
+    fontSize: 11,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  reminderDashboardDate: {
+    color: "#858D98",
+    fontSize: 10,
+    whiteSpace: "nowrap",
   },
   ledgerRow: {
     display: "flex",

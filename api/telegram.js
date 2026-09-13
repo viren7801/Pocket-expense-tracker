@@ -114,6 +114,11 @@ function nextRecurringDate(
     return nextWeeklyDate(value, recurrenceDays);
   }
 
+  if (recurrence === "yearly") {
+    date.setUTCFullYear(date.getUTCFullYear() + 1);
+    return date.toISOString();
+  }
+
   if (recurrence === "monthly") {
     const targetDay = Math.min(
       31,
@@ -565,10 +570,15 @@ export default async function handler(req, res) {
           /*
            * Send Telegram message.
            */
+          const isPocketReminder = String(reminder.id || "").startsWith("r:");
+          const reminderPrefix = isPocketReminder
+            ? "🔔 Pocket reminder"
+            : "🔔 Pocket Notes reminder";
+
           await telegramRequest("sendMessage", {
             chat_id: connection.chat_id,
 
-            text: `🔔 Pocket Notes reminder\n\n${reminder.title}\n\nNeed more time?`,
+            text: `${reminderPrefix}\n\n${reminder.title}\n\nNeed more time?`,
 
             reply_markup: {
               inline_keyboard: [
@@ -885,6 +895,144 @@ export default async function handler(req, res) {
 
     /*
      * =========================================================
+     * SCHEDULE STANDALONE POCKET REMINDER
+     * =========================================================
+     */
+
+    if (action === "schedule-pocket-reminder") {
+      if (req.method !== "POST") {
+        return json(res, 405, { error: "Method not allowed" });
+      }
+
+      const body = await readJsonBody(req);
+      const reminderId =
+        typeof body.reminderId === "string" ? body.reminderId.trim() : "";
+      const title = typeof body.title === "string" ? body.title.trim() : "";
+      const reminderAt =
+        typeof body.reminderAt === "string" ? body.reminderAt : "";
+      const repeat = typeof body.repeat === "string" ? body.repeat : "none";
+      const recurrenceDays = normalizeDays(body.recurrenceDays);
+      const recurrenceDay =
+        body.recurrenceDay == null || body.recurrenceDay === ""
+          ? null
+          : Number(body.recurrenceDay);
+
+      if (!reminderId || !title || !reminderAt) {
+        return json(res, 400, { error: "Reminder data is incomplete" });
+      }
+
+      const reminderDate = new Date(reminderAt);
+      if (Number.isNaN(reminderDate.getTime())) {
+        return json(res, 400, { error: "Invalid reminder date" });
+      }
+      if (reminderDate.getTime() <= Date.now()) {
+        return json(res, 400, { error: "Choose a future reminder time" });
+      }
+
+      const allowedRepeats = new Set([
+        "none",
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly",
+      ]);
+      const recurrence = allowedRepeats.has(repeat) ? repeat : "none";
+      const normalizedDays =
+        recurrence === "weekly" && recurrenceDays.length
+          ? recurrenceDays
+          : recurrence === "weekly"
+            ? [reminderDate.getUTCDay()]
+            : [];
+      const normalizedDay =
+        recurrence === "monthly"
+          ? Math.min(
+              31,
+              Math.max(1, Number(recurrenceDay || reminderDate.getUTCDate())),
+            )
+          : null;
+
+      const { data: connection } = await supabase
+        .from("telegram_connection")
+        .select("chat_id")
+        .eq("id", "main")
+        .maybeSingle();
+
+      if (!connection?.chat_id) {
+        return json(res, 409, { error: "Telegram is not connected" });
+      }
+
+      const storageId = `r:${reminderId}`;
+
+      const { data: reminder, error } = await supabase
+        .from("telegram_reminder")
+        .upsert(
+          {
+            id: storageId,
+            note_id: reminderId,
+            title,
+            reminder_at: reminderDate.toISOString(),
+            recurrence,
+            recurrence_day: normalizedDay,
+            recurrence_days: normalizedDays,
+            recurrence_interval: null,
+            recurrence_unit: null,
+            status: "pending",
+            sent_at: null,
+            locked_at: null,
+            attempts: 0,
+            last_error: null,
+          },
+          { onConflict: "id" },
+        )
+        .select(
+          "id, note_id, title, reminder_at, recurrence, recurrence_day, recurrence_days, status",
+        )
+        .single();
+
+      if (error) throw error;
+
+      await logReminderHistory(supabase, {
+        reminderId: storageId,
+        noteId: reminderId,
+        title,
+        action: "scheduled",
+        detail: `Pocket reminder · ${recurrence}`,
+      });
+
+      return json(res, 200, { scheduled: true, reminder });
+    }
+
+    /*
+     * =========================================================
+     * CANCEL STANDALONE POCKET REMINDER
+     * =========================================================
+     */
+
+    if (action === "cancel-pocket-reminder") {
+      if (req.method !== "POST") {
+        return json(res, 405, { error: "Method not allowed" });
+      }
+
+      const body = await readJsonBody(req);
+      const reminderId =
+        typeof body.reminderId === "string" ? body.reminderId.trim() : "";
+
+      if (!reminderId) {
+        return json(res, 400, { error: "Reminder id is required" });
+      }
+
+      const { error } = await supabase
+        .from("telegram_reminder")
+        .delete()
+        .eq("id", `r:${reminderId}`);
+
+      if (error) throw error;
+
+      return json(res, 200, { cancelled: true });
+    }
+
+    /*
+     * =========================================================
      * SCHEDULE TELEGRAM REMINDER
      * =========================================================
      */
@@ -910,6 +1058,7 @@ export default async function handler(req, res) {
         "daily",
         "weekly",
         "monthly",
+        "yearly",
         "custom",
       ]);
 
