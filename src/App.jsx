@@ -56,6 +56,10 @@ import {
   Tags,
   Database,
   SlidersHorizontal,
+  Image as ImageIcon,
+  RotateCcw,
+  Check,
+  GripVertical,
 } from "lucide-react";
 import { scanReceipt } from "./receiptScan";
 import PasswordsView from "./PasswordsView";
@@ -105,6 +109,106 @@ function setPocketPreference(key, value) {
 
 function getPocketBool(key, fallback = false) {
   return getPocketPreference(key, fallback ? "1" : "0") === "1";
+}
+
+const BUILT_IN_WALLPAPERS = [
+  {
+    id: "mountain",
+    name: "Mountain",
+    category: "Nature",
+    value:
+      "url(https://images.unsplash.com/photo-1500534623283-312aade485b7?auto=format&fit=crop&w=2200&q=88)",
+  },
+  {
+    id: "forest",
+    name: "Forest",
+    category: "Nature",
+    value:
+      "url(https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=2200&q=88)",
+  },
+  {
+    id: "city",
+    name: "City",
+    category: "City",
+    value:
+      "url(https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=2200&q=88)",
+  },
+  {
+    id: "beach",
+    name: "Beach",
+    category: "Nature",
+    value:
+      "url(https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2200&q=88)",
+  },
+  {
+    id: "dark",
+    name: "Dark",
+    category: "Minimal",
+    value: "linear-gradient(145deg,#10151D 0%,#07090D 55%,#1B2430 100%)",
+  },
+  {
+    id: "abstract",
+    name: "Abstract",
+    category: "Abstract",
+    value: "linear-gradient(135deg,#182A66 0%,#6A2C70 45%,#F0A65E 100%)",
+  },
+  {
+    id: "aurora",
+    name: "Aurora",
+    category: "Nature",
+    value: "linear-gradient(135deg,#0B1724 0%,#164C4F 40%,#5A3B80 100%)",
+  },
+  {
+    id: "minimal-light",
+    name: "Light",
+    category: "Minimal",
+    value: "linear-gradient(135deg,#E9EEF6 0%,#F7F2E9 55%,#DCEAF1 100%)",
+  },
+];
+
+const DEFAULT_BACKGROUND_SETTINGS = {
+  source: "builtIn",
+  wallpaperId: "mountain",
+  image: null,
+  blur: 6,
+  transparency: 64,
+  overlay: 20,
+  fit: "cover",
+  imageName: "",
+};
+
+function readBackgroundSettings() {
+  try {
+    const raw = window.localStorage.getItem("pocket_background_settings");
+    return raw
+      ? { ...DEFAULT_BACKGROUND_SETTINGS, ...JSON.parse(raw) }
+      : DEFAULT_BACKGROUND_SETTINGS;
+  } catch {
+    return DEFAULT_BACKGROUND_SETTINGS;
+  }
+}
+
+function compressImageFile(file, maxSize = 2200) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read image"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Canvas unavailable"));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.84));
+      };
+      img.onerror = () => reject(new Error("Invalid image"));
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function fmtINR(n) {
@@ -191,6 +295,11 @@ export default function LedgerApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("general");
   const [preferenceTick, setPreferenceTick] = useState(0);
+  const [backgroundSettings, setBackgroundSettings] = useState(() =>
+    readBackgroundSettings(),
+  );
+  const [backgroundOpen, setBackgroundOpen] = useState(false);
+  const backgroundUploadRef = useRef(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [editingTxn, setEditingTxn] = useState(null);
@@ -276,6 +385,118 @@ export default function LedgerApp() {
       window.removeEventListener("pocket:open-global-settings", open);
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "pocket_background_settings",
+        JSON.stringify(backgroundSettings),
+      );
+    } catch {}
+  }, [backgroundSettings]);
+
+  useEffect(() => {
+    const onOpenBackground = () => setBackgroundOpen(true);
+    window.addEventListener("pocket:open-background", onOpenBackground);
+    return () =>
+      window.removeEventListener("pocket:open-background", onOpenBackground);
+  }, []);
+
+  useEffect(() => {
+    if (!backgroundOpen) return;
+    const onKey = (event) => {
+      if (event.key === "Escape") setBackgroundOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [backgroundOpen]);
+
+  useEffect(() => {
+    try {
+      document.documentElement.style.setProperty(
+        "--pocket-bg-image",
+        backgroundCss(backgroundSettings),
+      );
+      document.documentElement.style.setProperty(
+        "--pocket-bg-blur",
+        `${backgroundSettings.blur}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--pocket-bg-opacity",
+        `${Math.max(0.2, backgroundSettings.transparency / 100)}`,
+      );
+      document.documentElement.style.setProperty(
+        "--pocket-bg-overlay",
+        String(Math.max(0, Math.min(100, backgroundSettings.overlay)) / 100),
+      );
+      document.documentElement.style.setProperty(
+        "--pocket-bg-size",
+        backgroundSettings.fit === "contain" ? "contain" : "cover",
+      );
+    } catch {}
+  }, [backgroundSettings]);
+
+  useEffect(() => {
+    if (!backgroundOpen) return;
+    const onPointerDown = (event) => {
+      if (event.target.closest?.(".background-drawer")) return;
+      if (event.target.closest?.(".background-open-trigger")) return;
+      setBackgroundOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [backgroundOpen]);
+
+  useEffect(() => {
+    // Keep the wallpaper selector accessible from Appearance settings as well.
+    const onAppearanceBackground = () => setBackgroundOpen(true);
+    window.addEventListener(
+      "pocket:open-background-picker",
+      onAppearanceBackground,
+    );
+    return () =>
+      window.removeEventListener(
+        "pocket:open-background-picker",
+        onAppearanceBackground,
+      );
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("pocket_background_settings");
+      if (raw)
+        setBackgroundSettings({
+          ...DEFAULT_BACKGROUND_SETTINGS,
+          ...JSON.parse(raw),
+        });
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const applyBackgroundClass = () => {
+      document.body.classList.add("pocket-has-wallpaper");
+    };
+    applyBackgroundClass();
+    return () => document.body.classList.remove("pocket-has-wallpaper");
+  }, []);
+
+  useEffect(() => {
+    if (!backgroundOpen) return;
+    const onTouchMove = (event) => {
+      if (event.target.closest?.(".background-drawer")) return;
+      event.preventDefault();
+    };
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => document.removeEventListener("touchmove", onTouchMove);
+  }, [backgroundOpen]);
+
+  useEffect(() => {
+    if (!backgroundOpen) return;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [backgroundOpen]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -906,8 +1127,21 @@ export default function LedgerApp() {
     );
   }
 
+  const activeWallpaper = resolveBackgroundValue(backgroundSettings);
+
   return (
-    <div style={styles.app} className="ledger-app">
+    <div
+      style={{
+        ...styles.app,
+        "--pocket-bg-image": activeWallpaper,
+        "--pocket-bg-blur": `${backgroundSettings.blur}px`,
+        "--pocket-bg-opacity": `${Math.max(0.2, backgroundSettings.transparency / 100)}`,
+        "--pocket-bg-overlay": `${Math.max(0, Math.min(100, backgroundSettings.overlay)) / 100}`,
+        "--pocket-bg-size":
+          backgroundSettings.fit === "contain" ? "contain" : "cover",
+      }}
+      className="ledger-app pocket-glass-app"
+    >
       <style>{fontImports + settingsCss}</style>
       <Sidebar tab={tab} setTab={setTab} onProfileClick={toggleProfileMenu} />
       <main style={styles.main}>
@@ -926,8 +1160,17 @@ export default function LedgerApp() {
           onScanClick={() => setShowScanModal(true)}
           onProfileClick={toggleProfileMenu}
           onOpenSettings={openSettings}
+          onOpenBackground={() => setBackgroundOpen(true)}
           saveError={saveError}
         />
+        {backgroundOpen && (
+          <BackgroundCustomization
+            settings={backgroundSettings}
+            onChange={setBackgroundSettings}
+            onClose={() => setBackgroundOpen(false)}
+            uploadRef={backgroundUploadRef}
+          />
+        )}
         <ProfileMenu
           open={profileMenuOpen}
           anchor={profileAnchor}
@@ -954,6 +1197,7 @@ export default function LedgerApp() {
             onImportCSV={() => fileInputRef.current?.click()}
             onRestoreBackup={restoreBackup}
             onClearAllData={clearAllData}
+            onOpenBackground={() => setBackgroundOpen(true)}
           />
         )}
         <input
@@ -1179,6 +1423,329 @@ export default function LedgerApp() {
   );
 }
 
+function resolveBackgroundValue(settings) {
+  if (settings?.source === "upload" && settings?.image) {
+    return `url(${JSON.stringify(settings.image)})`;
+  }
+  return (
+    BUILT_IN_WALLPAPERS.find((item) => item.id === settings?.wallpaperId)
+      ?.value || BUILT_IN_WALLPAPERS[0].value
+  );
+}
+
+function backgroundCss(settings) {
+  return resolveBackgroundValue(settings);
+}
+
+function BackgroundCustomization({ settings, onChange, onClose, uploadRef }) {
+  const [tab, setTab] = useState("wallpapers");
+  const [category, setCategory] = useState("All");
+  const [draft, setDraft] = useState(settings);
+
+  useEffect(() => setDraft(settings), [settings]);
+
+  const update = (patch) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onChange(next);
+  };
+
+  const categories = ["All", "Nature", "City", "Minimal", "Abstract"];
+  const visibleWallpapers = BUILT_IN_WALLPAPERS.filter((wallpaper) => {
+    if (category === "All") return true;
+    return wallpaper.category === category;
+  });
+
+  const handleUpload = async (file) => {
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageFile(file);
+      update({ source: "upload", image: dataUrl, imageName: file.name });
+      setTab("upload");
+    } catch {
+      alert(
+        "Could not use that image. Please choose a JPG, PNG, or WEBP photo.",
+      );
+    }
+  };
+
+  const currentCss = resolveBackgroundValue(draft);
+
+  return (
+    <>
+      <div className="background-overlay" aria-hidden="true" />
+      <aside
+        className="background-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Background customization"
+      >
+        <div className="background-drawer-header">
+          <div>
+            <div className="background-drawer-eyebrow">PERSONALIZE</div>
+            <h2>Background Customization</h2>
+            <p>Make Pocket feel like your space.</p>
+          </div>
+          <button
+            className="background-close"
+            onClick={onClose}
+            aria-label="Close background editor"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="background-tabs" role="tablist">
+          {[
+            ["wallpapers", "Wallpapers", ImageIcon],
+            ["colors", "Colors", Palette],
+            ["upload", "Upload", Upload],
+            ["advanced", "Advanced", SlidersHorizontal],
+          ].map(([id, label, Icon]) => (
+            <button
+              key={id}
+              className={tab === id ? "active" : ""}
+              onClick={() => setTab(id)}
+              role="tab"
+              aria-selected={tab === id}
+            >
+              <Icon size={15} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {tab === "wallpapers" && (
+          <div className="background-panel-scroll">
+            <div className="background-section-title-row">
+              <div>
+                <strong>Built-in wallpapers</strong>
+                <span>Choose from Pocket's collection</span>
+              </div>
+              <span className="background-live-pill">
+                <span />
+                Live
+              </span>
+            </div>
+
+            <div className="background-category-row">
+              {categories.map((item) => (
+                <button
+                  key={item}
+                  className={category === item ? "active" : ""}
+                  onClick={() => setCategory(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            <div className="background-wallpaper-grid">
+              {visibleWallpapers.map((wallpaper) => (
+                <button
+                  key={wallpaper.id}
+                  className={`background-wallpaper-card ${draft.source === "builtIn" && draft.wallpaperId === wallpaper.id ? "active" : ""}`}
+                  onClick={() =>
+                    update({
+                      source: "builtIn",
+                      wallpaperId: wallpaper.id,
+                      image: null,
+                      imageName: "",
+                    })
+                  }
+                >
+                  <span
+                    className="background-wallpaper-preview"
+                    style={{ backgroundImage: wallpaper.value }}
+                  />
+                  <span className="background-wallpaper-meta">
+                    <span>{wallpaper.name}</span>
+                    {draft.source === "builtIn" &&
+                    draft.wallpaperId === wallpaper.id ? (
+                      <Check size={14} />
+                    ) : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div
+              className="background-preview-card"
+              style={{ backgroundImage: currentCss }}
+            >
+              <div className="background-preview-glass">
+                <span>Live Preview</span>
+                <strong>Good Morning, Viren! 👋</strong>
+                <small>Cards update as you move the sliders.</small>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "colors" && (
+          <div className="background-panel-scroll">
+            <div className="background-section-title-row">
+              <div>
+                <strong>Glass tint</strong>
+                <span>Choose a subtle color wash over your wallpaper.</span>
+              </div>
+            </div>
+            <div className="background-color-swatches">
+              {[
+                "rgba(255,255,255,.06)",
+                "rgba(91,116,255,.10)",
+                "rgba(104,214,160,.10)",
+                "rgba(255,182,108,.10)",
+                "rgba(219,130,255,.10)",
+                "rgba(30,35,45,.16)",
+              ].map((color, index) => (
+                <button
+                  key={index}
+                  onClick={() =>
+                    update({ overlay: [12, 18, 16, 18, 20, 34][index] })
+                  }
+                  style={{ background: color }}
+                  className={index === 0 && draft.overlay <= 15 ? "active" : ""}
+                >
+                  <span />
+                </button>
+              ))}
+            </div>
+            <div className="background-color-note">
+              Tint is layered behind the glass cards so text stays crisp.
+            </div>
+          </div>
+        )}
+
+        {tab === "upload" && (
+          <div className="background-panel-scroll">
+            <div
+              className="background-upload-zone"
+              onClick={() => uploadRef.current?.click()}
+            >
+              <div className="background-upload-icon">
+                <Upload size={22} />
+              </div>
+              <strong>
+                {draft.source === "upload" && draft.image
+                  ? "Change wallpaper"
+                  : "Upload wallpaper"}
+              </strong>
+              <span>Choose a photo from your gallery or drag it here.</span>
+              <small>JPG, PNG, WEBP · optimized automatically</small>
+              {draft.source === "upload" && draft.imageName ? (
+                <em>{draft.imageName}</em>
+              ) : null}
+            </div>
+            <input
+              ref={uploadRef}
+              type="file"
+              accept="image/*"
+              className="background-hidden-file"
+              onChange={(e) => {
+                handleUpload(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+            <button
+              className="background-gallery-btn"
+              onClick={() => uploadRef.current?.click()}
+            >
+              <ImageIcon size={16} /> Choose from Gallery
+            </button>
+          </div>
+        )}
+
+        {tab === "advanced" && (
+          <div className="background-panel-scroll">
+            <GlassSlider
+              label="Background blur"
+              value={draft.blur}
+              suffix="px"
+              min={0}
+              max={24}
+              step={1}
+              onChange={(value) => update({ blur: value })}
+            />
+            <GlassSlider
+              label="Card transparency"
+              value={draft.transparency}
+              suffix="%"
+              min={35}
+              max={88}
+              step={1}
+              onChange={(value) => update({ transparency: value })}
+            />
+            <GlassSlider
+              label="Dark overlay"
+              value={draft.overlay}
+              suffix="%"
+              min={0}
+              max={50}
+              step={1}
+              onChange={(value) => update({ overlay: value })}
+            />
+            <div className="background-setting-row">
+              <div>
+                <strong>Image fit</strong>
+                <span>How uploaded wallpapers fill the space.</span>
+              </div>
+              <select
+                value={draft.fit}
+                onChange={(e) => update({ fit: e.target.value })}
+              >
+                <option value="cover">Fill screen</option>
+                <option value="contain">Fit inside</option>
+              </select>
+            </div>
+            <div className="background-setting-tip">
+              <SlidersHorizontal size={16} />
+              Changes are applied instantly and saved on this device.
+            </div>
+          </div>
+        )}
+
+        <div className="background-drawer-footer">
+          <button
+            className="background-reset-btn"
+            onClick={() => {
+              setDraft(DEFAULT_BACKGROUND_SETTINGS);
+              onChange(DEFAULT_BACKGROUND_SETTINGS);
+            }}
+          >
+            <RotateCcw size={15} /> Reset
+          </button>
+          <button className="background-apply-btn" onClick={onClose}>
+            <Check size={15} /> Apply
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function GlassSlider({ label, value, suffix, min, max, step, onChange }) {
+  return (
+    <div className="glass-slider-row">
+      <div className="glass-slider-copy">
+        <strong>{label}</strong>
+        <span>
+          {Math.round(value)}
+          {suffix}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </div>
+  );
+}
+
 /* ---------- Layout ---------- */
 
 function Sidebar({ tab, setTab, onProfileClick }) {
@@ -1312,6 +1879,7 @@ function TopBar({
   onScanClick,
   onProfileClick,
   onOpenSettings,
+  onOpenBackground,
   saveError,
 }) {
   return (
@@ -1325,13 +1893,22 @@ function TopBar({
           </div>
           <div className="mobile-subtitle">Here's your overview</div>
         </div>
-        <button
-          className="mobile-avatar-button"
-          onClick={onProfileClick}
-          aria-label="Open profile"
-        >
-          V
-        </button>
+        <div className="mobile-dashboard-actions">
+          <button
+            className="mobile-background-button background-open-trigger"
+            onClick={onOpenBackground}
+            aria-label="Customize background"
+          >
+            <ImageIcon size={18} />
+          </button>
+          <button
+            className="mobile-avatar-button"
+            onClick={onProfileClick}
+            aria-label="Open profile"
+          >
+            V
+          </button>
+        </div>
       </div>
 
       <button
@@ -1346,6 +1923,14 @@ function TopBar({
       </button>
 
       <div style={styles.topActions} className="desktop-top-actions">
+        <button
+          style={styles.iconTopBtn}
+          className="background-open-trigger"
+          title="Customize background"
+          onClick={onOpenBackground}
+        >
+          <ImageIcon size={17} />
+        </button>
         <button
           style={styles.iconTopBtn}
           title="Command center"
@@ -1709,607 +2294,810 @@ function Dashboard({
     totalBudget > 0
       ? Math.min(100, Math.round((totalSpent / totalBudget) * 100))
       : 0;
-  const maxCategory = categoryBreakdown[0]?.amount || 1;
 
-  return (
-    <div style={styles.dashboardPage} className="ledger-page">
-      <section style={styles.heroGrid} className="hero-grid">
-        <div style={styles.netWorthCard}>
-          <div style={styles.cardEyebrow}>NET WORTH</div>
-          <div style={styles.netWorthValue}>
-            {fmtINR(Object.values(balances).reduce((a, b) => a + b, 0))}
-          </div>
-          <div style={styles.netWorthTrend}>
-            <ArrowUpRight size={14} />{" "}
-            {savingsRate !== null
-              ? `${Math.max(0, savingsRate)}% saved this month`
-              : "Start tracking to see your trend"}
-          </div>
-          <div style={styles.sparkline}>
-            {netWorthTrend.length > 1 ? (
-              netWorthTrend.map((p, i) => {
-                const min = Math.min(...netWorthTrend.map((x) => x.value));
-                const max = Math.max(...netWorthTrend.map((x) => x.value));
-                const x = (i / (netWorthTrend.length - 1)) * 100;
-                const y =
-                  max === min ? 45 : 86 - ((p.value - min) / (max - min)) * 65;
-                return (
-                  <div
-                    key={i}
-                    style={{ ...styles.sparkDot, left: `${x}%`, top: `${y}%` }}
-                  />
-                );
-              })
-            ) : (
-              <div style={styles.sparkEmpty}>
-                Add more entries to build your trend.
-              </div>
-            )}
-          </div>
-        </div>
+  const upcomingReminders = useMemo(
+    () =>
+      reminders
+        .filter((r) => !r.completed)
+        .sort((a, b) =>
+          `${a.date}T${a.time || "23:59"}`.localeCompare(
+            `${b.date}T${b.time || "23:59"}`,
+          ),
+        )
+        .slice(0, 6),
+    [reminders],
+  );
 
-        <div style={styles.monthCard}>
-          <div style={styles.cardHeader}>
-            <div>
-              <div style={styles.cardEyebrow}>THIS MONTH</div>
-              <div style={styles.monthTitle}>Cash flow</div>
-            </div>
-            <CalendarDays size={18} color="#777C85" />
-          </div>
-          <div style={styles.metricRows}>
-            <div>
-              <span>Income</span>
-              <strong style={{ color: "#4FE36B" }}>
-                {fmtINR(monthIncome)}
+  const budgetRemaining = Math.max(0, totalBudget - totalSpent);
+  const today = new Date();
+  const todayLong = new Intl.DateTimeFormat("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(today);
+
+  const formatReminderDay = (dateValue) => {
+    if (!dateValue) return "";
+    const d = new Date(`${dateValue}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return dateValue;
+    const day = new Intl.DateTimeFormat("en-IN", {
+      day: "numeric",
+      month: "short",
+    }).format(d);
+    const todayKey = today.toISOString().slice(0, 10);
+    if (dateValue === todayKey) return "Today";
+    return day;
+  };
+
+  const formatReminderTime = (timeValue) => {
+    if (!timeValue) return "Any time";
+    const [hours, minutes] = String(timeValue).split(":").map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return timeValue;
+    const d = new Date();
+    d.setHours(hours, minutes, 0, 0);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+
+  const WIDGET_IDS = [
+    "netWorth",
+    "month",
+    "upcoming",
+    "budget",
+    "reminders",
+    "cashFlow",
+    "quickActions",
+    "transactions",
+    "spending",
+    "budgetDetail",
+    "accounts",
+    "goals",
+    "recurring",
+  ];
+
+  const DEFAULT_SIZES = {
+    netWorth: "medium",
+    month: "medium",
+    upcoming: "medium",
+    budget: "medium",
+    reminders: "large",
+    cashFlow: "medium",
+    quickActions: "medium",
+    transactions: "wide",
+    spending: "medium",
+    budgetDetail: "medium",
+    accounts: "medium",
+    goals: "medium",
+    recurring: "medium",
+  };
+
+  const SIZE_ORDER = ["small", "medium", "large", "wide"];
+  const SIZE_LABELS = {
+    small: "Small",
+    medium: "Medium",
+    large: "Large",
+    wide: "Wide",
+  };
+
+  const readSavedLayout = () => {
+    try {
+      const raw = getPocketPreference("pocket_dashboard_layout_v4", "");
+      if (!raw) return { order: WIDGET_IDS, sizes: DEFAULT_SIZES };
+      const parsed = JSON.parse(raw);
+      const order = Array.isArray(parsed.order)
+        ? parsed.order.filter((id) => WIDGET_IDS.includes(id))
+        : [];
+      WIDGET_IDS.forEach((id) => {
+        if (!order.includes(id)) order.push(id);
+      });
+      const sizes = { ...DEFAULT_SIZES };
+      if (parsed.sizes && typeof parsed.sizes === "object") {
+        Object.entries(parsed.sizes).forEach(([id, size]) => {
+          if (WIDGET_IDS.includes(id) && SIZE_ORDER.includes(size))
+            sizes[id] = size;
+        });
+      }
+      return { order, sizes };
+    } catch {
+      return { order: WIDGET_IDS, sizes: DEFAULT_SIZES };
+    }
+  };
+
+  const [layout, setLayout] = useState(readSavedLayout);
+  const [editMode, setEditMode] = useState(false);
+  const [draggingId, setDraggingId] = useState(null);
+  const dragRef = useRef({ id: null, pointerId: null });
+
+  useEffect(() => {
+    setPocketPreference("pocket_dashboard_layout_v4", JSON.stringify(layout));
+  }, [layout]);
+
+  const moveWidget = useCallback((id, direction) => {
+    setLayout((prev) => {
+      const index = prev.order.indexOf(id);
+      if (index === -1) return prev;
+      const nextIndex = Math.max(
+        0,
+        Math.min(prev.order.length - 1, index + direction),
+      );
+      if (nextIndex === index) return prev;
+      const order = [...prev.order];
+      const [moved] = order.splice(index, 1);
+      order.splice(nextIndex, 0, moved);
+      return { ...prev, order };
+    });
+  }, []);
+
+  const resizeWidget = useCallback((id, direction) => {
+    setLayout((prev) => {
+      const current = prev.sizes[id] || "medium";
+      const index = SIZE_ORDER.indexOf(current);
+      const nextIndex = Math.max(
+        0,
+        Math.min(SIZE_ORDER.length - 1, index + direction),
+      );
+      if (nextIndex === index) return prev;
+      return {
+        ...prev,
+        sizes: { ...prev.sizes, [id]: SIZE_ORDER[nextIndex] },
+      };
+    });
+  }, []);
+
+  const resetLayout = () => {
+    setLayout({ order: [...WIDGET_IDS], sizes: { ...DEFAULT_SIZES } });
+  };
+
+  const onHandlePointerDown = (event, id) => {
+    if (!editMode) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dragRef.current = { id, pointerId: event.pointerId };
+    setDraggingId(id);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {}
+  };
+
+  const onHandlePointerMove = (event) => {
+    const id = dragRef.current.id;
+    if (!id || !editMode) return;
+    const element = document.elementFromPoint(event.clientX, event.clientY);
+    const target = element?.closest?.("[data-pocket-widget-id]");
+    const targetId = target?.getAttribute("data-pocket-widget-id");
+    if (!targetId || targetId === id) return;
+    setLayout((prev) => {
+      const from = prev.order.indexOf(id);
+      const to = prev.order.indexOf(targetId);
+      if (from === -1 || to === -1 || from === to) return prev;
+      const order = [...prev.order];
+      order.splice(from, 1);
+      order.splice(to, 0, id);
+      return { ...prev, order };
+    });
+  };
+
+  const endDrag = (event) => {
+    if (dragRef.current.id) {
+      try {
+        event.currentTarget.releasePointerCapture?.(dragRef.current.pointerId);
+      } catch {}
+    }
+    dragRef.current = { id: null, pointerId: null };
+    setDraggingId(null);
+  };
+
+  const handleKeyboardMove = (event, id) => {
+    if (!editMode) return;
+    if (["ArrowLeft", "ArrowUp"].includes(event.key)) {
+      event.preventDefault();
+      moveWidget(id, -1);
+    }
+    if (["ArrowRight", "ArrowDown"].includes(event.key)) {
+      event.preventDefault();
+      moveWidget(id, 1);
+    }
+  };
+
+  const renderWidgetContent = (id) => {
+    switch (id) {
+      case "netWorth":
+        return (
+          <button
+            type="button"
+            className="apple-stat-card apple-stat-primary glass-pocket-surface"
+            onClick={onViewTransactions}
+            aria-label="Open transactions and view net worth"
+          >
+            <span className="apple-stat-icon stat-green">
+              <Wallet size={17} />
+            </span>
+            <span className="apple-stat-copy">
+              <small>NET WORTH</small>
+              <strong>
+                {fmtINR(Object.values(balances).reduce((a, b) => a + b, 0))}
               </strong>
-            </div>
-            <div>
-              <span>Expenses</span>
-              <strong style={{ color: "#FF8067" }}>
-                {fmtINR(monthExpense)}
-              </strong>
-            </div>
-            <div>
-              <span>Saved</span>
-              <strong>{fmtINR(Math.max(0, monthIncome - monthExpense))}</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section style={styles.widgetGrid} className="widget-grid">
-        <div
-          style={{ ...styles.widget, gridColumn: "span 2" }}
-          className="widget-span-2"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Cash flow</div>
-              <div style={styles.widgetSub}>
-                Income vs expenses · last 6 months
+              <em>
+                {savingsRate !== null
+                  ? `${Math.max(0, savingsRate)}% saved this month`
+                  : "Keep tracking to see your trend"}
+              </em>
+            </span>
+          </button>
+        );
+      case "month":
+        return (
+          <button
+            type="button"
+            className="apple-stat-card glass-pocket-surface"
+            onClick={onViewTransactions}
+            aria-label="Open cash flow"
+          >
+            <span className="apple-stat-icon stat-orange">
+              <ArrowDownRight size={17} />
+            </span>
+            <span className="apple-stat-copy">
+              <small>THIS MONTH</small>
+              <strong>{fmtINR(monthExpense)}</strong>
+              <em>
+                {expenseChangePct !== null
+                  ? `${expenseChangePct >= 0 ? "+" : ""}${expenseChangePct}% vs last month`
+                  : `${fmtINR(monthIncome - monthExpense)} net saved`}
+              </em>
+            </span>
+          </button>
+        );
+      case "upcoming":
+        return (
+          <button
+            type="button"
+            className="apple-stat-card glass-pocket-surface"
+            onClick={onOpenReminders}
+            aria-label="Open upcoming reminders"
+          >
+            <span className="apple-stat-icon stat-blue">
+              <Bell size={17} />
+            </span>
+            <span className="apple-stat-copy">
+              <small>UPCOMING</small>
+              <strong>{upcomingReminders.length}</strong>
+              <em>{upcomingReminders[0]?.title || "No reminders queued"}</em>
+            </span>
+          </button>
+        );
+      case "budget":
+        return (
+          <button
+            type="button"
+            className="apple-stat-card glass-pocket-surface"
+            onClick={onOpenBudgets}
+            aria-label="Open budget summary"
+          >
+            <span className="apple-stat-icon stat-purple">
+              <Target size={17} />
+            </span>
+            <span className="apple-stat-copy">
+              <small>BUDGET LEFT</small>
+              <strong>{fmtINR(budgetRemaining)}</strong>
+              <em>{budgetPct}% used</em>
+            </span>
+          </button>
+        );
+      case "reminders":
+        return (
+          <section
+            className="apple-panel apple-reminder-panel glass-pocket-surface"
+            aria-label="Upcoming reminders"
+          >
+            <button
+              type="button"
+              className="apple-card-click-layer"
+              onClick={onOpenReminders}
+              aria-label="Open all reminders"
+            />
+            <div className="apple-panel-head">
+              <div>
+                <div className="apple-panel-kicker">TODAY & UPCOMING</div>
+                <h2>Reminders</h2>
               </div>
+              <button
+                type="button"
+                className="apple-panel-text-button"
+                onClick={onOpenReminders}
+              >
+                See all <ChevronRight size={15} />
+              </button>
             </div>
-            <BarChart3 size={18} color="#707580" />
-          </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={trendData}>
-              <CartesianGrid stroke="#252932" vertical={false} />
-              <XAxis
-                dataKey="label"
-                stroke="#777C85"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                stroke="#777C85"
-                fontSize={10}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `₹${Math.round(v / 1000)}k`}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "#171A1F",
-                  border: "1px solid #30343D",
-                  borderRadius: 10,
-                  fontSize: 12,
-                }}
-                labelStyle={{ color: "#ECEAE3" }}
-                formatter={(v, k) => [
-                  fmtINR(v),
-                  k === "income" ? "Income" : "Expenses",
-                ]}
-              />
-              <Line
-                type="monotone"
-                dataKey="income"
-                stroke="#4FE36B"
-                strokeWidth={3}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="expense"
-                stroke="#FF8067"
-                strokeWidth={3}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <button
-          type="button"
-          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
-          onClick={onViewTransactions}
-          aria-label="Open spending and transactions"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Spending</div>
-              <div style={styles.widgetSub}>This month by category</div>
-            </div>
-            <span style={styles.widgetMore}>•••</span>
-          </div>
-          {categoryBreakdown.length === 0 ? (
-            <EmptyRow text="No expenses this month." />
-          ) : (
-            categoryBreakdown.slice(0, 5).map((x, i) => (
-              <div key={x.category} style={styles.categoryRow}>
-                <div style={styles.categoryName}>
-                  <span
-                    style={{
-                      ...styles.categoryDot,
-                      background: PALETTE[i % PALETTE.length],
-                    }}
-                  />
-                  {x.category}
+            <div className="apple-reminder-list">
+              {upcomingReminders.length === 0 ? (
+                <div className="apple-empty-state">
+                  <span className="apple-empty-icon">
+                    <Bell size={18} />
+                  </span>
+                  <strong>No reminders yet</strong>
+                  <p>
+                    Create a reminder from the calendar and it will appear here.
+                  </p>
                 </div>
-                <div style={styles.categoryBarTrack}>
+              ) : (
+                upcomingReminders.map((r, i) => (
                   <div
-                    style={{
-                      ...styles.categoryBar,
-                      width: `${Math.max(8, (x.amount / maxCategory) * 100)}%`,
-                      background: PALETTE[i % PALETTE.length],
-                    }}
-                  />
-                </div>
-                <div style={styles.categoryAmount}>{fmtINR(x.amount)}</div>
-              </div>
-            ))
-          )}
-        </button>
-
-        <div
-          style={{ ...styles.widget, cursor: "pointer" }}
-          role="button"
-          tabIndex={0}
-          onClick={(e) => {
-            if (e.target.closest("button")) return;
-            onViewTransactions();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onViewTransactions();
-            }
-          }}
-          aria-label="Open recent transactions"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Recent transactions</div>
-              <div style={styles.widgetSub}>Your latest activity</div>
+                    key={r.id}
+                    className={`apple-reminder-row ${i === 0 ? "is-first" : ""}`}
+                  >
+                    <span className={`apple-reminder-mark mark-${i % 4}`} />
+                    <span className="apple-reminder-time">
+                      <strong>{formatReminderTime(r.time)}</strong>
+                      <small>{formatReminderDay(r.date)}</small>
+                    </span>
+                    <span className="apple-reminder-content">
+                      <strong>{r.title}</strong>
+                      <small>
+                        {r.category || "Personal"}
+                        {r.notificationLeadMinutes
+                          ? ` · ${r.notificationLeadMinutes} min before`
+                          : ""}
+                      </small>
+                    </span>
+                    <span className="apple-reminder-chevron">
+                      <ChevronRight size={15} />
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
-            <button style={styles.linkBtn} onClick={onViewTransactions}>
-              View all
-            </button>
-          </div>
-          {transactions.length === 0 ? (
-            <EmptyRow text="No entries yet." />
-          ) : (
-            transactions.slice(0, 5).map((t) => (
-              <LedgerRow
-                key={t.id}
-                t={t}
-                accountLabel={accountName(t.accountId)}
-                onEdit={(event) => {
-                  event?.stopPropagation?.();
-                  onEdit(t);
-                }}
-              />
-            ))
-          )}
-        </div>
-
-        <button
-          type="button"
-          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
-          onClick={onOpenBudgets}
-          aria-label="Open Budgets"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Budget</div>
-              <div style={styles.widgetSub}>
-                {totalBudget
-                  ? `${fmtINR(totalSpent)} of ${fmtINR(totalBudget)}`
-                  : "Set a budget to start"}
+          </section>
+        );
+      case "cashFlow":
+        return (
+          <section className="apple-panel apple-focus-panel glass-pocket-surface">
+            <div className="apple-panel-head compact">
+              <div>
+                <div className="apple-panel-kicker">CASH FLOW</div>
+                <h2>This month</h2>
+              </div>
+              <button
+                type="button"
+                className="apple-panel-icon-button"
+                onClick={onViewTransactions}
+                aria-label="Open transactions"
+              >
+                <BarChart3 size={16} />
+              </button>
+            </div>
+            <div className="apple-flow-values">
+              <div>
+                <span>Income</span>
+                <strong className="income">{fmtINR(monthIncome)}</strong>
+              </div>
+              <div>
+                <span>Spent</span>
+                <strong className="expense">{fmtINR(monthExpense)}</strong>
+              </div>
+              <div>
+                <span>Saved</span>
+                <strong>
+                  {fmtINR(Math.max(0, monthIncome - monthExpense))}
+                </strong>
               </div>
             </div>
-            <Target size={18} color="#707580" />
-          </div>
-          <div style={styles.budgetRingWrap}>
-            <div
-              style={{
-                ...styles.budgetRing,
-                background: `conic-gradient(#4FE36B ${budgetPct * 3.6}deg, #292D35 0deg)`,
-              }}
-            >
-              <div style={styles.budgetRingInner}>
-                {budgetPct}
-                <span style={{ fontSize: 10 }}>%</span>
-              </div>
-            </div>
-            <div>
-              <div style={styles.budgetBig}>
-                {fmtINR(Math.max(0, totalBudget - totalSpent))}
-              </div>
-              <div style={styles.widgetSub}>remaining</div>
-            </div>
-          </div>
-          {budgets.slice(0, 3).map((b) => (
-            <div key={b.id} style={styles.miniBudget}>
-              <span>{b.category}</span>
-              <span>{Math.round(b.pct)}%</span>
-            </div>
-          ))}
-        </button>
-
-        <button
-          type="button"
-          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
-          onClick={onOpenAccounts}
-          aria-label="Open Accounts"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Accounts</div>
-              <div style={styles.widgetSub}>
-                {accounts.length} active accounts
-              </div>
-            </div>
-            <Landmark size={18} color="#707580" />
-          </div>
-          {accounts.slice(0, 4).map((a) => (
-            <div key={a.id} style={styles.accountRow}>
+            <div className="apple-flow-bar" aria-hidden="true">
               <span
                 style={{
-                  ...styles.accountDot,
-                  background: a.color || PALETTE[0],
+                  width: `${Math.min(100, monthIncome > 0 ? (monthExpense / monthIncome) * 100 : 0)}%`,
                 }}
               />
-              <span style={{ flex: 1 }}>{a.name}</span>
-              <strong>{fmtINR(balances[a.id] || 0)}</strong>
             </div>
-          ))}
-          {accounts.length === 0 && (
-            <EmptyRow text="Add an account to see it here." />
-          )}
-        </button>
-
-        <button
-          type="button"
-          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
-          onClick={onOpenGoals}
-          aria-label="Open Goals"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Goals</div>
-              <div style={styles.widgetSub}>Savings progress</div>
+            <div className="apple-flow-foot">
+              <span>
+                {topCategory
+                  ? `Top category · ${topCategory}`
+                  : "Add transactions to build insights"}
+              </span>
+              <span>
+                {expenseChangePct !== null
+                  ? `${expenseChangePct >= 0 ? "+" : ""}${expenseChangePct}%`
+                  : "—"}
+              </span>
             </div>
-            <PiggyBank size={18} color="#707580" />
-          </div>
-          {goals.slice(0, 3).map((g) => {
-            const pct =
-              g.target > 0
-                ? Math.min(100, Math.round((g.saved / g.target) * 100))
-                : 0;
-            return (
-              <div key={g.id} style={styles.goalRow}>
-                <div style={styles.goalLine}>
-                  <span>{g.name}</span>
-                  <span>{pct}%</span>
-                </div>
-                <div style={styles.progressTrack}>
-                  <div
-                    style={{
-                      ...styles.progressFill,
-                      width: `${pct}%`,
-                      background: "#7C93C9",
-                    }}
-                  />
-                </div>
-                <div style={styles.widgetSub}>
-                  {fmtINR(g.saved)} of {fmtINR(g.target)}
-                </div>
+          </section>
+        );
+      case "quickActions":
+        return (
+          <section className="apple-panel apple-quick-panel glass-pocket-surface">
+            <div className="apple-panel-head compact">
+              <div>
+                <div className="apple-panel-kicker">QUICK ACTIONS</div>
+                <h2>Capture something</h2>
               </div>
-            );
-          })}
-          {goals.length === 0 && (
-            <EmptyRow text="Create your first savings goal." />
-          )}
-        </button>
-
-        <button
-          type="button"
-          style={{ ...styles.widget, ...styles.dashboardLinkWidget }}
-          onClick={onOpenRecurring}
-          aria-label="Open Recurring"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Recurring</div>
-              <div style={styles.widgetSub}>Upcoming scheduled payments</div>
             </div>
-            <Repeat size={18} color="#707580" />
-          </div>
-          {recurring.slice(0, 4).map((r) => (
-            <div key={r.id} style={styles.goalRow}>
-              <div style={styles.goalLine}>
-                <span
-                  style={{
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
+            <div className="apple-quick-grid">
+              <button type="button" onClick={onAddTxn} aria-label="Add expense">
+                <span className="quick-red">
+                  <Receipt size={16} />
+                </span>
+                <span>Add expense</span>
+              </button>
+              <button
+                type="button"
+                onClick={onOpenReminders}
+                aria-label="Add reminder"
+              >
+                <span className="quick-blue">
+                  <Bell size={16} />
+                </span>
+                <span>Reminder</span>
+              </button>
+              <button
+                type="button"
+                onClick={onScanClick}
+                aria-label="Scan a receipt"
+              >
+                <span className="quick-gold">
+                  <Camera size={16} />
+                </span>
+                <span>Scan receipt</span>
+              </button>
+              <button
+                type="button"
+                onClick={onOpenAccounts}
+                aria-label="Open accounts"
+              >
+                <span className="quick-green">
+                  <Landmark size={16} />
+                </span>
+                <span>Accounts</span>
+              </button>
+            </div>
+          </section>
+        );
+      case "transactions":
+        return (
+          <section
+            className="apple-panel apple-wide-panel glass-pocket-surface"
+            role="region"
+            aria-label="Recent transactions"
+          >
+            <div className="apple-panel-head">
+              <div>
+                <div className="apple-panel-kicker">RECENT ACTIVITY</div>
+                <h2>Transactions</h2>
+              </div>
+              <button
+                type="button"
+                className="apple-panel-text-button"
+                onClick={onViewTransactions}
+              >
+                View all <ChevronRight size={15} />
+              </button>
+            </div>
+            <div className="apple-activity-list">
+              {transactions.length === 0 ? (
+                <div className="apple-empty-state compact-empty">
+                  <strong>No transactions yet</strong>
+                  <p>Your latest activity will appear here.</p>
+                </div>
+              ) : (
+                transactions.slice(0, 6).map((t, index) => (
+                  <div key={t.id} className="apple-activity-row">
+                    <span
+                      className={`apple-activity-icon activity-${index % 4}`}
+                    >
+                      {t.type === "income" ? (
+                        <ArrowUpRight size={15} />
+                      ) : (
+                        <Receipt size={15} />
+                      )}
+                    </span>
+                    <span className="apple-activity-copy">
+                      <strong>{t.category || "Transaction"}</strong>
+                      <small>
+                        {accountName(t.accountId)}
+                        {t.note ? ` · ${t.note}` : ""}
+                      </small>
+                    </span>
+                    <span
+                      className={
+                        t.type === "income"
+                          ? "apple-activity-amount income"
+                          : "apple-activity-amount"
+                      }
+                    >
+                      {t.type === "income" ? "+" : "-"}
+                      {fmtINR(Math.abs(Number(t.amount || 0)))}
+                    </span>
+                    <button
+                      type="button"
+                      className="apple-row-edit"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(t);
+                      }}
+                      aria-label={`Edit ${t.category || "transaction"}`}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        );
+      case "spending":
+        return (
+          <button
+            type="button"
+            className="apple-mini-panel glass-pocket-surface"
+            onClick={onViewTransactions}
+            aria-label="Open spending"
+          >
+            <div className="apple-mini-head">
+              <span>SPENDING</span>
+              <ArrowDownRight size={15} />
+            </div>
+            {categoryBreakdown.length ? (
+              categoryBreakdown.slice(0, 4).map((x, i) => (
+                <div className="apple-category-row" key={x.category}>
+                  <span className="apple-category-name">
+                    <i style={{ background: PALETTE[i % PALETTE.length] }} />
+                    {x.category}
+                  </span>
+                  <span>{fmtINR(x.amount)}</span>
+                </div>
+              ))
+            ) : (
+              <div className="apple-muted-copy">No expenses this month.</div>
+            )}
+          </button>
+        );
+      case "budgetDetail":
+        return (
+          <button
+            type="button"
+            className="apple-mini-panel glass-pocket-surface"
+            onClick={onOpenBudgets}
+            aria-label="Open budget"
+          >
+            <div className="apple-mini-head">
+              <span>BUDGET</span>
+              <Target size={15} />
+            </div>
+            <div className="apple-mini-big">{budgetPct}%</div>
+            <div className="apple-mini-progress">
+              <span style={{ width: `${budgetPct}%` }} />
+            </div>
+            <div className="apple-muted-copy">
+              {fmtINR(budgetRemaining)} remaining
+            </div>
+          </button>
+        );
+      case "accounts":
+        return (
+          <button
+            type="button"
+            className="apple-mini-panel glass-pocket-surface"
+            onClick={onOpenAccounts}
+            aria-label="Open accounts"
+          >
+            <div className="apple-mini-head">
+              <span>ACCOUNTS</span>
+              <Landmark size={15} />
+            </div>
+            {accounts.slice(0, 3).map((a) => (
+              <div className="apple-account-row" key={a.id}>
+                <i style={{ background: a.color || PALETTE[0] }} />
+                <span>{a.name}</span>
+                <strong>{fmtINR(balances[a.id] || 0)}</strong>
+              </div>
+            ))}
+            {accounts.length === 0 && (
+              <div className="apple-muted-copy">
+                Add an account to see balances.
+              </div>
+            )}
+          </button>
+        );
+      case "goals":
+        return (
+          <button
+            type="button"
+            className="apple-mini-panel glass-pocket-surface"
+            onClick={onOpenGoals}
+            aria-label="Open goals"
+          >
+            <div className="apple-mini-head">
+              <span>GOALS</span>
+              <PiggyBank size={15} />
+            </div>
+            {goals.slice(0, 2).map((g) => {
+              const pct =
+                g.target > 0
+                  ? Math.min(100, Math.round((g.saved / g.target) * 100))
+                  : 0;
+              return (
+                <div key={g.id} className="apple-goal-row">
+                  <div>
+                    <strong>{g.name}</strong>
+                    <span>{pct}%</span>
+                  </div>
+                  <div className="apple-mini-progress">
+                    <span style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+            {goals.length === 0 && (
+              <div className="apple-muted-copy">
+                Create your first savings goal.
+              </div>
+            )}
+          </button>
+        );
+      case "recurring":
+        return (
+          <button
+            type="button"
+            className="apple-mini-panel glass-pocket-surface"
+            onClick={onOpenRecurring}
+            aria-label="Open recurring payments"
+          >
+            <div className="apple-mini-head">
+              <span>RECURRING</span>
+              <Repeat size={15} />
+            </div>
+            {recurring.slice(0, 2).map((r) => (
+              <div className="apple-recurring-row" key={r.id}>
+                <span>{r.name}</span>
+                <strong>{fmtINR(Number(r.amount || 0))}</strong>
+                <small>{r.nextDate || "Not scheduled"}</small>
+              </div>
+            ))}
+            {recurring.length === 0 && (
+              <div className="apple-muted-copy">No recurring payments.</div>
+            )}
+          </button>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // The budget card above and the lower budget card share an id in the older dashboard.
+  // Keep the dashboard's top budget summary as the canonical widget.
+  const visibleWidgetIds = layout.order;
+
+  return (
+    <div className="apple-dashboard ledger-page">
+      <header className="apple-dashboard-header">
+        <div className="apple-title-block">
+          <div className="apple-eyebrow">POCKET · PERSONAL</div>
+          <h1>
+            Good morning, Viren <span aria-hidden="true">👋</span>
+          </h1>
+          <p>
+            {editMode
+              ? "Arrange your dashboard just like a home screen."
+              : "Everything important, right where you need it."}
+          </p>
+        </div>
+        <div className="apple-header-actions" aria-label="Dashboard actions">
+          <button
+            type="button"
+            className={`apple-layout-edit ${editMode ? "is-active" : ""}`}
+            onClick={() => setEditMode((value) => !value)}
+            aria-pressed={editMode}
+            title={
+              editMode
+                ? "Finish arranging dashboard"
+                : "Customize dashboard layout"
+            }
+          >
+            <SlidersHorizontal size={16} />
+            <span>{editMode ? "Done" : "Arrange"}</span>
+          </button>
+          {editMode && (
+            <button
+              type="button"
+              className="apple-layout-reset"
+              onClick={resetLayout}
+              title="Reset dashboard layout"
+            >
+              <RotateCcw size={15} />
+              <span>Reset</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="apple-glass-button apple-date-button"
+            onClick={onOpenReminders}
+            aria-label={`Open reminders for ${todayLong}`}
+          >
+            <CalendarDays size={16} />
+            <span>
+              <strong>{todayLong}</strong>
+              <small>View your day</small>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="apple-primary-add"
+            onClick={onAddTxn}
+            aria-label="Add a transaction"
+          >
+            <Plus size={18} />
+            <span>Add</span>
+          </button>
+        </div>
+      </header>
+
+      {editMode && (
+        <div className="dashboard-layout-hint" role="status">
+          <GripVertical size={14} />
+          <span>
+            Drag the grip to move a card. Use − / + to resize. On keyboard,
+            focus a grip and use arrow keys to move.
+          </span>
+        </div>
+      )}
+
+      <section
+        className={`pocket-dashboard-grid ${editMode ? "is-editing" : ""}`}
+        aria-label="Customizable Pocket dashboard"
+      >
+        {visibleWidgetIds.map((id) => {
+          const size = layout.sizes[id] || DEFAULT_SIZES[id] || "medium";
+          const index = SIZE_ORDER.indexOf(size);
+          return (
+            <div
+              key={id}
+              data-pocket-widget-id={id}
+              className={`pocket-dashboard-widget widget-size-${size} ${draggingId === id ? "is-dragging" : ""}`}
+            >
+              {editMode && (
+                <div
+                  className="pocket-widget-controls"
+                  aria-label={`${id} layout controls`}
                 >
-                  {r.name}
-                </span>
-                <span>{fmtINR(Number(r.amount || 0))}</span>
-              </div>
-              <div style={styles.widgetSub}>
-                Next: {r.nextDate || "Not scheduled"}
-              </div>
+                  <button
+                    type="button"
+                    className="pocket-widget-drag-handle"
+                    onPointerDown={(event) => onHandlePointerDown(event, id)}
+                    onPointerMove={onHandlePointerMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    onKeyDown={(event) => handleKeyboardMove(event, id)}
+                    aria-label={`Move ${id} card. Use arrow keys to reposition.`}
+                    title={`Move ${id}`}
+                  >
+                    <GripVertical size={16} />
+                  </button>
+                  <div className="pocket-widget-resize-controls">
+                    <button
+                      type="button"
+                      onClick={() => resizeWidget(id, -1)}
+                      disabled={index <= 0}
+                      aria-label={`Make ${id} card smaller`}
+                      title={`Smaller (${SIZE_LABELS[SIZE_ORDER[Math.max(0, index - 1)]]})`}
+                    >
+                      −
+                    </button>
+                    <span aria-hidden="true">{SIZE_LABELS[size]}</span>
+                    <button
+                      type="button"
+                      onClick={() => resizeWidget(id, 1)}
+                      disabled={index >= SIZE_ORDER.length - 1}
+                      aria-label={`Make ${id} card larger`}
+                      title={`Larger (${SIZE_LABELS[SIZE_ORDER[Math.min(SIZE_ORDER.length - 1, index + 1)]]})`}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              )}
+              {renderWidgetContent(id)}
             </div>
-          ))}
-          {recurring.length === 0 && (
-            <EmptyRow text="Add a recurring payment to track it here." />
-          )}
-        </button>
-
-        <button
-          type="button"
-          className="dashboard-reminders-card"
-          style={{
-            ...styles.widget,
-            ...styles.dashboardLinkWidget,
-            gridColumn: "1 / -1",
-          }}
-          onClick={onOpenReminders}
-          aria-label="Open Reminders"
-        >
-          <div style={styles.widgetHeader}>
-            <div>
-              <div style={styles.widgetTitle}>Reminders</div>
-              <div style={styles.widgetSub}>
-                Upcoming things you do not want to miss
-              </div>
-            </div>
-            <Bell size={18} color="#707580" />
-          </div>
-          {reminders
-            .filter((r) => !r.completed)
-            .sort((a, b) =>
-              `${a.date}T${a.time || "23:59"}`.localeCompare(
-                `${b.date}T${b.time || "23:59"}`,
-              ),
-            )
-            .slice(0, 4)
-            .map((r) => (
-              <div key={r.id} style={styles.reminderDashboardRow}>
-                <span style={styles.reminderDashboardDot} />
-                <span style={styles.reminderDashboardTitle}>{r.title}</span>
-                <span style={styles.reminderDashboardDate}>
-                  {r.date}
-                  {r.time ? ` · ${r.time}` : ""}
-                </span>
-                <ChevronRight size={15} color="#626A75" />
-              </div>
-            ))}
-          {reminders.filter((r) => !r.completed).length === 0 && (
-            <EmptyRow text="Create a reminder from the calendar." />
-          )}
-        </button>
+          );
+        })}
       </section>
-    </div>
-  );
-}
-
-function InsightCard({ label, value, hint, tone }) {
-  const color =
-    tone === "good" ? "#4FE36B" : tone === "bad" ? "#FF8067" : "#ECEAE3";
-  return (
-    <div style={{ ...styles.panel, padding: 16 }}>
-      <div style={styles.statLabel}>{label}</div>
-      <div style={{ ...styles.statValue, fontSize: 22, color, marginTop: 4 }}>
-        {value}
-      </div>
-      <div
-        style={{
-          fontSize: 11,
-          color: "#585C66",
-          fontFamily: "Inter, sans-serif",
-          marginTop: 3,
-        }}
-      >
-        {hint}
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Transactions / Ledger ---------- */
-
-function TransactionsView({
-  transactions,
-  accounts,
-  categories,
-  onDelete,
-  onEdit,
-}) {
-  const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState("all");
-  const [filterAccount, setFilterAccount] = useState("all");
-  const [filterCategory, setFilterCategory] = useState("all");
-
-  const accountName = (id) => accounts.find((a) => a.id === id)?.name || "—";
-  const allCategories = [...categories.income, ...categories.expense];
-
-  const filtered = useMemo(
-    () =>
-      transactions.filter((t) => {
-        if (filterType !== "all" && t.type !== filterType) return false;
-        if (filterAccount !== "all" && t.accountId !== filterAccount)
-          return false;
-        if (filterCategory !== "all" && t.category !== filterCategory)
-          return false;
-        if (search.trim()) {
-          const q = search.toLowerCase();
-          if (
-            !t.category.toLowerCase().includes(q) &&
-            !(t.note || "").toLowerCase().includes(q)
-          )
-            return false;
-        }
-        return true;
-      }),
-    [transactions, filterType, filterAccount, filterCategory, search],
-  );
-
-  return (
-    <div style={{ padding: "0 32px 32px" }} className="ledger-page">
-      <div style={styles.panel}>
-        <div
-          style={{
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            marginBottom: 16,
-          }}
-        >
-          <div style={{ ...styles.searchBox, flex: "1 1 200px" }}>
-            <Search size={14} color="#585C66" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search category or note…"
-              style={styles.searchInput}
-            />
-          </div>
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-            style={styles.filterSelect}
-          >
-            <option value="all">All types</option>
-            <option value="income">Income</option>
-            <option value="expense">Expense</option>
-          </select>
-          <select
-            value={filterAccount}
-            onChange={(e) => setFilterAccount(e.target.value)}
-            style={styles.filterSelect}
-          >
-            <option value="all">All accounts</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-            style={styles.filterSelect}
-          >
-            <option value="all">All categories</option>
-            {allCategories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={styles.panelTitle}>
-          {filtered.length} of {transactions.length} entries
-        </div>
-        {filtered.length === 0 && <EmptyRow text="No entries match." />}
-        {filtered.map((t) => (
-          <LedgerRow
-            key={t.id}
-            t={t}
-            accountLabel={accountName(t.accountId)}
-            onDelete={() => onDelete(t.id)}
-            onEdit={() => onEdit(t)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function LedgerRow({ t, accountLabel, onDelete, onEdit }) {
-  const positive = t.type === "income";
-  return (
-    <div style={styles.ledgerRow}>
-      <div
-        style={{ flex: 1, minWidth: 0, cursor: onEdit ? "pointer" : "default" }}
-        onClick={(e) => onEdit?.(e)}
-      >
-        <div style={styles.ledgerCategory}>{t.category}</div>
-        <div style={styles.ledgerMeta}>
-          {fmtDate(t.date)} · {accountLabel}
-          {t.note ? ` · ${t.note}` : ""}
-        </div>
-      </div>
-      <div
-        style={{
-          ...styles.ledgerAmount,
-          color: positive ? "#4FA98C" : "#D9735C",
-        }}
-      >
-        {positive ? "+" : "−"}
-        {fmtINR(t.amount)}
-      </div>
-      {onEdit && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit?.(e);
-          }}
-          style={styles.iconBtn}
-          title="Edit"
-        >
-          <Pencil size={13} />
-        </button>
-      )}
-      {onDelete && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete?.(e);
-          }}
-          style={styles.iconBtn}
-          title="Delete"
-        >
-          <Trash2 size={14} />
-        </button>
-      )}
     </div>
   );
 }
@@ -3358,6 +4146,7 @@ function GlobalSettingsModal({
   onImportCSV,
   onRestoreBackup,
   onClearAllData,
+  onOpenBackground,
 }) {
   const [section, setSection] = useState(
     initialSection === "appearance" ? "appearance" : initialSection,
@@ -3633,6 +4422,22 @@ function GlobalSettingsModal({
                       save("pocket_theme", next);
                     }}
                   />
+                </SettingsRow>
+                <SettingsRow
+                  title="Glass background"
+                  description="Change the wallpaper, upload your own photo, and tune blur and transparency live."
+                >
+                  <button
+                    type="button"
+                    className="settings-action-button"
+                    onClick={onOpenBackground}
+                  >
+                    <ImageIcon
+                      size={14}
+                      style={{ marginRight: 7, verticalAlign: "-2px" }}
+                    />
+                    Customize background
+                  </button>
                 </SettingsRow>
                 <SettingsRow
                   title="Motion"
@@ -6038,6 +6843,402 @@ html[data-pocket-theme="light"] .theme-picker-button:active {
     width: 100% !important;
   }
 }
+
+
+/* =========================================================
+   GLASS BACKGROUND / WALLPAPER SYSTEM
+========================================================= */
+.ledger-app.pocket-glass-app {
+  position: relative !important;
+  isolation: isolate;
+  overflow-x: hidden !important;
+  background: #0E1013 !important;
+}
+.ledger-app.pocket-glass-app::before {
+  content: "";
+  position: absolute;
+  inset: -28px;
+  z-index: -3;
+  background-image: var(--pocket-bg-image, linear-gradient(145deg,#11161E,#0A0E14));
+  background-size: var(--pocket-bg-size, cover);
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(var(--pocket-bg-blur, 6px));
+  opacity: var(--pocket-bg-opacity, .64);
+  transform: scale(1.05);
+  transition: filter 260ms ease, opacity 220ms ease, background-image 360ms ease;
+}
+.ledger-app.pocket-glass-app::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background: rgba(3,7,12,var(--pocket-bg-overlay,.20));
+  pointer-events: none;
+}
+.ledger-app.pocket-glass-app .ledger-sidebar,
+.ledger-app.pocket-glass-app .ledger-topbar {
+  background: rgba(10,14,20,.38) !important;
+  backdrop-filter: blur(22px) saturate(1.14);
+  -webkit-backdrop-filter: blur(22px) saturate(1.14);
+  border-color: rgba(255,255,255,.10) !important;
+}
+.ledger-app.pocket-glass-app .ledger-sidebar {
+  box-shadow: inset -1px 0 rgba(255,255,255,.06);
+}
+.ledger-app.pocket-glass-app .global-search {
+  background: rgba(255,255,255,.10) !important;
+  border-color: rgba(255,255,255,.14) !important;
+  color: #F5F7FA !important;
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+}
+.ledger-app.pocket-glass-app .datePill,
+.ledger-app.pocket-glass-app .iconTopBtn,
+.ledger-app.pocket-glass-app .secondaryBtn {
+  background: rgba(255,255,255,.08) !important;
+  border-color: rgba(255,255,255,.12) !important;
+  backdrop-filter: blur(15px) saturate(1.15);
+  -webkit-backdrop-filter: blur(15px) saturate(1.15);
+}
+.glass-pocket-surface {
+  background: rgba(255,255,255, calc(var(--pocket-bg-opacity, .64) * .18)) !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  box-shadow: 0 20px 50px rgba(0,0,0,.16), inset 0 1px rgba(255,255,255,.08) !important;
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+}
+.ledger-app.pocket-glass-app .widgetTitle,
+.ledger-app.pocket-glass-app .monthTitle,
+.ledger-app.pocket-glass-app .netWorthValue,
+.ledger-app.pocket-glass-app .welcomeName,
+.ledger-app.pocket-glass-app .brandText {
+  text-shadow: 0 1px 10px rgba(0,0,0,.18);
+}
+.ledger-app.pocket-glass-app .widget:hover,
+.ledger-app.pocket-glass-app .netWorthCard:hover,
+.ledger-app.pocket-glass-app .monthCard:hover {
+  border-color: rgba(255,255,255,.23) !important;
+  box-shadow: 0 22px 60px rgba(0,0,0,.22), inset 0 1px rgba(255,255,255,.09) !important;
+}
+.mobile-dashboard-actions { display:flex; align-items:center; gap:8px; }
+.mobile-background-button {
+  width: 42px; height:42px; border-radius:13px; border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.08); color:#F2F4F6; display:flex; align-items:center; justify-content:center;
+  backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); cursor:pointer;
+}
+.background-overlay {
+  position:fixed; inset:0; z-index:3100; background:rgba(4,7,12,.34); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+}
+.background-drawer {
+  position:fixed; top:12px; right:12px; bottom:12px; z-index:3200; width:min(420px,calc(100vw - 24px));
+  display:flex; flex-direction:column; overflow:hidden; color:#EFF3F6;
+  background:rgba(16,21,29,.82); border:1px solid rgba(255,255,255,.13); border-radius:26px;
+  box-shadow:0 28px 90px rgba(0,0,0,.46), inset 0 1px rgba(255,255,255,.08);
+  backdrop-filter:blur(28px) saturate(1.18); -webkit-backdrop-filter:blur(28px) saturate(1.18);
+  animation:backgroundDrawerIn 340ms cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes backgroundDrawerIn { from{opacity:0;transform:translateX(28px) scale(.985)} to{opacity:1;transform:translateX(0) scale(1)} }
+.background-drawer-header { padding:22px 20px 14px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+.background-drawer-eyebrow { font-size:9px; letter-spacing:.16em; color:#88A2B7; font-weight:700; margin-bottom:5px; }
+.background-drawer-header h2 { margin:0; font-family:'Space Grotesk',sans-serif; font-size:21px; letter-spacing:-.4px; }
+.background-drawer-header p { margin:5px 0 0; color:#96A1AE; font-size:11px; }
+.background-close { width:36px; height:36px; border-radius:11px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.06); color:#B9C1CC; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.background-tabs { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; padding:0 16px 12px; }
+.background-tabs button { min-height:40px; border:1px solid transparent; border-radius:11px; background:transparent; color:#8F9AA8; display:flex; align-items:center; justify-content:center; gap:6px; font:600 10px Inter,sans-serif; cursor:pointer; }
+.background-tabs button.active { background:rgba(87,109,255,.20); color:#DAE0FF; border-color:rgba(109,129,255,.22); box-shadow:inset 0 1px rgba(255,255,255,.05); }
+.background-panel-scroll { flex:1; min-height:0; overflow:auto; padding:4px 16px 16px; }
+.background-section-title-row { display:flex; justify-content:space-between; align-items:flex-end; gap:12px; padding:8px 4px 12px; }
+.background-section-title-row strong { display:block; font-size:13px; color:#F2F5F7; }
+.background-section-title-row span:not(.background-live-pill) { display:block; margin-top:4px; color:#7F8998; font-size:10px; }
+.background-live-pill { display:inline-flex; align-items:center; gap:5px; padding:5px 8px; border-radius:999px; background:rgba(84,221,129,.10); color:#7FDC9A; border:1px solid rgba(84,221,129,.16); font-size:9px; font-weight:700; }
+.background-live-pill span { width:5px; height:5px; border-radius:50%; background:#63E78A; box-shadow:0 0 8px #63E78A; }
+.background-category-row { display:flex; gap:6px; overflow:auto; padding:0 0 12px; scrollbar-width:none; }
+.background-category-row::-webkit-scrollbar { display:none; }
+.background-category-row button { white-space:nowrap; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.05); color:#8994A2; padding:7px 10px; border-radius:999px; font-size:9px; cursor:pointer; }
+.background-category-row button.active { color:#DDE3FF; background:rgba(84,103,255,.17); border-color:rgba(101,119,255,.25); }
+.background-wallpaper-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.background-wallpaper-card { padding:0; border:1px solid rgba(255,255,255,.09); border-radius:15px; overflow:hidden; background:rgba(255,255,255,.04); color:#EAF0F4; cursor:pointer; text-align:left; }
+.background-wallpaper-card.active { border-color:#86A2FF; box-shadow:0 0 0 2px rgba(101,119,255,.18),0 14px 30px rgba(0,0,0,.22); }
+.background-wallpaper-preview { display:block; height:106px; background-size:cover; background-position:center; }
+.background-wallpaper-meta { min-height:34px; padding:0 10px; display:flex; align-items:center; justify-content:space-between; font-size:10px; }
+.background-preview-card { margin:16px 2px 2px; min-height:122px; border-radius:18px; background-size:cover; background-position:center; padding:10px; display:flex; align-items:flex-end; border:1px solid rgba(255,255,255,.10); }
+.background-preview-glass { width:100%; padding:13px 14px; border-radius:14px; background:rgba(12,17,24,.48); border:1px solid rgba(255,255,255,.11); backdrop-filter:blur(14px); }
+.background-preview-glass span { display:block; text-transform:uppercase; letter-spacing:.13em; color:#8FA3B5; font-size:8px; }
+.background-preview-glass strong { display:block; margin-top:4px; font-size:13px; }
+.background-preview-glass small { display:block; margin-top:4px; color:#9AA5B2; font-size:9px; }
+.background-color-swatches { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px; }
+.background-color-swatches button { height:78px; border-radius:16px; border:1px solid rgba(255,255,255,.10); cursor:pointer; position:relative; }
+.background-color-swatches button::after { content:""; position:absolute; inset:12px; border:1px solid rgba(255,255,255,.24); border-radius:12px; backdrop-filter:blur(8px); }
+.background-color-swatches button.active { outline:2px solid rgba(119,145,255,.60); outline-offset:2px; }
+.background-color-note { margin-top:14px; padding:12px; border-radius:13px; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.07); color:#8C97A6; font-size:10px; line-height:1.5; }
+.background-upload-zone { border:1px dashed rgba(143,164,255,.35); border-radius:20px; padding:34px 20px; text-align:center; background:rgba(91,109,255,.06); cursor:pointer; }
+.background-upload-icon { width:46px; height:46px; margin:0 auto 10px; border-radius:14px; display:flex; align-items:center; justify-content:center; background:rgba(111,132,255,.16); color:#AAB8FF; }
+.background-upload-zone strong { display:block; font-size:14px; }
+.background-upload-zone span { display:block; margin-top:6px; color:#8D98A7; font-size:10px; line-height:1.45; }
+.background-upload-zone small { display:block; margin-top:7px; color:#647081; font-size:9px; }
+.background-upload-zone em { display:block; margin-top:12px; color:#9FB3FF; font-style:normal; font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.background-hidden-file { display:none; }
+.background-gallery-btn { margin-top:12px; width:100%; min-height:46px; border-radius:13px; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.07); color:#E8ECF1; display:flex; align-items:center; justify-content:center; gap:8px; font:600 11px Inter,sans-serif; cursor:pointer; }
+.glass-slider-row { padding:14px 2px; }
+.glass-slider-copy { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.glass-slider-copy strong { font-size:11px; }
+.glass-slider-copy span { color:#91A0B0; font-size:10px; }
+.glass-slider-row input { width:100%; accent-color:#6F82FF; margin:12px 0 0; }
+.background-setting-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 2px; border-top:1px solid rgba(255,255,255,.06); }
+.background-setting-row strong { display:block; font-size:11px; }
+.background-setting-row span { display:block; margin-top:4px; color:#7F8996; font-size:9px; line-height:1.4; }
+.background-setting-row select { min-height:38px; padding:0 10px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.06); color:#E8ECF2; }
+.background-setting-tip { display:flex; gap:9px; align-items:center; padding:12px; border-radius:13px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); color:#85919F; font-size:10px; line-height:1.45; }
+.background-drawer-footer { display:flex; gap:10px; padding:14px 16px 16px; border-top:1px solid rgba(255,255,255,.08); background:rgba(8,12,18,.34); }
+.background-reset-btn,.background-apply-btn { min-height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; gap:8px; font:600 11px Inter,sans-serif; cursor:pointer; }
+.background-reset-btn { flex:1; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.05); color:#A8B2BF; }
+.background-apply-btn { flex:1.3; border:1px solid rgba(119,142,255,.28); background:linear-gradient(135deg,#6D7FFF,#4B5EFF); color:white; box-shadow:0 10px 26px rgba(69,83,220,.24); }
+@media (max-width: 768px) {
+  .background-drawer { top:auto; right:0; bottom:0; left:0; width:100%; height:min(92dvh,760px); border-radius:26px 26px 0 0; border-bottom:0; animation:backgroundSheetIn 320ms cubic-bezier(.22,1,.36,1) both; }
+  @keyframes backgroundSheetIn { from{opacity:0;transform:translateY(28px)} to{opacity:1;transform:translateY(0)} }
+  .background-wallpaper-preview { height:118px; }
+  .background-drawer-header { padding-top:18px; }
+  .mobile-dashboard-actions { display:flex; }
+  .glass-pocket-surface { backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1); }
+}
+
+/* Apple-inspired adaptive dashboard: floating glass surfaces, strong hierarchy, and one-column mobile flow. */
+.apple-dashboard{width:min(1480px,100%);margin:0 auto;padding:18px 28px 42px;box-sizing:border-box;color:#F4F6F8}
+.apple-dashboard-header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:14px 4px 18px}
+.apple-title-block{min-width:0}
+.apple-eyebrow{font:700 9px/1 Inter,sans-serif;letter-spacing:.16em;color:#98A2AE;text-transform:uppercase}
+.apple-title-block h1{margin:9px 0 0;font:600 clamp(28px,3.4vw,42px)/1.04 'Space Grotesk',sans-serif;letter-spacing:-1.5px;color:#F7F8FA}
+.apple-title-block p{margin:9px 0 0;color:#A2AAB5;font:13px/1.4 Inter,sans-serif}
+.apple-header-actions{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.apple-glass-button{display:flex;align-items:center;gap:10px;min-height:48px;padding:0 13px;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:rgba(20,25,33,.34);color:#EAF0F5;backdrop-filter:blur(18px) saturate(1.18);-webkit-backdrop-filter:blur(18px) saturate(1.18);cursor:pointer}
+.apple-date-button span{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.apple-date-button strong{font:600 11px Inter,sans-serif}
+.apple-date-button small{font:10px Inter,sans-serif;color:#8D98A5}
+.apple-primary-add{height:48px;padding:0 16px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:linear-gradient(135deg,#FFFFFF,#D8E3FF);color:#101522;display:flex;align-items:center;gap:7px;font:700 12px Inter,sans-serif;cursor:pointer;box-shadow:0 10px 26px rgba(0,0,0,.16)}
+.apple-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-bottom:13px}
+.apple-stat-card{min-width:0;display:flex;align-items:center;gap:12px;text-align:left;padding:15px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.10);background:rgba(20,25,33,.31);color:inherit;cursor:pointer;backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 12px 35px rgba(0,0,0,.10);transition:transform 160ms ease,border-color 160ms ease,background 160ms ease}
+.apple-stat-card:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.18);background:rgba(27,33,42,.40)}
+.apple-stat-icon{width:38px;height:38px;flex:0 0 38px;border-radius:13px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.10)}
+.stat-green{background:rgba(56,205,105,.14);color:#63E58A}.stat-orange{background:rgba(255,144,83,.14);color:#FFAA7D}.stat-blue{background:rgba(87,119,255,.16);color:#9FAFFF}.stat-purple{background:rgba(145,101,255,.16);color:#C1A8FF}
+.apple-stat-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.apple-stat-copy small{font:700 8px/1 Inter,sans-serif;letter-spacing:.12em;color:#8D97A3}
+.apple-stat-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 17px/1.05 'Space Grotesk',sans-serif;color:#F5F7FA}
+.apple-stat-copy em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 Inter,sans-serif;color:#87919E;font-style:normal}
+.apple-main-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(300px,.75fr);gap:13px;align-items:start}
+.apple-panel,.apple-mini-panel{min-width:0;border:1px solid rgba(255,255,255,.10);background:rgba(18,24,32,.33);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 14px 42px rgba(0,0,0,.10);backdrop-filter:blur(20px) saturate(1.15);-webkit-backdrop-filter:blur(20px) saturate(1.15)}
+.apple-panel{border-radius:22px;padding:18px}
+.apple-reminder-panel{width:100%;text-align:left;color:inherit;cursor:pointer;appearance:none;-webkit-appearance:none}
+.apple-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.apple-panel-head.compact{margin-bottom:9px}
+.apple-panel-kicker{font:700 8px/1 Inter,sans-serif;letter-spacing:.15em;color:#8A95A1}
+.apple-panel-head h2{margin:6px 0 0;font:600 18px/1.1 'Space Grotesk',sans-serif;letter-spacing:-.35px;color:#F2F5F8}
+.apple-panel-action,.apple-panel-text-button{display:inline-flex;align-items:center;gap:3px;border:0;background:none;color:#A9B5FF;font:600 10px Inter,sans-serif;cursor:pointer;white-space:nowrap}
+.apple-reminder-list{display:flex;flex-direction:column}
+.apple-reminder-row{display:grid;grid-template-columns:10px 82px minmax(0,1fr) 18px;align-items:center;gap:11px;padding:13px 4px;border-top:1px solid rgba(255,255,255,.06)}
+.apple-reminder-row.is-first{padding-top:10px}
+.apple-reminder-mark{width:8px;height:8px;border-radius:50%;box-shadow:0 0 0 5px rgba(255,255,255,.04)}
+.mark-0{background:#FF7F7F}.mark-1{background:#FFC45B}.mark-2{background:#8C9BFF}.mark-3{background:#68D5A2}
+.apple-reminder-time{display:flex;flex-direction:column;gap:3px;min-width:0}
+.apple-reminder-time strong{font:600 11px/1.1 Inter,sans-serif;color:#EFF2F6;white-space:nowrap}
+.apple-reminder-time small{font:9px/1.1 Inter,sans-serif;color:#7F8A97}
+.apple-reminder-content{min-width:0;display:flex;flex-direction:column;gap:4px}
+.apple-reminder-content strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 11px/1.1 Inter,sans-serif;color:#EEF1F4}
+.apple-reminder-content small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:9px/1.1 Inter,sans-serif;color:#7E8895}
+.apple-reminder-chevron{display:flex;align-items:center;justify-content:center;color:#6E7885}
+.apple-side-stack{display:flex;flex-direction:column;gap:13px}
+.apple-focus-panel,.apple-quick-panel{width:100%}
+.apple-panel-icon-button{width:32px;height:32px;border:1px solid rgba(255,255,255,.09);border-radius:10px;background:rgba(255,255,255,.04);color:#A9B5C2;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.apple-flow-values{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 0 12px}
+.apple-flow-values>div{padding:10px 11px;border-radius:13px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.05)}
+.apple-flow-values span{display:block;font:9px Inter,sans-serif;color:#818C99}.apple-flow-values strong{display:block;margin-top:4px;font:600 13px 'IBM Plex Mono',monospace;color:#EDF1F4}.apple-flow-values strong.income{color:#79E39A}.apple-flow-values strong.expense{color:#FF9C82}
+.apple-flow-bar{height:7px;border-radius:8px;background:rgba(255,255,255,.06);overflow:hidden}.apple-flow-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#5CDA81,#84B7FF);max-width:100%}
+.apple-flow-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;color:#7F8995;font:9px Inter,sans-serif}.apple-flow-foot span:last-child{color:#B3BEFF}
+.apple-quick-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.apple-quick-grid button{min-width:0;display:flex;flex-direction:column;align-items:center;gap:7px;padding:10px 5px;border:1px solid rgba(255,255,255,.06);border-radius:14px;background:rgba(255,255,255,.035);color:#BFC7D0;font:9px Inter,sans-serif;cursor:pointer}
+.apple-quick-grid button>span:first-child{width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center}.quick-red{background:rgba(255,102,93,.14);color:#FF998F}.quick-blue{background:rgba(102,121,255,.15);color:#ABB6FF}.quick-gold{background:rgba(255,184,77,.14);color:#FFC97E}.quick-green{background:rgba(86,213,131,.14);color:#8AE5AA}
+.apple-wide-panel{grid-column:1 / -1}
+.apple-activity-list{display:flex;flex-direction:column}
+.apple-activity-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto 30px;gap:11px;align-items:center;padding:10px 2px;border-top:1px solid rgba(255,255,255,.06)}
+.apple-activity-icon{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.08)}
+.activity-0{background:rgba(87,119,255,.13);color:#A8B6FF}.activity-1{background:rgba(255,148,83,.13);color:#FFB18B}.activity-2{background:rgba(88,210,132,.13);color:#8EE3A7}.activity-3{background:rgba(181,109,255,.13);color:#C9A6FF}
+.apple-activity-copy{min-width:0;display:flex;flex-direction:column;gap:3px}.apple-activity-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 11px Inter,sans-serif;color:#EEF1F5}.apple-activity-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:9px Inter,sans-serif;color:#7B8693}
+.apple-activity-amount{font:600 11px 'IBM Plex Mono',monospace;color:#F3F5F7;white-space:nowrap}.apple-activity-amount.income{color:#79E39A}.apple-row-edit{width:30px;height:30px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);color:#798492;border-radius:9px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.apple-lower-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px;margin-top:13px}
+.apple-mini-panel{min-height:154px;text-align:left;color:inherit;padding:15px;border-radius:19px;cursor:pointer;appearance:none;-webkit-appearance:none}
+.apple-mini-head{display:flex;align-items:center;justify-content:space-between;gap:7px;color:#8D98A4;font:700 8px Inter,sans-serif;letter-spacing:.13em}
+.apple-mini-big{margin-top:13px;font:600 24px/1 'Space Grotesk',sans-serif;color:#F2F5F8}
+.apple-mini-progress{height:6px;border-radius:8px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:10px}.apple-mini-progress span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#8E9AFF,#6DDAA5)}
+.apple-muted-copy{margin-top:9px;color:#77828F;font:9px/1.4 Inter,sans-serif}
+.apple-category-row,.apple-account-row,.apple-goal-row,.apple-recurring-row{margin-top:10px}
+.apple-category-row,.apple-account-row{display:flex;align-items:center;justify-content:space-between;gap:7px;color:#A7B0BA;font:9px Inter,sans-serif}.apple-category-name{min-width:0;display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.apple-category-name i,.apple-account-row i{width:7px;height:7px;border-radius:50%;display:block;flex:0 0 7px}.apple-category-row>span:last-child,.apple-account-row strong{font:600 9px 'IBM Plex Mono',monospace;color:#DCE1E7;white-space:nowrap}
+.apple-goal-row>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:8px}.apple-goal-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#AAB4BF;font:9px Inter,sans-serif}.apple-goal-row span{color:#B9C2FF;font:9px Inter,sans-serif}
+.apple-recurring-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px}.apple-recurring-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#A8B1BB;font:9px Inter,sans-serif}.apple-recurring-row strong{font:600 9px 'IBM Plex Mono',monospace;color:#E5EAF0}.apple-recurring-row small{grid-column:1/-1;color:#707B87;font:8px Inter,sans-serif}
+.apple-empty-state{min-height:215px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px}.apple-empty-state.compact-empty{min-height:120px}.apple-empty-icon{width:40px;height:40px;border-radius:13px;background:rgba(112,136,255,.12);color:#A8B7FF;display:flex;align-items:center;justify-content:center}.apple-empty-state strong{margin-top:11px;color:#E9EEF4;font:600 12px Inter,sans-serif}.apple-empty-state p{margin:6px 0 0;max-width:260px;color:#788491;font:9px/1.5 Inter,sans-serif}
+@media (max-width:1180px){.apple-dashboard{padding-left:20px;padding-right:20px}.apple-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.apple-main-grid{grid-template-columns:minmax(0,1fr) minmax(280px,.72fr)}.apple-lower-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.apple-lower-grid .apple-mini-panel:nth-child(4),.apple-lower-grid .apple-mini-panel:nth-child(5){grid-column:span 1}}
+@media (max-width:920px){.apple-dashboard-header{align-items:flex-start;flex-direction:column}.apple-header-actions{width:100%;justify-content:flex-start}.apple-main-grid{grid-template-columns:1fr}.apple-reminder-panel{grid-row:auto}.apple-side-stack{display:grid;grid-template-columns:1fr 1fr;align-items:start}.apple-lower-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.apple-lower-grid .apple-mini-panel:last-child{grid-column:1/-1}}
+@media (max-width:768px){.apple-dashboard{padding:8px 14px 32px}.apple-dashboard-header{padding:7px 2px 14px;gap:14px}.apple-title-block h1{font-size:30px;letter-spacing:-1px}.apple-title-block p{font-size:12px;margin-top:7px}.apple-header-actions{gap:8px}.apple-date-button{flex:1;min-width:0}.apple-date-button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}.apple-primary-add{flex:0 0 auto;padding:0 14px}.apple-stat-grid{display:flex;overflow-x:auto;gap:9px;margin:0 -2px 12px;padding:2px 2px 5px;scroll-snap-type:x mandatory;scrollbar-width:none}.apple-stat-grid::-webkit-scrollbar{display:none}.apple-stat-card{flex:0 0 min(78vw,276px);scroll-snap-align:start;padding:14px}.apple-main-grid{gap:11px}.apple-panel{padding:15px;border-radius:20px}.apple-panel-head h2{font-size:17px}.apple-reminder-row{grid-template-columns:9px 71px minmax(0,1fr) 16px;gap:9px;padding:12px 2px}.apple-reminder-time strong{font-size:10px}.apple-reminder-content strong{font-size:10px}.apple-reminder-content small,.apple-reminder-time small{font-size:8px}.apple-side-stack{display:flex;flex-direction:column;gap:11px}.apple-quick-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.apple-quick-grid button{padding:9px 3px}.apple-activity-row{grid-template-columns:35px minmax(0,1fr) auto 28px;gap:8px;padding:9px 0}.apple-activity-icon{width:32px;height:32px}.apple-activity-copy strong{font-size:10px}.apple-activity-copy small{font-size:8px}.apple-activity-amount{font-size:10px}.apple-lower-grid{grid-template-columns:1fr;gap:10px}.apple-mini-panel{min-height:0;padding:14px;border-radius:17px}.apple-lower-grid .apple-mini-panel:last-child{grid-column:auto}.apple-flow-values{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.apple-flow-values>div{padding:8px 9px}.apple-flow-values strong{font-size:11px}.apple-flow-values span{font-size:8px}.apple-panel-action{font-size:9px}.apple-reminder-list{max-height:none}.apple-wide-panel{grid-column:auto}}
+@media (prefers-reduced-motion: reduce){.apple-stat-card{transition:none}}
+html[data-pocket-theme="light"] .apple-title-block h1,html[data-pocket-theme="light"] .apple-panel-head h2,html[data-pocket-theme="light"] .apple-stat-copy strong,html[data-pocket-theme="light"] .apple-activity-copy strong{color:#1F252B}
+html[data-pocket-theme="light"] .apple-panel,html[data-pocket-theme="light"] .apple-mini-panel,html[data-pocket-theme="light"] .apple-stat-card{background:rgba(255,255,255,.57);border-color:rgba(70,82,95,.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.82),0 12px 32px rgba(31,44,57,.08)}
+html[data-pocket-theme="light"] .apple-title-block p,html[data-pocket-theme="light"] .apple-stat-copy em,html[data-pocket-theme="light"] .apple-reminder-time small,html[data-pocket-theme="light"] .apple-reminder-content small,html[data-pocket-theme="light"] .apple-flow-foot,html[data-pocket-theme="light"] .apple-muted-copy{color:#69737E}
+html[data-pocket-theme="light"] .apple-reminder-row,html[data-pocket-theme="light"] .apple-activity-row{border-color:rgba(50,64,79,.08)}
+html[data-pocket-theme="light"] .apple-activity-amount,html[data-pocket-theme="light"] .apple-reminder-content strong,html[data-pocket-theme="light"] .apple-reminder-time strong{color:#26303A}
+
+/* ---------- Customizable dashboard grid ---------- */
+.pocket-dashboard-grid{
+  display:grid;
+  grid-template-columns:repeat(12,minmax(0,1fr));
+  grid-auto-flow:dense;
+  gap:12px;
+  align-items:start;
+}
+.pocket-dashboard-widget{
+  position:relative;
+  min-width:0;
+  min-height:0;
+  align-self:start;
+  transition:transform 180ms cubic-bezier(.22,1,.36,1),filter 180ms ease,opacity 180ms ease;
+}
+.pocket-dashboard-widget > .apple-stat-card,
+.pocket-dashboard-widget > .apple-panel,
+.pocket-dashboard-widget > .apple-mini-panel{
+  width:100%;
+  box-sizing:border-box;
+  margin:0;
+}
+.widget-size-small{grid-column:span 3;}
+.widget-size-medium{grid-column:span 4;}
+.widget-size-large{grid-column:span 8;}
+.widget-size-wide{grid-column:1 / -1;}
+.widget-size-small > .apple-stat-card{min-height:126px;}
+.widget-size-medium > .apple-stat-card{min-height:126px;}
+.widget-size-large > .apple-panel{min-height:250px;}
+.widget-size-wide > .apple-panel{min-height:205px;}
+.widget-size-small > .apple-mini-panel,
+.widget-size-medium > .apple-mini-panel{min-height:154px;}
+.pocket-dashboard-grid.is-editing .pocket-dashboard-widget{
+  animation:pocketWidgetWiggle 2.6s ease-in-out infinite;
+  transform-origin:center;
+}
+.pocket-dashboard-grid.is-editing .pocket-dashboard-widget:nth-child(2n){animation-delay:-.7s;}
+.pocket-dashboard-grid.is-editing .pocket-dashboard-widget:nth-child(3n){animation-delay:-1.25s;}
+.pocket-dashboard-widget.is-dragging{
+  z-index:20;
+  opacity:.88;
+  transform:scale(1.025) rotate(.35deg);
+  filter:brightness(1.08) drop-shadow(0 20px 34px rgba(0,0,0,.25));
+  animation:none!important;
+}
+.pocket-widget-controls{
+  position:absolute;
+  top:9px;
+  left:9px;
+  right:9px;
+  z-index:30;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  pointer-events:none;
+}
+.pocket-widget-drag-handle,
+.pocket-widget-resize-controls button,
+.apple-layout-edit,
+.apple-layout-reset{
+  border:1px solid rgba(255,255,255,.13);
+  color:#EEF3F7;
+  background:rgba(16,20,27,.60);
+  box-shadow:0 8px 22px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.06);
+  backdrop-filter:blur(18px) saturate(1.2);
+  -webkit-backdrop-filter:blur(18px) saturate(1.2);
+}
+.pocket-widget-drag-handle{
+  width:34px;height:34px;border-radius:11px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:grab;touch-action:none;pointer-events:auto;
+}
+.pocket-widget-drag-handle:active{cursor:grabbing;}
+.pocket-widget-drag-handle:focus-visible,
+.pocket-widget-resize-controls button:focus-visible,
+.apple-layout-edit:focus-visible,
+.apple-layout-reset:focus-visible{outline:2px solid #7E91FF;outline-offset:2px;}
+.pocket-widget-resize-controls{
+  display:flex;align-items:center;gap:4px;padding:3px;border-radius:12px;
+  background:rgba(16,20,27,.56);
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow:0 8px 22px rgba(0,0,0,.14);
+  backdrop-filter:blur(18px) saturate(1.18);
+  -webkit-backdrop-filter:blur(18px) saturate(1.18);
+  pointer-events:auto;
+}
+.pocket-widget-resize-controls button{
+  width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  padding:0;font:700 16px/1 Inter,sans-serif;cursor:pointer;
+}
+.pocket-widget-resize-controls button:disabled{opacity:.35;cursor:not-allowed;}
+.pocket-widget-resize-controls span{min-width:48px;text-align:center;color:#AEB8C4;font:600 8px Inter,sans-serif;letter-spacing:.02em;}
+.apple-layout-edit,.apple-layout-reset{
+  min-height:42px;padding:0 12px;border-radius:14px;display:flex;align-items:center;gap:7px;
+  font:600 10px Inter,sans-serif;cursor:pointer;
+}
+.apple-layout-edit.is-active{background:rgba(113,129,255,.22);border-color:rgba(126,145,255,.42);color:#C8D0FF;box-shadow:0 0 0 1px rgba(126,145,255,.08),0 10px 22px rgba(76,89,194,.20);}
+.apple-layout-reset{color:#B6C0CB;}
+.dashboard-layout-hint{
+  display:flex;align-items:center;gap:8px;margin:0 2px 12px;padding:10px 12px;border-radius:13px;
+  border:1px dashed rgba(255,255,255,.12);background:rgba(255,255,255,.035);color:#919CAA;
+  font:10px/1.4 Inter,sans-serif;
+}
+.apple-card-click-layer{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;background:transparent;cursor:pointer;z-index:0;}
+.apple-reminder-panel > .apple-panel-head,
+.apple-reminder-panel > .apple-reminder-list{position:relative;z-index:1;pointer-events:none;}
+.apple-reminder-panel > .apple-panel-head .apple-panel-text-button{pointer-events:auto;position:relative;z-index:2;}
+.apple-reminder-panel .apple-reminder-list{pointer-events:none;}
+.apple-reminder-panel{position:relative;}
+
+@keyframes pocketWidgetWiggle{
+  0%,100%{transform:rotate(0deg)}
+  25%{transform:rotate(-.22deg)}
+  50%{transform:rotate(.22deg)}
+  75%{transform:rotate(-.12deg)}
+}
+@media (prefers-reduced-motion:reduce){
+  .pocket-dashboard-grid.is-editing .pocket-dashboard-widget{animation:none;}
+  .pocket-dashboard-widget{transition:none;}
+}
+
+@media (max-width:1180px){
+  .pocket-dashboard-grid{grid-template-columns:repeat(6,minmax(0,1fr));}
+  .widget-size-small{grid-column:span 3;}
+  .widget-size-medium{grid-column:span 3;}
+  .widget-size-large{grid-column:1 / -1;}
+  .widget-size-wide{grid-column:1 / -1;}
+}
+@media (max-width:768px){
+  .pocket-dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+  .widget-size-small,.widget-size-medium{grid-column:span 1;}
+  .widget-size-large,.widget-size-wide{grid-column:1 / -1;}
+  .widget-size-small > .apple-stat-card,.widget-size-medium > .apple-stat-card{min-height:118px;}
+  .widget-size-large > .apple-panel,.widget-size-wide > .apple-panel{min-height:0;}
+  .widget-size-small > .apple-mini-panel,.widget-size-medium > .apple-mini-panel{min-height:138px;}
+  .pocket-widget-controls{top:7px;left:7px;right:7px;}
+  .pocket-widget-drag-handle{width:32px;height:32px;}
+  .pocket-widget-resize-controls span{display:none;}
+  .pocket-widget-resize-controls button{width:30px;height:30px;}
+  .apple-layout-edit,.apple-layout-reset{min-height:40px;padding:0 10px;}
+  .apple-layout-edit span,.apple-layout-reset span{display:none;}
+  .dashboard-layout-hint{font-size:9px;padding:9px 10px;}
+}
+
+html[data-pocket-theme="light"] .pocket-widget-drag-handle,
+html[data-pocket-theme="light"] .pocket-widget-resize-controls,
+html[data-pocket-theme="light"] .pocket-widget-resize-controls button,
+html[data-pocket-theme="light"] .apple-layout-edit,
+html[data-pocket-theme="light"] .apple-layout-reset{
+  color:#2B343F;background:rgba(255,255,255,.72);border-color:rgba(67,79,94,.14);box-shadow:0 8px 20px rgba(31,44,57,.10),inset 0 1px 0 rgba(255,255,255,.86);
+}
+html[data-pocket-theme="light"] .pocket-widget-resize-controls span{color:#64707D;}
+html[data-pocket-theme="light"] .dashboard-layout-hint{color:#64707D;background:rgba(255,255,255,.50);border-color:rgba(67,79,94,.12);}
 
 `;
 
