@@ -161,6 +161,16 @@ function addInterval(dateStr, freq) {
   return d.toISOString().slice(0, 10);
 }
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+function reminderLocalDateTimeToISO(date, time) {
+  if (!date || !time) return null;
+  const [year, month, day] = String(date).split("-").map(Number);
+  const [hour, minute] = String(time).split(":").map(Number);
+  if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+
+  const value = new Date(year, month - 1, day, hour, minute, 0, 0);
+  return Number.isNaN(value.getTime()) ? null : value.toISOString();
+}
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function LedgerApp() {
@@ -445,43 +455,114 @@ export default function LedgerApp() {
     (id) => setRecurring((prev) => prev.filter((r) => r.id !== id)),
     [],
   );
-  const addReminder = useCallback((reminder) => {
-    const normalized = {
-      ...reminder,
-      id: uid(),
-      completed: Boolean(reminder.completed),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setReminders((prev) => [...prev, normalized]);
+  const syncPocketTelegramReminder = useCallback(async (reminder) => {
+    if (!reminder?.id) return;
+
+    const shouldNotifyTelegram =
+      reminder.notification &&
+      reminder.notification !== "none" &&
+      reminder.date &&
+      reminder.time;
+
+    try {
+      if (!shouldNotifyTelegram) {
+        await fetch("/api/telegram?action=cancel-pocket-reminder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reminderId: reminder.id }),
+        });
+        return;
+      }
+
+      const response = await fetch(
+        "/api/telegram?action=schedule-pocket-reminder",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reminderId: reminder.id,
+            title: reminder.title,
+            reminderAt: reminderLocalDateTimeToISO(
+              reminder.date,
+              reminder.time,
+            ),
+            notificationMinutes: Number(reminder.notification) || 0,
+            repeat: reminder.repeat || "none",
+            recurrenceDay: null,
+            recurrenceDays: [],
+          }),
+        },
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.error || "Could not schedule Telegram reminder.");
+      }
+    } catch (error) {
+      console.error("Pocket Telegram reminder sync failed:", error);
+      setMessage(error.message || "Could not sync Telegram reminder.");
+    }
   }, []);
 
-  const updateReminder = useCallback((id, reminder) => {
-    setReminders((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, ...reminder, id, updatedAt: new Date().toISOString() }
-          : item,
-      ),
-    );
-  }, []);
+  const addReminder = useCallback(
+    (reminder) => {
+      const normalized = {
+        ...reminder,
+        id: uid(),
+        completed: Boolean(reminder.completed),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      setReminders((prev) => [...prev, normalized]);
+      void syncPocketTelegramReminder(normalized);
+      return normalized;
+    },
+    [syncPocketTelegramReminder],
+  );
+
+  const updateReminder = useCallback(
+    (id, reminder) => {
+      const updated = {
+        ...reminder,
+        id,
+        updatedAt: new Date().toISOString(),
+      };
+      setReminders((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...updated } : item)),
+      );
+      void syncPocketTelegramReminder(updated);
+      return updated;
+    },
+    [syncPocketTelegramReminder],
+  );
 
   const deleteReminder = useCallback((id) => {
     setReminders((prev) => prev.filter((item) => item.id !== id));
+    void fetch("/api/telegram?action=cancel-pocket-reminder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reminderId: id }),
+    }).catch((error) => {
+      console.error("Pocket Telegram reminder cancellation failed:", error);
+    });
+    return id;
   }, []);
 
   const toggleReminderComplete = useCallback((id) => {
+    let updated = null;
     setReminders((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              completed: !item.completed,
-              updatedAt: new Date().toISOString(),
-            }
-          : item,
-      ),
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        updated = {
+          ...item,
+          completed: !item.completed,
+          updatedAt: new Date().toISOString(),
+        };
+        return updated;
+      }),
     );
+    return updated;
   }, []);
 
   const exportBackup = useCallback(() => {
