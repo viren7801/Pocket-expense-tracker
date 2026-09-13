@@ -4,7 +4,7 @@ import {
   isAuthenticated,
   readJsonBody,
   ORIGIN,
-} from "./auth/_utils.js";
+} from "../lib/auth-utils.js";
 
 const LINK_TTL_MS = 10 * 60 * 1000;
 
