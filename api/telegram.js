@@ -910,6 +910,10 @@ export default async function handler(req, res) {
       const title = typeof body.title === "string" ? body.title.trim() : "";
       const reminderAt =
         typeof body.reminderAt === "string" ? body.reminderAt : "";
+      const notificationMinutes = Math.max(
+        0,
+        Math.min(10080, Number(body.notificationMinutes || 0)),
+      );
       const repeat = typeof body.repeat === "string" ? body.repeat : "none";
       const recurrenceDays = normalizeDays(body.recurrenceDays);
       const recurrenceDay =
@@ -925,8 +929,16 @@ export default async function handler(req, res) {
       if (Number.isNaN(reminderDate.getTime())) {
         return json(res, 400, { error: "Invalid reminder date" });
       }
-      if (reminderDate.getTime() <= Date.now()) {
-        return json(res, 400, { error: "Choose a future reminder time" });
+
+      const notificationDate = new Date(
+        reminderDate.getTime() - notificationMinutes * 60 * 1000,
+      );
+
+      if (notificationDate.getTime() <= Date.now()) {
+        return json(res, 400, {
+          error:
+            "The selected notification time must be in the future. Choose a later reminder time or a shorter notification lead time.",
+        });
       }
 
       const allowedRepeats = new Set([
@@ -970,7 +982,7 @@ export default async function handler(req, res) {
             id: storageId,
             note_id: reminderId,
             title,
-            reminder_at: reminderDate.toISOString(),
+            reminder_at: notificationDate.toISOString(),
             recurrence,
             recurrence_day: normalizedDay,
             recurrence_days: normalizedDays,
@@ -996,7 +1008,7 @@ export default async function handler(req, res) {
         noteId: reminderId,
         title,
         action: "scheduled",
-        detail: `Pocket reminder · ${recurrence}`,
+        detail: `Pocket reminder · ${recurrence} · ${notificationMinutes ? `${notificationMinutes} min before` : "at reminder time"}`,
       });
 
       return json(res, 200, { scheduled: true, reminder });
