@@ -90,6 +90,22 @@ export async function loadData() {
   }
 
   const payload = { ...data.payload };
+  const requiredArrays = [
+    "accounts",
+    "transactions",
+    "budgets",
+    "goals",
+    "recurring",
+    "reminders",
+  ];
+
+  for (const key of requiredArrays) {
+    if (!Array.isArray(payload[key])) {
+      throw new Error(
+        `Pocket data is invalid or incomplete: ${key} is missing.`,
+      );
+    }
+  }
 
   if (payload.notesVault?.dataStoragePath) {
     payload.notesVault = await hydrateNotesVault(payload.notesVault);
@@ -98,7 +114,79 @@ export async function loadData() {
   return payload;
 }
 
-export async function saveData(payload) {
+async function saveDataInternal(payload, options = {}) {
+  const { allowDestructive = false } = options;
+
+  // Safety contract: the main payload must always contain the core arrays.
+  // A transient/failed UI state must never be allowed to replace real data.
+  const requiredArrays = [
+    "accounts",
+    "transactions",
+    "budgets",
+    "goals",
+    "recurring",
+    "reminders",
+  ];
+
+  for (const key of requiredArrays) {
+    if (!Array.isArray(payload?.[key])) {
+      throw new Error(
+        `Refusing to save invalid Pocket data: ${key} is not an array.`,
+      );
+    }
+  }
+
+  // Read the current server copy before every write. This is intentionally
+  // conservative: if the new state suddenly loses a large amount of data,
+  // block the write instead of turning a UI bug into permanent data loss.
+  const { data: currentRow, error: readError } = await supabase
+    .from("app_data")
+    .select("payload")
+    .eq("id", "main")
+    .maybeSingle();
+
+  if (readError) {
+    console.error("Supabase pre-save safety check failed:", readError);
+    throw new Error(
+      `Pocket could not verify the existing data before saving: ${
+        readError.message || "Supabase unavailable"
+      }`,
+    );
+  }
+
+  const current = currentRow?.payload;
+
+  if (current) {
+    const currentTransactions = Array.isArray(current.transactions)
+      ? current.transactions
+      : [];
+    const nextTransactions = payload.transactions;
+
+    // Never silently replace an existing transaction history with an empty
+    // one. An explicit clear-all operation is the only exception.
+    if (
+      currentTransactions.length > 0 &&
+      nextTransactions.length === 0 &&
+      !allowDestructive
+    ) {
+      throw new Error(
+        `Safety stop: Pocket tried to replace ${currentTransactions.length} transactions with 0. No data was changed.`,
+      );
+    }
+
+    // Also protect against a catastrophic partial-state overwrite. Normal
+    // edits should not delete 90%+ of the transaction history in one save.
+    if (
+      currentTransactions.length >= 10 &&
+      nextTransactions.length < currentTransactions.length * 0.1 &&
+      !allowDestructive
+    ) {
+      throw new Error(
+        `Safety stop: transaction count dropped from ${currentTransactions.length} to ${nextTransactions.length}. No data was changed.`,
+      );
+    }
+  }
+
   const notesVault = await uploadNotesVaultData(payload.notesVault);
 
   const payloadForDatabase = {
@@ -119,4 +207,18 @@ export async function saveData(payload) {
     console.error("Supabase save error:", error);
     throw new Error(error.message || "Supabase database save failed.");
   }
+}
+
+// Serialize writes so rapid React state changes cannot race each other and
+// accidentally restore an older snapshot after a newer one.
+let saveQueue = Promise.resolve();
+
+export function saveData(payload, options = {}) {
+  const run = saveQueue
+    .catch(() => {})
+    .then(() => saveDataInternal(payload, options));
+
+  saveQueue = run.catch(() => {});
+
+  return run;
 }
