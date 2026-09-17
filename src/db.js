@@ -3,15 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// This bucket stores only the already-encrypted Notes vault payload.
-// Attachments are inside the encrypted vault, so Supabase never receives
-// readable note text or readable attachment contents.
+// Notes vault data is encrypted before it reaches Supabase. The encrypted
+// payload may be stored in Supabase Storage when it becomes large.
 const NOTES_VAULT_BUCKET = "pocket-vault-data";
 const NOTES_VAULT_PATH = "app-data/main/notes-vault.json";
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function uploadNotesVaultData(notesVault) {
+  // Preserve legacy/empty vaults exactly as they are.
   if (
     !notesVault ||
     notesVault.version !== 2 ||
@@ -39,8 +39,8 @@ async function uploadNotesVaultData(notesVault) {
     );
   }
 
-  // Keep all vault keys/settings in Postgres, but move the potentially huge
-  // encrypted ciphertext (including encrypted attachments) to Storage.
+  // Keep the database schema/format the app already uses: metadata and keys
+  // remain in app_data, while the encrypted ciphertext lives in Storage.
   return {
     ...notesVault,
     data: null,
@@ -50,6 +50,12 @@ async function uploadNotesVaultData(notesVault) {
 
 async function hydrateNotesVault(notesVault) {
   if (!notesVault?.dataStoragePath) {
+    return notesVault;
+  }
+
+  // Already hydrated. This also keeps compatibility with older records that
+  // contain data directly in app_data.
+  if (notesVault.data?.iv && notesVault.data?.ciphertext) {
     return notesVault;
   }
 
@@ -66,6 +72,10 @@ async function hydrateNotesVault(notesVault) {
 
   const text = await data.text();
   const vaultData = JSON.parse(text);
+
+  if (!vaultData?.iv || !vaultData?.ciphertext) {
+    throw new Error("Stored Notes vault data is invalid.");
+  }
 
   return {
     ...notesVault,
@@ -90,23 +100,16 @@ export async function loadData() {
   }
 
   const payload = { ...data.payload };
-  const requiredArrays = [
-    "accounts",
-    "transactions",
-    "budgets",
-    "goals",
-    "recurring",
-    "reminders",
-  ];
 
-  for (const key of requiredArrays) {
-    if (!Array.isArray(payload[key])) {
-      throw new Error(
-        `Pocket data is invalid or incomplete: ${key} is missing.`,
-      );
-    }
+  // The app needs a transaction array to operate safely. Do not turn malformed
+  // or partially loaded database state into an empty new database.
+  if (!Array.isArray(payload.transactions)) {
+    throw new Error("Pocket data is invalid: transactions are missing.");
   }
 
+  // Restore the encrypted Notes payload from Storage when the database record
+  // contains a dataStoragePath. This is required by the existing Notes vault
+  // implementation and must not be removed by the safety changes.
   if (payload.notesVault?.dataStoragePath) {
     payload.notesVault = await hydrateNotesVault(payload.notesVault);
   }
@@ -117,28 +120,15 @@ export async function loadData() {
 async function saveDataInternal(payload, options = {}) {
   const { allowDestructive = false } = options;
 
-  // Safety contract: the main payload must always contain the core arrays.
-  // A transient/failed UI state must never be allowed to replace real data.
-  const requiredArrays = [
-    "accounts",
-    "transactions",
-    "budgets",
-    "goals",
-    "recurring",
-    "reminders",
-  ];
-
-  for (const key of requiredArrays) {
-    if (!Array.isArray(payload?.[key])) {
-      throw new Error(
-        `Refusing to save invalid Pocket data: ${key} is not an array.`,
-      );
-    }
+  // Never write a partially initialized application state.
+  if (!Array.isArray(payload?.transactions)) {
+    throw new Error(
+      "Refusing to save invalid Pocket data: transactions is not an array.",
+    );
   }
 
-  // Read the current server copy before every write. This is intentionally
-  // conservative: if the new state suddenly loses a large amount of data,
-  // block the write instead of turning a UI bug into permanent data loss.
+  // Read the current server copy before writing. A UI/load bug that suddenly
+  // produces an empty ledger must not silently overwrite the real one.
   const { data: currentRow, error: readError } = await supabase
     .from("app_data")
     .select("payload")
@@ -162,8 +152,8 @@ async function saveDataInternal(payload, options = {}) {
       : [];
     const nextTransactions = payload.transactions;
 
-    // Never silently replace an existing transaction history with an empty
-    // one. An explicit clear-all operation is the only exception.
+    // Intentional "Clear all data" is the only path allowed to empty a
+    // previously populated transaction history in one operation.
     if (
       currentTransactions.length > 0 &&
       nextTransactions.length === 0 &&
@@ -174,8 +164,8 @@ async function saveDataInternal(payload, options = {}) {
       );
     }
 
-    // Also protect against a catastrophic partial-state overwrite. Normal
-    // edits should not delete 90%+ of the transaction history in one save.
+    // Normal edits should not unexpectedly remove almost the entire ledger.
+    // This catches corrupted/partially loaded state before it reaches Supabase.
     if (
       currentTransactions.length >= 10 &&
       nextTransactions.length < currentTransactions.length * 0.1 &&
@@ -187,8 +177,8 @@ async function saveDataInternal(payload, options = {}) {
     }
   }
 
+  // Keep the existing Notes storage format intact.
   const notesVault = await uploadNotesVaultData(payload.notesVault);
-
   const payloadForDatabase = {
     ...payload,
     notesVault,
@@ -209,8 +199,8 @@ async function saveDataInternal(payload, options = {}) {
   }
 }
 
-// Serialize writes so rapid React state changes cannot race each other and
-// accidentally restore an older snapshot after a newer one.
+// Serialize writes so rapid React state changes cannot race one another and
+// restore an older snapshot after a newer one.
 let saveQueue = Promise.resolve();
 
 export function saveData(payload, options = {}) {

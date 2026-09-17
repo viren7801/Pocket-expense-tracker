@@ -7101,6 +7101,27 @@ export default function NotesView({
           }
         }
 
+        .pocketNoteFormModal {
+          overscroll-behavior: contain;
+          scrollbar-gutter: stable;
+        }
+
+        @media (max-width: 640px) {
+          .pocketNoteFormModal {
+            width: calc(100vw - 20px) !important;
+            max-height: calc(100vh - 20px) !important;
+            padding: 16px !important;
+            border-radius: 16px !important;
+          }
+
+          .pocketNoteFormModal .noteFormFooter {
+            margin-left: -16px !important;
+            margin-right: -16px !important;
+            padding-left: 16px !important;
+            padding-right: 16px !important;
+          }
+        }
+
         /* Unified floating-menu behavior */
         [data-floating-menu="true"] {
           isolation: isolate;
@@ -8866,7 +8887,7 @@ export default function NotesView({
             style={{
               ...styles.detailPanel,
               ...(focusMode ? styles.detailPanelFocus : {}),
-              ...(selected.color
+              ...(selected?.color
                 ? { boxShadow: `inset 0 3px 0 ${selected.color}` }
                 : {}),
             }}
@@ -11025,7 +11046,7 @@ export default function NotesView({
 
         {showRecoverySetup && (
           <div style={styles.overlay}>
-            <div style={styles.formModal}>
+            <div className="pocketNoteFormModal" style={styles.formModal}>
               <button
                 type="button"
                 style={styles.modalClose}
@@ -11969,7 +11990,8 @@ export default function NotesView({
                   onKeyDown={handleEditorKeyDown}
                   style={{
                     ...styles.editorTextarea,
-                    minHeight: 330,
+                    minHeight: "clamp(220px, 30vh, 330px)",
+                    maxHeight: "44vh",
                     overflowY: "auto",
                     whiteSpace: "pre-wrap",
                     outline: "none",
@@ -12132,7 +12154,7 @@ export default function NotesView({
                 );
               })()}
 
-              <div style={styles.noteFormFooter}>
+              <div className="noteFormFooter" style={styles.noteFormFooter}>
                 <button
                   type="button"
                   style={styles.secondaryButton}
@@ -15961,13 +15983,13 @@ const styles = {
     flexShrink: 0,
   },
   formModal: {
-    width: "min(560px, calc(100vw - 40px))",
-    maxHeight: "calc(100vh - 40px)",
+    width: "min(760px, calc(100vw - 32px))",
+    maxHeight: "calc(100vh - 28px)",
     overflowY: "auto",
     background: "#1A1D24",
     border: "1px solid #30343D",
-    borderRadius: 15,
-    padding: 24,
+    borderRadius: 18,
+    padding: 22,
     position: "relative",
     boxSizing: "border-box",
     boxShadow: "0 30px 90px rgba(0,0,0,.5)",

@@ -175,6 +175,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function LedgerApp() {
   const [loaded, setLoaded] = useState(false);
+  const [dataLoadFailed, setDataLoadFailed] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [budgets, setBudgets] = useState([]);
@@ -201,13 +202,18 @@ export default function LedgerApp() {
   const [showScanModal, setShowScanModal] = useState(false);
   const [txnPrefill, setTxnPrefill] = useState(null);
   const [saveError, setSaveError] = useState(false);
+  const transactionActionRef = useRef(null);
   const fileInputRef = useRef(null);
 
   // Load
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         const data = await loadData();
+        if (cancelled) return;
+
         if (data) {
           setAccounts(data.accounts || []);
           setTransactions(data.transactions || []);
@@ -219,6 +225,8 @@ export default function LedgerApp() {
           setPasswordVault(data.passwordVault || null);
           setNotesVault(data.notesVault || null);
         } else {
+          // This is a genuinely empty/new Pocket database. Seed only in this
+          // case. A failed load must NEVER be treated as a fresh start.
           setAccounts([
             {
               id: uid(),
@@ -236,12 +244,23 @@ export default function LedgerApp() {
             },
           ]);
         }
-      } catch (e) {
-        // fresh start
-      } finally {
+
+        setDataLoadFailed(false);
         setLoaded(true);
+      } catch (e) {
+        console.error("Pocket data load failed:", e);
+        if (cancelled) return;
+
+        // CRITICAL: remain unloaded. This prevents the persistence effect
+        // from saving empty React state over the real Supabase data.
+        setDataLoadFailed(true);
+        setLoaded(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -352,19 +371,25 @@ export default function LedgerApp() {
     if (!loaded) return;
     (async () => {
       try {
-        await saveData({
-          accounts,
-          transactions,
-          budgets,
-          goals,
-          recurring,
-          reminders,
-          categories,
-          passwordVault,
-          notesVault,
-        });
+        await saveData(
+          {
+            accounts,
+            transactions,
+            budgets,
+            goals,
+            recurring,
+            reminders,
+            categories,
+            passwordVault,
+            notesVault,
+          },
+          { allowDestructive: transactionActionRef.current === "delete" },
+        );
+        transactionActionRef.current = null;
         setSaveError(false);
       } catch (e) {
+        console.error("Pocket save failed:", e);
+        transactionActionRef.current = null;
         setSaveError(true);
       }
     })();
@@ -398,16 +423,24 @@ export default function LedgerApp() {
 
   const updateTransaction = useCallback(
     (id, txn) => {
+      if (id == null) return;
       ensureCategory(txn.type, txn.category);
       setTransactions((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, ...txn } : t)),
+        prev.map((t) =>
+          String(t.id) === String(id) ? { ...t, ...txn, id: t.id } : t,
+        ),
       );
     },
     [ensureCategory],
   );
 
   const deleteTransaction = useCallback((id) => {
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    if (id == null) return;
+    // This flag is set only by an explicit user-initiated transaction delete.
+    // It lets the DB safety layer distinguish a deliberate delete from a
+    // corrupted/empty React state that should never overwrite the database.
+    transactionActionRef.current = "delete";
+    setTransactions((prev) => prev.filter((t) => String(t.id) !== String(id)));
   }, []);
 
   const addAccount = useCallback((acc) => {
@@ -643,17 +676,20 @@ export default function LedgerApp() {
 
   const clearAllData = useCallback(async () => {
     try {
-      await saveData({
-        accounts: [],
-        transactions: [],
-        budgets: [],
-        goals: [],
-        recurring: [],
-        reminders: [],
-        categories: SEED_CATEGORIES,
-        passwordVault: null,
-        notesVault: null,
-      });
+      await saveData(
+        {
+          accounts: [],
+          transactions: [],
+          budgets: [],
+          goals: [],
+          recurring: [],
+          reminders: [],
+          categories: SEED_CATEGORIES,
+          passwordVault: null,
+          notesVault: null,
+        },
+        { allowDestructive: true },
+      );
       setAccounts([]);
       setTransactions([]);
       setBudgets([]);
@@ -887,20 +923,58 @@ export default function LedgerApp() {
       <div
         style={{
           background: "#14161B",
-          height: "100vh",
+          minHeight: "100vh",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          padding: 24,
         }}
       >
         <div
           style={{
-            color: "#8B8F98",
+            width: "min(420px, 100%)",
+            color: "#E8EAED",
             fontFamily: "Inter, sans-serif",
-            fontSize: 14,
+            textAlign: "center",
           }}
         >
-          Loading ledger…
+          {dataLoadFailed ? (
+            <>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>
+                Your Pocket data was not loaded
+              </div>
+              <div
+                style={{
+                  color: "#8B8F98",
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                  marginBottom: 20,
+                }}
+              >
+                Pocket could not safely read your saved data. Nothing will be
+                written to the database until the data loads successfully.
+              </div>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                style={{
+                  border: "1px solid #343842",
+                  background: "#20232A",
+                  color: "#FFFFFF",
+                  borderRadius: 12,
+                  padding: "11px 18px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <div style={{ color: "#8B8F98", fontSize: 14 }}>
+              Loading ledger…
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2833,19 +2907,11 @@ function TxnModal({
           </select>
         )}
       </Field>
-      <Field label="Account">
-        <select
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          style={styles.input}
-        >
-          {availableAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <AccountPicker
+        accounts={availableAccounts}
+        value={accountId}
+        onChange={setAccountId}
+      />
       <Field label="Date">
         <input
           type="date"
@@ -3179,19 +3245,11 @@ function RecurringModal({ accounts, categories, onClose, onSave }) {
           </select>
         )}
       </Field>
-      <Field label="Account">
-        <select
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          style={styles.input}
-        >
-          {availableAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
-      </Field>
+      <AccountPicker
+        accounts={availableAccounts}
+        value={accountId}
+        onChange={setAccountId}
+      />
       <Field label="Frequency">
         <select
           value={frequency}
@@ -4160,6 +4218,130 @@ function Field({ label, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+function AccountPicker({ accounts, value, onChange, label = "Account" }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!ref.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  const selected = accounts.find((account) => account.id === value);
+
+  return (
+    <Field label={label}>
+      <div ref={ref} style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          disabled={accounts.length === 0}
+          style={{
+            ...styles.input,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            textAlign: "left",
+            cursor: accounts.length ? "pointer" : "not-allowed",
+            opacity: accounts.length ? 1 : 0.6,
+          }}
+        >
+          <span
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {selected?.name ||
+              (accounts.length ? "Select account" : "No accounts available")}
+          </span>
+          <ChevronRight
+            size={15}
+            style={{
+              flexShrink: 0,
+              color: "#8B8F98",
+              transform: open ? "rotate(-90deg)" : "rotate(90deg)",
+              transition: "transform 160ms ease",
+            }}
+          />
+        </button>
+
+        {open && accounts.length > 0 && (
+          <div
+            role="listbox"
+            aria-label="Accounts"
+            style={{
+              position: "absolute",
+              zIndex: 100,
+              left: 0,
+              right: 0,
+              top: "calc(100% + 6px)",
+              maxHeight: 220,
+              overflowY: "auto",
+              padding: 6,
+              background: "#171A20",
+              border: "1px solid #303640",
+              borderRadius: 10,
+              boxShadow: "0 18px 40px rgba(0,0,0,.42)",
+            }}
+          >
+            {accounts.map((account) => {
+              const active = account.id === value;
+              return (
+                <button
+                  key={account.id}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    onChange(account.id);
+                    setOpen(false);
+                  }}
+                  style={{
+                    width: "100%",
+                    border: 0,
+                    borderRadius: 8,
+                    padding: "10px 11px",
+                    background: active ? "#222A22" : "transparent",
+                    color: active ? "#75DD8A" : "#ECEAE3",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                  }}
+                >
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {account.name}
+                  </span>
+                  {active && <span aria-hidden="true">✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Field>
   );
 }
 
