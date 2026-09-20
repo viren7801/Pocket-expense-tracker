@@ -78,6 +78,60 @@ export default async function handler(req, res) {
       return json(res, 200, { unsubscribed: true });
     }
 
+    if (action === "schedule-reminder") {
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+      const body = await readJsonBody(req);
+      const reminderId = typeof body?.reminderId === "string" ? body.reminderId.trim() : "";
+      const title = typeof body?.title === "string" ? body.title.trim() : "";
+      const reminderAt = typeof body?.reminderAt === "string" ? body.reminderAt : "";
+      const notificationMinutes = Math.max(0, Math.min(10080, Number(body?.notificationMinutes || 0)));
+      const recurrence = ["none", "daily", "weekly", "monthly", "yearly"].includes(body?.repeat) ? body.repeat : "none";
+      const recurrenceDays = Array.isArray(body?.recurrenceDays) ? body.recurrenceDays.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 6) : [];
+      const recurrenceDay = recurrence === "monthly" ? Math.min(31, Math.max(1, Number(body?.recurrenceDay || 1))) : null;
+      if (!reminderId || !title || !reminderAt) return json(res, 400, { error: "Reminder data is incomplete." });
+      const reminderDate = new Date(reminderAt);
+      if (Number.isNaN(reminderDate.getTime())) return json(res, 400, { error: "Invalid reminder date." });
+      const notificationDate = new Date(reminderDate.getTime() - notificationMinutes * 60000);
+      if (notificationDate.getTime() <= Date.now()) return json(res, 400, { error: "The phone notification time must be in the future." });
+      const storageId = "r:" + reminderId;
+      const { error } = await supabase.from("telegram_reminder").upsert({
+        id: storageId,
+        note_id: reminderId,
+        title,
+        reminder_at: notificationDate.toISOString(),
+        recurrence,
+        recurrence_day: recurrenceDay,
+        recurrence_days: recurrence === "weekly" ? Array.from(new Set(recurrenceDays)) : [],
+        recurrence_interval: null,
+        recurrence_unit: null,
+        status: "pending",
+        sent_at: null,
+        locked_at: null,
+        attempts: 0,
+        last_error: null,
+        notify_push: true,
+        push_sent_at: null,
+      }, { onConflict: "id" });
+      if (error) throw error;
+      return json(res, 200, { scheduled: true });
+    }
+
+    if (action === "cancel-reminder") {
+      if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+      const body = await readJsonBody(req);
+      const reminderId = typeof body?.reminderId === "string" ? body.reminderId.trim() : "";
+      if (!reminderId) return json(res, 400, { error: "Reminder id is required." });
+      const id = "r:" + reminderId;
+      const { error } = await supabase.from("telegram_reminder").update({
+        notify_push: false,
+        push_sent_at: null,
+      }).eq("id", id);
+      if (error) throw error;
+      const { data: remaining } = await supabase.from("telegram_reminder").select("notify_telegram").eq("id", id).maybeSingle();
+      if (remaining && !remaining.notify_telegram) await supabase.from("telegram_reminder").delete().eq("id", id);
+      return json(res, 200, { cancelled: true });
+    }
+
     if (action === "test") {
       if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
       const result = await sendPushToAll(supabase, {
