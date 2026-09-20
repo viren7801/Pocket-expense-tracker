@@ -991,16 +991,16 @@ export default function RemindersView({
                   className="icon-button danger"
                   onClick={async () => {
                     try {
-                      await fetch(
-                        "/api/telegram?action=cancel-pocket-reminder",
-                        {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            reminderId: detailsReminder.id,
-                          }),
-                        },
-                      );
+                      await fetch("/api/telegram?action=cancel-pocket-reminder", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ reminderId: detailsReminder.id }),
+                      });
+                      await fetch("/api/push?action=cancel-reminder", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ reminderId: detailsReminder.id }),
+                      });
                     } catch {}
                     onDelete(detailsReminder.id);
                     setDetailsId(null);
