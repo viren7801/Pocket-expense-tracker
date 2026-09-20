@@ -428,6 +428,10 @@ export default function RemindersView({
       setTelegramError("Connect Telegram before enabling Telegram reminders.");
       return;
     }
+    if (payload.notifyPush && !phoneNotifications) {
+      setTelegramError("Enable phone notifications before enabling phone reminders.");
+      return;
+    }
 
     try {
       const saved = editingId
@@ -488,6 +492,13 @@ export default function RemindersView({
                 <Link2 size={13} /> {telegramBusy ? "Connecting…" : "Connect"}
               </button>
             )}
+          </div>
+          <div className={`telegram-status-pill ${phoneNotifications ? "connected" : ""}`}>
+            <span className="telegram-status-dot" />
+            <span>{phoneNotifications ? "Phone notifications on" : "Phone notifications off"}</span>
+            <button type="button" onClick={phoneNotifications ? testPhonePush : enablePhonePush} disabled={phoneBusy}>
+              {phoneBusy ? "Working…" : phoneNotifications ? "Test" : "Enable"}
+            </button>
           </div>
           <label className="reminders-search">
             <Search size={17} />
@@ -914,6 +925,19 @@ export default function RemindersView({
                 {telegramConnected
                   ? "Sent at the reminder time, even when Pocket is closed."
                   : "Connect Telegram above to enable this."}
+              </small>
+            </label>
+            <label className="telegram-reminder-option">
+              <input
+                type="checkbox"
+                checked={Boolean(draft.notifyPush)}
+                onChange={(e) => setDraft((p) => ({ ...p, notifyPush: e.target.checked }))}
+              />
+              <span>Notify me on phone</span>
+              <small>
+                {phoneNotifications
+                  ? "Sent even when Pocket is closed."
+                  : "Enable phone notifications above first."}
               </small>
             </label>
             {telegramError && (
