@@ -1013,11 +1013,18 @@ export default async function handler(req, res) {
 
       const { error } = await supabase
         .from("telegram_reminder")
-        .delete()
-        .eq("id", `r:${reminderId}`);
-
+        .update({ notify_telegram: false, telegram_sent_at: null })
+        .eq("id", "r:" + reminderId);
       if (error) throw error;
 
+      const { data: remaining } = await supabase
+        .from("telegram_reminder")
+        .select("notify_push")
+        .eq("id", "r:" + reminderId)
+        .maybeSingle();
+      if (remaining && !remaining.notify_push) {
+        await supabase.from("telegram_reminder").delete().eq("id", "r:" + reminderId);
+      }
       return json(res, 200, { cancelled: true });
     }
 
