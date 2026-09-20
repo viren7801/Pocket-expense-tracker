@@ -5,6 +5,7 @@ import {
   readJsonBody,
   ORIGIN,
 } from "../lib/auth-utils.js";
+import { sendPushToAll } from "../lib/push.js";
 
 const LINK_TTL_MS = 10 * 60 * 1000;
 
@@ -503,7 +504,7 @@ export default async function handler(req, res) {
       const { data: reminders, error: reminderQueryError } = await supabase
         .from("telegram_reminder")
         .select(
-          "id, note_id, title, reminder_at, status, locked_at, attempts, recurrence, recurrence_day, recurrence_days, recurrence_interval, recurrence_unit, snooze_original_at, snooze_until",
+          "id, note_id, title, reminder_at, status, locked_at, attempts, recurrence, recurrence_day, recurrence_days, recurrence_interval, recurrence_unit, snooze_original_at, snooze_until, notify_push, notify_telegram, push_sent_at, telegram_sent_at",
         )
         .lte("reminder_at", now)
         .or(
@@ -554,68 +555,46 @@ export default async function handler(req, res) {
         }
 
         try {
-          /*
-           * Get Telegram connection.
-           */
-          const { data: connection } = await supabase
-            .from("telegram_connection")
-            .select("chat_id")
-            .eq("id", "main")
-            .maybeSingle();
+          const isPocketReminder = String(reminder.id || "").startsWith("r:");
+          const reminderPrefix = isPocketReminder ? "🔔 Pocket reminder" : "🔔 Pocket Notes reminder";
 
-          if (!connection?.chat_id) {
-            throw new Error("Telegram is not connected.");
+          if (reminder.notify_push && !reminder.push_sent_at) {
+            const pushResult = await sendPushToAll(supabase, { type: "reminder", title: "Pocket reminder", body: reminder.title, url: "/", tag: "pocket-reminder-" + reminder.id });
+            if (pushResult.total === 0) throw new Error("No active phone notification subscription is registered.");
+            const pushStamp = new Date().toISOString();
+            await supabase.from("telegram_reminder").update({ push_sent_at: pushStamp }).eq("id", reminder.id);
+            reminder.push_sent_at = pushStamp;
           }
 
-          /*
-           * Send Telegram message.
-           */
-          const isPocketReminder = String(reminder.id || "").startsWith("r:");
-          const reminderPrefix = isPocketReminder
-            ? "🔔 Pocket reminder"
-            : "🔔 Pocket Notes reminder";
-
-          await telegramRequest("sendMessage", {
-            chat_id: connection.chat_id,
-
-            text: `${reminderPrefix}\n\n${reminder.title}\n\nNeed more time?`,
-
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "5 min", callback_data: `snooze:5:${reminder.id}` },
-                  { text: "15 min", callback_data: `snooze:15:${reminder.id}` },
-                  { text: "30 min", callback_data: `snooze:30:${reminder.id}` },
-                ],
-                [
-                  { text: "1 hour", callback_data: `snooze:60:${reminder.id}` },
-                  {
-                    text: "Tomorrow",
-                    callback_data: `snooze:1440:${reminder.id}`,
-                  },
-                ],
-              ],
-            },
-          });
-
+          if (reminder.notify_telegram && !reminder.telegram_sent_at) {
+            const { data: connection } = await supabase.from("telegram_connection").select("chat_id").eq("id", "main").maybeSingle();
+            if (!connection?.chat_id) throw new Error("Telegram is not connected.");
+            await telegramRequest("sendMessage", {
+              chat_id: connection.chat_id,
+              text: reminderPrefix + "\n\n" + reminder.title + "\n\nNeed more time?",
+              reply_markup: { inline_keyboard: [[
+                { text: "5 min", callback_data: "snooze:5:" + reminder.id },
+                { text: "15 min", callback_data: "snooze:15:" + reminder.id },
+                { text: "30 min", callback_data: "snooze:30:" + reminder.id },
+              ], [
+                { text: "1 hour", callback_data: "snooze:60:" + reminder.id },
+                { text: "Tomorrow", callback_data: "snooze:1440:" + reminder.id },
+              ]] },
+            });
+            const telegramStamp = new Date().toISOString();
+            await supabase.from("telegram_reminder").update({ telegram_sent_at: telegramStamp }).eq("id", reminder.id);
+            reminder.telegram_sent_at = telegramStamp;
+          }
           const recurrence = reminder.recurrence || "none";
+
+          const channelsDone = (!reminder.notify_push || Boolean(reminder.push_sent_at)) && (!reminder.notify_telegram || Boolean(reminder.telegram_sent_at));
+          if (!channelsDone) throw new Error("Reminder delivery is incomplete.");
 
           /*
            * ONE-TIME REMINDER
            */
           if (recurrence === "none") {
-            await supabase
-              .from("telegram_reminder")
-              .update({
-                status: "sent",
-
-                sent_at: new Date().toISOString(),
-
-                locked_at: null,
-
-                last_error: null,
-              })
-              .eq("id", reminder.id);
+            await supabase.from("telegram_reminder").update({ status: "sent", sent_at: new Date().toISOString(), locked_at: null, last_error: null }).eq("id", reminder.id);
           } else {
             /*
              * RECURRING REMINDER
@@ -668,12 +647,11 @@ export default async function handler(req, res) {
                 reminder_at: nextAt,
 
                 sent_at: new Date().toISOString(),
-
                 locked_at: null,
-
                 attempts: 0,
-
                 last_error: null,
+                push_sent_at: null,
+                telegram_sent_at: null,
               })
               .eq("id", reminder.id);
           }
