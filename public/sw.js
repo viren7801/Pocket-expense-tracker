@@ -10,8 +10,6 @@ self.addEventListener("push", (event) => {
     const title = payload.title || "Pocket";
     const options = {
       body: payload.body || "You have a reminder.",
-      icon: "/icon-192.png",
-      badge: "/icon-192.png",
       tag: payload.tag || "pocket-reminder",
       renotify: true,
       data: { url: payload.url || "/" },
