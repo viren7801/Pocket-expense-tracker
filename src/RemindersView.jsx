@@ -334,6 +334,7 @@ export default function RemindersView({
       } else {
         await syncTelegramReminder(updated);
       }
+      await syncPhoneReminder(updated);
     } catch (error) {
       setTelegramError(error.message || "Could not update Telegram reminder.");
     }
