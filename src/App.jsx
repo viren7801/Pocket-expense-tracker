@@ -492,6 +492,7 @@ export default function LedgerApp() {
     if (!reminder?.id) return;
 
     const shouldNotifyTelegram =
+      reminder.notifyTelegram &&
       reminder.notification &&
       reminder.notification !== "none" &&
       reminder.date &&
