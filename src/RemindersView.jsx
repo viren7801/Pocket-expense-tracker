@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { enablePocketNotifications, getPocketPushSubscription, sendPocketTestNotification } from "./pushNotifications";
 import {
   Bell,
   CalendarDays,
@@ -151,6 +152,8 @@ export default function RemindersView({
   const [telegramUsername, setTelegramUsername] = useState("");
   const [telegramBusy, setTelegramBusy] = useState(false);
   const [telegramError, setTelegramError] = useState("");
+  const [phoneNotifications, setPhoneNotifications] = useState(false);
+  const [phoneBusy, setPhoneBusy] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -223,7 +226,17 @@ export default function RemindersView({
     return () => {
       active = false;
     };
+  }, [])
+  useEffect(() => {
+    let active = true;
+    getPocketPushSubscription().then((subscription) => {
+      if (active) setPhoneNotifications(Boolean(subscription));
+    }).catch(() => {
+      if (active) setPhoneNotifications(false);
+    });
+    return () => { active = false; };
   }, []);
+;
 
   async function refreshTelegramStatus() {
     try {
@@ -237,6 +250,31 @@ export default function RemindersView({
       setTelegramConnected(false);
       setTelegramUsername("");
       return false;
+    }
+  }
+
+  async function enablePhonePush() {
+    setPhoneBusy(true);
+    setTelegramError("");
+    try {
+      await enablePocketNotifications();
+      setPhoneNotifications(true);
+      await sendPocketTestNotification();
+    } catch (error) {
+      setTelegramError(error.message || "Could not enable phone notifications.");
+    } finally {
+      setPhoneBusy(false);
+    }
+  }
+
+  async function testPhonePush() {
+    setPhoneBusy(true);
+    try {
+      await sendPocketTestNotification();
+    } catch (error) {
+      setTelegramError(error.message || "Could not send test notification.");
+    } finally {
+      setPhoneBusy(false);
     }
   }
 
@@ -330,6 +368,33 @@ export default function RemindersView({
     }
   }
 
+  async function syncPhoneReminder(reminder) {
+    if (!reminder?.id) return;
+    if (reminder.notifyPush && !reminder.completed) {
+      if (!phoneNotifications) throw new Error("Enable phone notifications before using phone reminders.");
+      const response = await fetch("/api/push?action=schedule-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reminderId: reminder.id,
+          title: reminder.title,
+          reminderAt: reminderAtISO(reminder),
+          notificationMinutes: Number(reminder.notification) || 0,
+          repeat: reminder.repeat || "none",
+          ...recurrencePayload(reminder),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not schedule phone notification.");
+    } else {
+      await fetch("/api/push?action=cancel-reminder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reminderId: reminder.id }),
+      });
+    }
+  }
+
   const openCreate = (date = selectedDate) => {
     setEditingId(null);
     setDraft(makeBlankReminder(date));
@@ -356,6 +421,7 @@ export default function RemindersView({
       category: draft.category || "Personal",
       notification: draft.notification || "none",
       notifyTelegram: Boolean(draft.notifyTelegram),
+      notifyPush: Boolean(draft.notifyPush),
     };
 
     if (payload.notifyTelegram && !telegramConnected) {
@@ -369,6 +435,7 @@ export default function RemindersView({
         : onCreate(payload);
       const reminderToSync = saved || { ...payload, id: editingId };
       await syncTelegramReminder(reminderToSync);
+      await syncPhoneReminder(reminderToSync);
     } catch (error) {
       setTelegramError(error.message || "Could not sync Telegram reminder.");
       return;
